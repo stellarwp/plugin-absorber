@@ -1,4 +1,4 @@
-# Design: `nexcess/plugin-absorber`
+# Design: `stellarwp/plugin-absorber`
 
 Delivery design for the library specified in [`engineering-plan.md`](../../../engineering-plan.md).
 That document defines *what* to build; this one records the decisions taken since, the
@@ -12,7 +12,7 @@ Where the two disagree, this document wins.
 
 | Decision | Value |
 |---|---|
-| Composer package | `nexcess/plugin-absorber` |
+| Composer package | `stellarwp/plugin-absorber` |
 | Repository | `github.com/stellarwp/plugin-absorber` |
 | Root namespace | `Nexcess\PluginAbsorber\` |
 | Filter segment | `{hook_prefix}/plugin_absorber/…` |
@@ -279,7 +279,7 @@ message. This is documented in `tests/README.md`.
 Roughly 120 lines. Minimal, dense, no padding. In order:
 
 1. One-sentence statement of what the library does.
-2. `composer require nexcess/plugin-absorber`, immediately followed by the Strauss
+2. `composer require stellarwp/plugin-absorber`, immediately followed by the Strauss
    recommendation, a link to `stellarwp/global-docs/docs/strauss-setup.md`, and the warning that
    `extra.strauss.constant_prefix` must **not** rewrite a sub-plugin's `plugin_loaded_constant` —
    those are real shared runtime constants.
@@ -325,8 +325,12 @@ green.
 
 ## 9. Open items
 
-- Packagist name `nexcess/plugin-absorber` under repository `stellarwp/plugin-absorber`. Packagist
-  maps name to URL independently, so this works; noting the inconsistency once, not re-opening it.
+- ~~Packagist name `nexcess/plugin-absorber` under repository `stellarwp/plugin-absorber`.~~
+  Resolved in PR 1: the package is `stellarwp/plugin-absorber`. Packagist protects a vendor prefix
+  once anyone publishes under it, and `nexcess` is already held by `nexcess/magento-turpentine`
+  (maintainer `miguelbalparda`), which is outside our control. The `stellarwp` vendor is already
+  ours across 38 packages, so this ships without chasing access. The PHP namespace stays
+  `Nexcess\PluginAbsorber\` — Composer does not require the two to match.
 - The local working directory is still `sub-plugin-loader/` while the remote is
   `plugin-absorber`. Rename before PR 1.
 - `engineering-plan.md` is committed at the repository root alongside this spec. PR 1 decides

@@ -6,7 +6,7 @@ re-declaration fatal errors.
 ## Install
 
 ```bash
-composer require nexcess/plugin-absorber
+composer require stellarwp/plugin-absorber
 ```
 
 **Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
@@ -21,3 +21,9 @@ Requires PHP 7.4+ and WordPress 6.4+.
 ## Usage
 
 _Added as each piece lands._
+
+## License
+
+This program is free software; you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation; either version 2 of the
+License, or (at your option) any later version. See [`LICENSE`](LICENSE).

@@ -1,5 +1,5 @@
 {
-    "name": "nexcess/plugin-absorber",
+    "name": "stellarwp/plugin-absorber",
     "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
     "type": "library",
     "license": "GPL-2.0-or-later",
@@ -7,7 +7,7 @@
     "authors": [
         {
             "name": "StellarWP",
-            "email": "eric_defore@vendor.stellarwp.com"
+            "email": "dev@stellarwp.com"
         }
     ],
     "require": {
@@ -19,7 +19,8 @@
         "codeception/util-universalframework": "^1.0",
         "lucatume/di52": "^3.0",
         "lucatume/wp-browser": "^3.6.5",
-        "php-stubs/wordpress-stubs": "^6.4",
+        "php-stubs/wordpress-stubs": "~6.4.0",
+        "phpstan/phpstan": "^1.10",
         "phpunit/phpunit": "^9.5",
         "szepeviktor/phpstan-wordpress": "^1.3"
     },
@@ -48,8 +49,6 @@
         "platform": {
             "php": "7.4"
         },
-        "allow-plugins": {
-            "phpstan/extension-installer": true
-        }
+        "allow-plugins": {}
     }
 }
