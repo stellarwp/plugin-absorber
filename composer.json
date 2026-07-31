@@ -30,8 +30,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Nexcess\\PluginAbsorber\\Tests\\": "tests/",
-            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support"
+            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support",
+            "Nexcess\\PluginAbsorber\\Tests\\Unit\\": "tests/unit"
         }
     },
     "scripts": {

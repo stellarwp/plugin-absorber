@@ -7,20 +7,43 @@ on:
     branches:
       - main
 
+# This workflow only reads the repository. Narrow the token accordingly.
+permissions:
+  contents: read
+
+# A superseded PR run is a result nobody is waiting on any more. Pushes to a
+# long-lived branch are left alone so their history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A broken WordPress nightly is upstream's problem, not this library's, so
+    # those legs report without blocking the PR.
+    continue-on-error: ${{ matrix.wp == 'nightly' }}
+
     strategy:
       fail-fast: false
       matrix:
+        # The ends of the supported range only. A deprecation introduced at any
+        # PHP version fires on every later one, so 8.5 catches what 8.0-8.4
+        # would, and every leg resolves identical dependencies because
+        # config.platform.php pins resolution to 7.4 regardless of runtime.
         php:
           - "7.4"
-          - "8.0"
-          - "8.1"
-          - "8.2"
-          - "8.3"
+          - "8.5"
+        # The nightly column is early warning for core regressions; when a
+        # nightly leg is red, its latest counterpart on the same PHP tells you
+        # whether WordPress or PHP is at fault.
+        wp:
+          - "latest"
+          - "nightly"
 
-    name: "Tests: PHP ${{ matrix.php }}"
+    name: "Tests: PHP ${{ matrix.php }} / WP ${{ matrix.wp }}"
 
     steps:
       - name: Checkout the repository
@@ -68,11 +91,31 @@ jobs:
           ${SLIC_BIN} composer validate
           ${SLIC_BIN} composer install
 
+      # The slic image ships a fixed WordPress that varies by PHP version, and
+      # WP_VERSION in .env.testing.slic does not change it. Without this step a
+      # leg named "WP latest" silently tests whatever core the image happened to
+      # bake in. WPLoader installs from this codebase, so pinning here is what
+      # actually puts the suite on the version the leg claims.
+      - name: Pin the WordPress version
+        run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
+
       - name: Build codeception
         run: ${SLIC_BIN} cc build
 
       - name: Run unit tests (singlesite)
         run: ${SLIC_BIN} run unit --env singlesite --ext DotReporter
 
+      # Run even when singlesite failed: one run should report both envs rather
+      # than making you fix one and rediscover the other.
       - name: Run unit tests (multisite)
+        if: ${{ !cancelled() }}
         run: ${SLIC_BIN} run unit --env multisite --ext DotReporter
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: "test-output-php${{ matrix.php }}-wp${{ matrix.wp }}"
+          path: tests/_output
+          if-no-files-found: ignore
+          retention-days: 7

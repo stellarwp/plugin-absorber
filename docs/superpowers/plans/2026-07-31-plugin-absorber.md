@@ -559,11 +559,13 @@ next PR, which adds the smoke test and the CI workflow together.'
 **PR 3** · branch `03-ci-tests` from `02-codeception-harness` · 1 source file
 
 **Files:**
-- Create: `.github/workflows/tests-php.yml`, `tests/_support/Traits/WithUopz.php`, `tests/unit/SmokeTest.php`
+- Create: `.github/workflows/tests-php.yml`, `tests/unit/SmokeTest.php`, `tests/_support/TestException.php`, `tests/README.md`
 
 **Interfaces:**
 - Consumes: the `unit` suite from Task 2.
-- Produces: `Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz` with `set_function_return( string $function, $value ): void`, `allow_exit( bool $allow ): void`, and automatic teardown via `unset_uopz_returns()`. Every later test that stubs a WordPress function uses this trait.
+- Produces: no local uopz trait. Every later test that stubs a WordPress function uses `lucatume\WPBrowser\Traits\UopzFunctions` from wp-browser — `setFunctionReturn( string $function, $value, bool $execute = false )`, with automatic teardown via the trait's own `@after resetUopzAlterations()`. Also produces `Nexcess\PluginAbsorber\Tests\Support\TestException`, thrown from a stubbed function to halt a code path in place of `exit`.
+
+**Why not a local trait:** a hand-rolled `WithUopz` is duplicated across every StellarWP plugin repo and drifts. `UopzFunctions` is maintained by wp-browser's author, is already in the dependency tree, and exists as far back as the `^3.6.5` floor this library pins. Nothing to keep in sync.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -584,13 +586,13 @@ git checkout 02-codeception-harness && git checkout -b 03-ci-tests
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
  * @since 1.0.0
  */
 class SmokeTest extends WPTestCase {
-	use WithUopz;
+	use UopzFunctions;
 
 	public function test_wordpress_is_loaded(): void {
 		$this->assertTrue( function_exists( 'add_action' ) );
@@ -603,144 +605,62 @@ class SmokeTest extends WPTestCase {
 	}
 
 	public function test_uopz_can_stub_a_function(): void {
-		$this->set_function_return( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
+		$this->setFunctionReturn( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
 
 		$this->assertSame( 'https://example.test/wp-admin/plugins.php', wp_get_referer() );
 	}
-
-	public function test_exit_can_be_neutralised(): void {
-		$this->allow_exit( false );
-
-		$reached = false;
-
-		( static function () {
-			exit;
-		} )();
-
-		$reached = true;
-
-		$this->assertTrue( $reached, 'exit must be a no-op so the resolver redirect path is testable.' );
-	}
 }
 ```
+
+There is deliberately no test that `exit` can be neutralised. See Step 4.
 
 - [ ] **Step 3: Run it to verify it fails**
 
 Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz" not found`.
+Expected: FAIL — `wp_get_referer()` returns the real value, so `test_uopz_can_stub_a_function` fails on the `assertSame`, until `use UopzFunctions` is in place.
 
-- [ ] **Step 4: Write the `WithUopz` trait**
+- [ ] **Step 4: Add `TestException` and the tests README**
 
-Follows the established StellarWP shape (`learndash-seats-plus/tests/_support/Traits/WithUopz.php`), trimmed to what this library needs. The slic image sets `uopz.exit=1`, so `exit` is live unless a test opts out.
+There is no local uopz trait to write. `use lucatume\WPBrowser\Traits\UopzFunctions;` in the smoke test is the entire change on the stubbing side: it ships with wp-browser, undoes every override via its own `@after resetUopzAlterations()`, and takes an explicit `$execute` flag instead of guessing whether a value is callable.
+
+`UopzFunctions::preventExit()` exists, but this library does not use it. Neutralising `exit` lets a test keep running past the point where production would have stopped, so a test that should fail can report as passing and CI will not say otherwise. Tasks 8 and 13 instead stub the call immediately before `exit` and throw from it, which stops execution at a point the test controls.
 
 ```php
 <?php
 /**
- * uopz helpers for stubbing functions WordPress cannot hook.
+ * Exception used to halt execution in place of exit().
  *
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
+namespace Nexcess\PluginAbsorber\Tests\Support;
+
+use Exception;
 
 /**
+ * Thrown from a stubbed function to stop a code path right before it calls exit().
+ *
+ * Mocking exit() itself lets a test keep running past the point production would
+ * have halted, which can report a failing test as passing. Throwing instead stops
+ * execution at a point the test controls. See tests/README.md.
+ *
  * @since 1.0.0
  */
-trait WithUopz {
-	/**
-	 * Function names with an active uopz return override.
-	 *
-	 * @var array<int,string>
-	 */
-	private $uopz_function_returns = [];
-
-	/**
-	 * Whether this test neutralised exit.
-	 *
-	 * @var bool
-	 */
-	private $uopz_exit_modified = false;
-
-	/**
-	 * Override a function's return value for the duration of the test.
-	 *
-	 * Pass a closure to have it invoked in place of the function.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param string $function_name Function to override.
-	 * @param mixed  $return_value  Value to return, or a closure to execute.
-	 *
-	 * @return void
-	 */
-	protected function set_function_return( string $function_name, $return_value ): void {
-		$this->skip_if_no_uopz();
-
-		$this->uopz_function_returns[] = $function_name;
-
-		uopz_set_return( $function_name, $return_value, $return_value instanceof \Closure );
-	}
-
-	/**
-	 * Make exit a no-op so redirect branches can be asserted.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param bool $allow Whether exit should terminate execution.
-	 *
-	 * @return void
-	 */
-	protected function allow_exit( bool $allow ): void {
-		$this->skip_if_no_uopz();
-
-		$this->uopz_exit_modified = true;
-
-		uopz_allow_exit( $allow );
-	}
-
-	/**
-	 * Skip the test when uopz is unavailable rather than failing confusingly.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	private function skip_if_no_uopz(): void {
-		if ( ! extension_loaded( 'uopz' ) ) {
-			$this->markTestSkipped( 'The uopz extension is required for this test.' );
-		}
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @after
-	 *
-	 * @return void
-	 */
-	protected function unset_uopz_returns(): void {
-		foreach ( $this->uopz_function_returns as $function_name ) {
-			uopz_unset_return( $function_name );
-		}
-
-		$this->uopz_function_returns = [];
-
-		if ( $this->uopz_exit_modified ) {
-			uopz_allow_exit( true );
-			$this->uopz_exit_modified = false;
-		}
-	}
+class TestException extends Exception {
 }
 ```
+
+Also write `tests/README.md`, documenting how to run the suites, the `setFunctionReturn()` pattern, and the no-mocking-`exit` rule with a worked example. Tasks 8 and 13 follow it rather than rediscovering it.
+
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `slic run unit`
-Expected: PASS — 4 tests, 6 assertions.
+Expected: PASS — 3 tests, 5 assertions.
 
 - [ ] **Step 6: Write the tests CI workflow**
 
-Adapted from `stellarwp/harbor`'s `tests-php.yml`, reduced to one WordPress version and the PHP range this library supports.
+Adapted from `stellarwp/harbor`'s `tests-php.yml`, running the ends of the supported PHP range against WordPress `latest` and `nightly` — four legs, with the `nightly` ones non-blocking. Testing only 7.4 and 8.5 is deliberate: a deprecation introduced at any PHP version fires on every later one, so 8.5 catches whatever 8.0–8.4 would, and `config.platform.php` pins dependency resolution to 7.4 on every leg regardless of runtime, so there is no per-version dependency drift to catch either.
 
 ```yaml
 # cspell:ignore DotReporter
@@ -752,20 +672,43 @@ on:
     branches:
       - main
 
+# This workflow only reads the repository. Narrow the token accordingly.
+permissions:
+  contents: read
+
+# A superseded PR run is a result nobody is waiting on any more. Pushes to a
+# long-lived branch are left alone so their history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A broken WordPress nightly is upstream's problem, not this library's, so
+    # those legs report without blocking the PR.
+    continue-on-error: ${{ matrix.wp == 'nightly' }}
+
     strategy:
       fail-fast: false
       matrix:
+        # The ends of the supported range only. A deprecation introduced at any
+        # PHP version fires on every later one, so 8.5 catches what 8.0-8.4
+        # would, and every leg resolves identical dependencies because
+        # config.platform.php pins resolution to 7.4 regardless of runtime.
         php:
           - "7.4"
-          - "8.0"
-          - "8.1"
-          - "8.2"
-          - "8.3"
+          - "8.5"
+        # The nightly column is early warning for core regressions; when a
+        # nightly leg is red, its latest counterpart on the same PHP tells you
+        # whether WordPress or PHP is at fault.
+        wp:
+          - "latest"
+          - "nightly"
 
-    name: "Tests: PHP ${{ matrix.php }}"
+    name: "Tests: PHP ${{ matrix.php }} / WP ${{ matrix.wp }}"
 
     steps:
       - name: Checkout the repository
@@ -790,6 +733,11 @@ jobs:
       - name: Set run context for slic
         run: echo "SLIC=1" >> $GITHUB_ENV && echo "CI=1" >> $GITHUB_ENV
 
+      - name: Start ssh-agent
+        run: |
+          eval `ssh-agent -s`
+          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
+
       - name: Set up slic for CI
         run: |
           cd ${GITHUB_WORKSPACE}/..
@@ -808,49 +756,75 @@ jobs:
           ${SLIC_BIN} composer validate
           ${SLIC_BIN} composer install
 
+      # The slic image ships a fixed WordPress that varies by PHP version, and
+      # WP_VERSION in .env.testing.slic does not change it. Without this step a
+      # leg named "WP latest" silently tests whatever core the image happened to
+      # bake in. WPLoader installs from this codebase, so pinning here is what
+      # actually puts the suite on the version the leg claims.
+      - name: Pin the WordPress version
+        run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
+
       - name: Build codeception
         run: ${SLIC_BIN} cc build
 
       - name: Run unit tests (singlesite)
         run: ${SLIC_BIN} run unit --env singlesite --ext DotReporter
 
+      # Run even when singlesite failed: one run should report both envs rather
+      # than making you fix one and rediscover the other.
       - name: Run unit tests (multisite)
+        if: ${{ !cancelled() }}
         run: ${SLIC_BIN} run unit --env multisite --ext DotReporter
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: "test-output-php${{ matrix.php }}-wp${{ matrix.wp }}"
+          path: tests/_output
+          if-no-files-found: ignore
+          retention-days: 7
 ```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tests/_support/Traits/WithUopz.php tests/unit/SmokeTest.php .github/workflows/tests-php.yml
-git commit -m "Add uopz trait, harness smoke test, and PHP tests workflow"
+git add tests/unit/SmokeTest.php tests/_support/TestException.php tests/README.md .github/workflows/tests-php.yml
+git commit -m "Add harness smoke test, exit policy, and PHP tests workflow"
 ```
 
 - [ ] **Step 8: Push and confirm CI is actually green**
 
 ```bash
 git push -u origin 03-ci-tests
-gh pr create --base 02-codeception-harness --title "First green CI" --body 'What: `WithUopz` trait, a smoke test that proves the harness, and the PHP tests workflow.
+gh pr create --base 02-codeception-harness --title "First green CI" --body 'What: a smoke test that proves the harness, the `TestException` and README that set the stubbing rules, and the PHP tests workflow.
 
 Usage:
 
     class SomeTest extends WPTestCase {
-        use WithUopz;
+        use UopzFunctions; // from wp-browser, not a local trait.
 
         public function test_something(): void {
-            $this->set_function_return( "is_plugin_active", true );
-            $this->allow_exit( false );
+            $this->setFunctionReturn( "is_plugin_active", true );
         }
     }
 
-Why this way: the smoke test asserts WordPress is loaded, uopz is present, and `exit` can be
-neutralised — the three assumptions every later test rests on. Proving them here means a later
-failure is a real bug rather than a harness problem. The slic image ships `uopz.exit=1`, so `exit`
-terminates unless a test opts out; `allow_exit( false )` is what makes the redirect branch in the
-Resolver testable at all.
+Why this way: the smoke test asserts WordPress is loaded, uopz is present, and a function can
+actually be stubbed — the assumptions every later test rests on. Proving them here means a later
+failure is a real bug rather than a harness problem.
 
-Verify: `slic run unit` — 4 tests. CI runs the suite on PHP 7.4 through 8.3, singlesite and
-multisite. Static analysis is not wired yet; it lands after the first src/ file, because PHPStan
-errors on an empty directory.'
+No local `WithUopz`: `lucatume\WPBrowser\Traits\UopzFunctions` ships with wp-browser, is maintained
+by its author, undoes overrides through its own `@after`, and exists as far back as the `^3.6.5`
+floor this library pins. One less copy to drift across repos.
+
+`exit` is never mocked. Neutralising it lets a test keep running past the point production would
+have stopped, so a test that should fail can report as passing. Redirect branches are tested by
+stubbing the call immediately before `exit` and throwing `TestException` from it — worked example
+in tests/README.md.
+
+Verify: `slic run unit` — 3 tests. CI runs both envs across PHP 7.4 through 8.5 against WordPress
+latest and nightly — four legs, with the nightly ones non-blocking. Static analysis is not
+wired yet; it lands after the first src/ file, because PHPStan errors on an empty directory.'
 
 gh run watch
 ```
@@ -1546,13 +1520,13 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
  * @since 1.0.0
  */
 class SubPluginTest extends WPTestCase {
-	use WithUopz;
+	use UopzFunctions;
 
 	public function setUp(): void {
 		parent::setUp();
@@ -1667,8 +1641,8 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_never_calls_wordpress_without_a_standalone(): void {
-		$this->set_function_return( 'is_plugin_active', true );
-		$this->set_function_return( 'is_plugin_active_for_network', true );
+		$this->setFunctionReturn( 'is_plugin_active', true );
+		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
 		$this->assertFalse(
 			$this->make()->is_standalone_plugin_active(),
@@ -1677,8 +1651,8 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_detects_a_normally_active_standalone(): void {
-		$this->set_function_return( 'is_plugin_active', true );
-		$this->set_function_return( 'is_plugin_active_for_network', false );
+		$this->setFunctionReturn( 'is_plugin_active', true );
+		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
 
 		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
@@ -1687,8 +1661,8 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_detects_a_network_active_standalone(): void {
-		$this->set_function_return( 'is_plugin_active', false );
-		$this->set_function_return( 'is_plugin_active_for_network', true );
+		$this->setFunctionReturn( 'is_plugin_active', false );
+		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
 		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
@@ -1697,8 +1671,8 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_detects_an_inactive_standalone(): void {
-		$this->set_function_return( 'is_plugin_active', false );
-		$this->set_function_return( 'is_plugin_active_for_network', false );
+		$this->setFunctionReturn( 'is_plugin_active', false );
+		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
 
 		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
@@ -3740,13 +3714,22 @@ use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz;
+use Nexcess\PluginAbsorber\Tests\Support\TestException;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
  * @since 1.0.0
  */
 class ResolverTest extends WPTestCase {
-	use WithUopz;
+	use UopzFunctions;
+
+	/**
+	 * Message carried by the exception that stands in for exit().
+	 *
+	 * Asserted on rather than merely caught, so an unrelated TestException
+	 * cannot make one of these tests pass for the wrong reason.
+	 */
+	private const HALTED_AT_EXIT = 'Resolver halted where production calls exit().';
 
 	/**
 	 * @var array<int,array<string,mixed>>
@@ -3767,9 +3750,7 @@ class ResolverTest extends WPTestCase {
 		$this->deactivations = [];
 		$this->redirects     = [];
 
-		$this->allow_exit( false );
-
-		$this->set_function_return(
+		$this->setFunctionReturn(
 			'deactivate_plugins',
 			function ( $plugins, $silent = false, $network_wide = null ) {
 				$this->deactivations[] = [
@@ -3777,16 +3758,20 @@ class ResolverTest extends WPTestCase {
 					'silent'       => $silent,
 					'network_wide' => $network_wide,
 				];
-			}
+			},
+			true
 		);
 
-		$this->set_function_return(
+		// Throwing here stops the resolver exactly where production calls exit,
+		// without mocking exit itself. See tests/README.md.
+		$this->setFunctionReturn(
 			'wp_safe_redirect',
 			function ( $location ) {
 				$this->redirects[] = $location;
 
-				return true;
-			}
+				throw new TestException( self::HALTED_AT_EXIT );
+			},
+			true
 		);
 	}
 
@@ -3815,8 +3800,25 @@ class ResolverTest extends WPTestCase {
 	}
 
 	private function standalone_is( bool $active, bool $network_active = false ): void {
-		$this->set_function_return( 'is_plugin_active', $active );
-		$this->set_function_return( 'is_plugin_active_for_network', $network_active );
+		$this->setFunctionReturn( 'is_plugin_active', $active );
+		$this->setFunctionReturn( 'is_plugin_active_for_network', $network_active );
+	}
+
+	/**
+	 * Runs the resolver, absorbing the TestException that stands in for exit().
+	 *
+	 * Paths that redirect halt inside wp_safe_redirect(); paths that do not run
+	 * to completion. Either way the assertions afterwards see the same state
+	 * production would have left behind.
+	 *
+	 * @return void
+	 */
+	private function resolve(): void {
+		try {
+			( new Resolver() )->resolve_all();
+		} catch ( TestException $e ) {
+			$this->assertSame( self::HALTED_AT_EXIT, $e->getMessage() );
+		}
 	}
 
 	/**
@@ -3835,9 +3837,9 @@ class ResolverTest extends WPTestCase {
 	public function test_deactivate_deactivates_notifies_and_redirects(): void {
 		$this->standalone_is( true );
 		$this->register( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
-		$this->set_function_return( 'wp_get_referer', false );
+		$this->setFunctionReturn( 'wp_get_referer', false );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertCount( 1, $this->deactivations );
 		$this->assertSame( 'give-recurring/give-recurring.php', $this->deactivations[0]['plugins'] );
@@ -3848,9 +3850,9 @@ class ResolverTest extends WPTestCase {
 	public function test_deactivate_is_the_default_policy(): void {
 		$this->standalone_is( true );
 		$this->register();
-		$this->set_function_return( 'wp_get_referer', false );
+		$this->setFunctionReturn( 'wp_get_referer', false );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertCount( 1, $this->deactivations );
 	}
@@ -3858,9 +3860,9 @@ class ResolverTest extends WPTestCase {
 	public function test_it_passes_the_network_flag_for_a_network_active_standalone(): void {
 		$this->standalone_is( false, true );
 		$this->register();
-		$this->set_function_return( 'wp_get_referer', false );
+		$this->setFunctionReturn( 'wp_get_referer', false );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertTrue(
 			$this->deactivations[0]['network_wide'],
@@ -3871,9 +3873,9 @@ class ResolverTest extends WPTestCase {
 	public function test_it_omits_the_network_flag_for_a_normally_active_standalone(): void {
 		$this->standalone_is( true, false );
 		$this->register();
-		$this->set_function_return( 'wp_get_referer', false );
+		$this->setFunctionReturn( 'wp_get_referer', false );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertFalse( $this->deactivations[0]['network_wide'] );
 	}
@@ -3882,7 +3884,7 @@ class ResolverTest extends WPTestCase {
 		$this->standalone_is( true );
 		$this->register( [ 'conflict_policy' => Conflict_Policy::DEFER ] );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations );
 		$this->assertSame( [], $this->redirects );
@@ -3893,7 +3895,7 @@ class ResolverTest extends WPTestCase {
 		$this->standalone_is( true );
 		$this->register( [ 'conflict_policy' => Conflict_Policy::NOTICE_ONLY ] );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations );
 		$this->assertSame( [], $this->redirects );
@@ -3912,7 +3914,7 @@ class ResolverTest extends WPTestCase {
 			]
 		);
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations, 'The callable chose DEFER for this slug.' );
 	}
@@ -3921,7 +3923,7 @@ class ResolverTest extends WPTestCase {
 		$this->standalone_is( true );
 		$this->register( [ 'enabled' => false ] );
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations );
 	}
@@ -3930,7 +3932,7 @@ class ResolverTest extends WPTestCase {
 		$this->standalone_is( false, false );
 		$this->register();
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations );
 	}
@@ -3945,7 +3947,7 @@ class ResolverTest extends WPTestCase {
 			]
 		);
 
-		( new Resolver() )->resolve_all();
+		$this->resolve();
 
 		$this->assertSame( [], $this->deactivations );
 	}
@@ -4272,8 +4274,9 @@ into an update screen.
 Known limitation, deliberate: `resolve_all()` runs on front-end requests too, matching both
 reference implementations. Tracked as issue B in the spec.
 
-Verify: `slic run unit` and `slic run unit --env multisite` — 15 tests. `exit` is neutralised with
-`uopz_allow_exit( false )`, which is the only way the redirect branch is reachable in a test.'
+Verify: `slic run unit` and `slic run unit --env multisite` — 15 tests. `exit` is never mocked: the
+stubbed `wp_safe_redirect()` throws `TestException`, which halts the resolver exactly where
+production calls `exit` while leaving a failing test free to report as failing.'
 ```
 
 ---
@@ -5012,7 +5015,7 @@ Verify: `slic run unit` — 8 tests, one per gate plus escaping and the Loader t
 
 **PR 15** · branch `15-e2e-fixtures` from `14-activation-error-notice` · 1 source file
 
-Exercises the whole matrix from the engineering plan's verification section against real WordPress state — the real `active_plugins` option, real `deactivate_plugins()`, real transients and options. Only `wp_safe_redirect` and `exit` stay stubbed, because they end the request.
+Exercises the whole matrix from the engineering plan's verification section against real WordPress state — the real `active_plugins` option, real `deactivate_plugins()`, real transients and options. Only `wp_safe_redirect` and `wp_get_referer` are stubbed; the redirect throws `TestException` so the request halts where production calls `exit`, without mocking `exit` itself.
 
 **Files:**
 - Create: `tests/_data/plugins/absorber-host/absorber-host.php`, `tests/_data/plugins/fake-standalone/fake-standalone.php`, `tests/_support/Traits/WithBundledPlugins.php`, `tests/unit/EndToEndTest.php`
@@ -5194,19 +5197,21 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
  * @since 1.0.0
  */
 class EndToEndTest extends WPTestCase {
 	use WithBundledPlugins;
-	use WithUopz;
+	use UopzFunctions;
 
-	private const STANDALONE = 'fake-standalone/fake-standalone.php';
-	private const TRANSIENT  = 'absorber_host_plugin_absorber_notices';
-	private const OPTION     = 'absorber_host_plugin_absorber_activations';
+	private const STANDALONE     = 'fake-standalone/fake-standalone.php';
+	private const TRANSIENT      = 'absorber_host_plugin_absorber_notices';
+	private const OPTION         = 'absorber_host_plugin_absorber_activations';
+	private const HALTED_AT_EXIT = 'Request halted where production calls exit().';
 
 	public function setUp(): void {
 		parent::setUp();
@@ -5216,10 +5221,16 @@ class EndToEndTest extends WPTestCase {
 
 		$GLOBALS['absorber_loads'] = 0;
 
-		// Real deactivation and real redirects would end the request; everything else is real.
-		$this->allow_exit( false );
-		$this->set_function_return( 'wp_safe_redirect', static fn() => true );
-		$this->set_function_return( 'wp_get_referer', false );
+		// Only the two calls that would end the request are stubbed; everything
+		// else — active_plugins, deactivate_plugins(), transients — is real.
+		$this->setFunctionReturn(
+			'wp_safe_redirect',
+			static function () {
+				throw new TestException( self::HALTED_AT_EXIT );
+			},
+			true
+		);
+		$this->setFunctionReturn( 'wp_get_referer', false );
 	}
 
 	public function tearDown(): void {
@@ -5258,7 +5269,17 @@ class EndToEndTest extends WPTestCase {
 	}
 
 	private function run_request(): void {
-		Loader::run_conflict_resolution();
+		try {
+			Loader::run_conflict_resolution();
+		} catch ( TestException $e ) {
+			$this->assertSame( self::HALTED_AT_EXIT, $e->getMessage() );
+
+			// Production exits inside the redirect, so load_all() never runs on
+			// this request. Returning here is what makes the assertion that a
+			// deactivating request does not also load the sub-plugin meaningful.
+			return;
+		}
+
 		Loader::load_all();
 	}
 
@@ -5423,8 +5444,9 @@ Usage: `tests/_data/plugins/absorber-host/absorber-host.php` is the worked consu
 register, set a policy, supply an activation callback, boot.
 
 Why this way: these drive the real `active_plugins` option and let `deactivate_plugins()` actually
-run, rather than stubbing it as the unit tests do. Only `wp_safe_redirect` and `exit` stay stubbed,
-because they end the request. That makes this a genuine integration check of the load guard,
+run, rather than stubbing it as the unit tests do. Only `wp_safe_redirect` and `wp_get_referer` are
+stubbed; the redirect throws `TestException` so the request halts where production calls `exit`,
+without mocking `exit` itself. That makes this a genuine integration check of the load guard,
 the three policies, and the run-once activation working together.
 
 Bundled fixtures are generated per test rather than committed: `require_once` caches by resolved

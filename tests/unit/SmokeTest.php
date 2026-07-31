@@ -8,13 +8,13 @@
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUopz;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
  * @since 1.0.0
  */
 class SmokeTest extends WPTestCase {
-	use WithUopz;
+	use UopzFunctions;
 
 	public function test_wordpress_is_loaded(): void {
 		$this->assertTrue( function_exists( 'add_action' ) );
@@ -27,22 +27,8 @@ class SmokeTest extends WPTestCase {
 	}
 
 	public function test_uopz_can_stub_a_function(): void {
-		$this->set_function_return( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
+		$this->setFunctionReturn( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
 
 		$this->assertSame( 'https://example.test/wp-admin/plugins.php', wp_get_referer() );
-	}
-
-	public function test_exit_can_be_neutralised(): void {
-		$this->allow_exit( false );
-
-		$reached = false;
-
-		( static function () {
-			exit;
-		} )();
-
-		$reached = true;
-
-		$this->assertTrue( $reached, 'exit must be a no-op so the resolver redirect path is testable.' );
 	}
 }
