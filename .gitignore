@@ -1,0 +1,10 @@
+/vendor/
+/composer.lock
+/tests/_output/*
+!/tests/_output/.gitkeep
+/phpstan-cache/
+/codeception.yml
+/.env.testing.local
+.DS_Store
+.idea/
+.vscode/
