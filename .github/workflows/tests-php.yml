@@ -113,10 +113,10 @@ jobs:
           ${SLIC_BIN} composer install
 
       # The slic image ships a fixed WordPress that varies by PHP version, and
-      # WP_VERSION in .env.testing.slic does not change it. Without this step a
-      # leg named "WP latest" silently tests whatever core the image happened to
-      # bake in. WPLoader installs from this codebase, so pinning here is what
-      # actually puts the suite on the version the leg claims.
+      # no environment variable overrides it -- this step is the only lever.
+      # Without it a leg named "WP latest" silently tests whatever core the
+      # image happened to bake in. WPLoader installs from this codebase, so
+      # pinning here is what puts the suite on the version the leg claims.
       - name: Pin the WordPress version
         run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
 

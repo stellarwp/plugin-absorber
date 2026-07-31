@@ -52,10 +52,14 @@ class SmokeTest extends WPTestCase {
 	 * @since 1.0.0
 	 */
 	public function test_a_stub_can_throw_to_halt_a_code_path(): void {
+		// Captured by value: uopz runs the replacement with no class scope, so
+		// reading self::HALTED_AT_EXIT inside the closure is a fatal error.
+		$message = self::HALTED_AT_EXIT;
+
 		$this->setFunctionReturn(
 			'wp_safe_redirect',
-			static function () {
-				throw new TestException( self::HALTED_AT_EXIT );
+			static function () use ( $message ) {
+				throw new TestException( $message );
 			},
 			true
 		);

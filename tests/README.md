@@ -45,6 +45,48 @@ argument to execute a closure in place of the function rather than returning it:
 $this->setFunctionReturn( 'wp_safe_redirect', static fn( $location ) => true, true );
 ```
 
+### A stub closure has no class scope
+
+uopz executes the replacement outside the test object, so neither `$this` nor
+`self::` is available inside it. Both are fatal errors, not warnings:
+
+```php
+// Fatal: Using $this when not in object context.
+// Fatal: Cannot access "self" when no class scope is active.
+$this->setFunctionReturn(
+	'deactivate_plugins',
+	function ( $plugins ) {
+		$this->deactivations[] = $plugins;
+
+		throw new TestException( self::HALTED_AT_EXIT );
+	},
+	true
+);
+```
+
+Arguments arrive normally, and `use` works — including by reference. So bind a
+reference to the property first, resolve any class constant into a local, and
+capture both. Writes through the reference land on the property, so the rest of
+the test reads `$this->deactivations` as usual:
+
+```php
+$deactivations = &$this->deactivations;
+$halt_message  = self::HALTED_AT_EXIT;
+
+$this->setFunctionReturn(
+	'deactivate_plugins',
+	static function ( $plugins ) use ( &$deactivations, $halt_message ) {
+		$deactivations[] = $plugins;
+
+		throw new TestException( $halt_message );
+	},
+	true
+);
+```
+
+Marking the closure `static` costs nothing and makes the constraint obvious to
+the next reader, since `$this` was never usable in the first place.
+
 ## Never mock `exit()`
 
 `UopzFunctions::preventExit()` exists, but do not use it. Neutralising `exit`
