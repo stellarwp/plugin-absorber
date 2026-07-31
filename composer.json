@@ -1,5 +1,5 @@
 {
-    "name": "nexcess/plugin-absorber",
+    "name": "stellarwp/plugin-absorber",
     "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
     "type": "library",
     "license": "GPL-2.0-or-later",

@@ -6,7 +6,7 @@ re-declaration fatal errors.
 ## Install
 
 ```bash
-composer require nexcess/plugin-absorber
+composer require stellarwp/plugin-absorber
 ```
 
 **Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
