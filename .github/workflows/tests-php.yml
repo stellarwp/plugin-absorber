@@ -45,6 +45,11 @@ jobs:
       - name: Set run context for slic
         run: echo "SLIC=1" >> $GITHUB_ENV && echo "CI=1" >> $GITHUB_ENV
 
+      - name: Start ssh-agent
+        run: |
+          eval `ssh-agent -s`
+          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
+
       - name: Set up slic for CI
         run: |
           cd ${GITHUB_WORKSPACE}/..
