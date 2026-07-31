@@ -18,7 +18,6 @@ modules:
             domain: "%WP_DOMAIN%"
             adminEmail: admin@plugin-absorber.test
             title: "Plugin Absorber Tests"
-            theme: twentytwentythree
             multisite: false
 
 env:
@@ -28,3 +27,7 @@ env:
             config:
                 WPLoader:
                     multisite: true
+                    # Own prefix: the two envs share a database, and WPLoader
+                    # drops and recreates every table under its prefix on
+                    # install. A shared prefix makes concurrent env runs race.
+                    tablePrefix: mstest_
