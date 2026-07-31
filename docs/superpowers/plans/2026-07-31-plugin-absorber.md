@@ -612,12 +612,14 @@ class SmokeTest extends WPTestCase {
 		$this->allow_exit( false );
 
 		$reached = false;
-		( static function () use ( &$reached ) {
+
+		( static function () {
 			exit;
 		} )();
+
 		$reached = true;
 
-		$this->assertTrue( $reached, 'exit must be a no-op so redirect paths are testable.' );
+		$this->assertTrue( $reached, 'exit must be a no-op so the resolver redirect path is testable.' );
 	}
 }
 ```
@@ -3948,48 +3950,47 @@ class ResolverTest extends WPTestCase {
 		$this->assertSame( [], $this->deactivations );
 	}
 
-	public function test_it_redirects_to_the_plugins_page_without_a_referrer(): void {
-		$resolver = new class() extends Resolver {
+	/**
+	 * Exposes the protected redirect logic so it can be asserted directly.
+	 *
+	 * Defined once and reused — the four referrer cases differ only in their input.
+	 */
+	private function redirect_resolver(): Resolver {
+		return new class() extends Resolver {
+			/**
+			 * @param string|false $referrer Referrer under test.
+			 *
+			 * @return string|false
+			 */
 			public function destination_for( $referrer ) {
 				return $this->redirect_destination( $referrer );
 			}
 		};
+	}
 
-		$this->assertSame( admin_url( 'plugins.php' ), $resolver->destination_for( false ) );
+	public function test_it_redirects_to_the_plugins_page_without_a_referrer(): void {
+		$this->assertSame( admin_url( 'plugins.php' ), $this->redirect_resolver()->destination_for( false ) );
 	}
 
 	public function test_it_redirects_to_the_plugins_page_from_an_update_screen(): void {
-		$resolver = new class() extends Resolver {
-			public function destination_for( $referrer ) {
-				return $this->redirect_destination( $referrer );
-			}
-		};
+		$resolver = $this->redirect_resolver();
 
 		$this->assertSame( admin_url( 'plugins.php' ), $resolver->destination_for( admin_url( 'update.php?action=x' ) ) );
 		$this->assertSame( admin_url( 'plugins.php' ), $resolver->destination_for( admin_url( 'update-core.php' ) ) );
 	}
 
 	public function test_it_does_not_redirect_during_an_inline_update_on_the_plugins_page(): void {
-		$resolver = new class() extends Resolver {
-			public function destination_for( $referrer ) {
-				return $this->redirect_destination( $referrer );
-			}
-		};
-
 		$this->assertFalse(
-			$resolver->destination_for( admin_url( 'plugins.php' ) ),
+			$this->redirect_resolver()->destination_for( admin_url( 'plugins.php' ) ),
 			'Redirecting here would interrupt an inline update.'
 		);
 	}
 
 	public function test_it_returns_any_other_referrer_unchanged(): void {
-		$resolver = new class() extends Resolver {
-			public function destination_for( $referrer ) {
-				return $this->redirect_destination( $referrer );
-			}
-		};
-
-		$this->assertSame( admin_url( 'options-general.php' ), $resolver->destination_for( admin_url( 'options-general.php' ) ) );
+		$this->assertSame(
+			admin_url( 'options-general.php' ),
+			$this->redirect_resolver()->destination_for( admin_url( 'options-general.php' ) )
+		);
 	}
 }
 ```
