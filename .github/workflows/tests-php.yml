@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 # This workflow only reads the repository. Narrow the token accordingly.
 permissions:
@@ -51,11 +52,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      # This workflow reaches into slic's own file layout, so tracking its main
+      # branch would let an upstream reorganisation change CI without a commit
+      # here. Pin to a tag and bump it deliberately when slic is upgraded.
       - name: Checkout slic
         uses: actions/checkout@v6
         with:
           repository: stellarwp/slic
-          ref: main
+          ref: "2.3.0"
           path: slic
           fetch-depth: 1
 
@@ -63,9 +67,18 @@ jobs:
       # php.ini does not set it, so the base image default applies, and that
       # differs between PHP versions -- 7.4 is On, 8.5 is Off. This file is
       # bind-mounted into the slic container as conf.d/zz-docker.ini, which
-      # loads after the main php.ini, so appending here wins.
+      # loads after the main php.ini, so appending here wins. The existence
+      # check is there because a bare append would happily create the file if
+      # slic ever moves or renames it, leaving the override silently unapplied
+      # and the 8.5 legs failing later at "cc build" for no visible reason.
       - name: Enable register_argc_argv for Codeception
-        run: echo "register_argc_argv=On" >> ${GITHUB_WORKSPACE}/slic/containers/slic/php.ini
+        run: |
+          php_ini="${GITHUB_WORKSPACE}/slic/containers/slic/php.ini"
+          if [ ! -f "${php_ini}" ]; then
+            echo "Expected slic php.ini at ${php_ini}, but it does not exist. slic's layout has changed; update this workflow." >&2
+            exit 1
+          fi
+          echo "register_argc_argv=On" >> "${php_ini}"
 
       - name: Set up slic env vars
         run: |
@@ -74,7 +87,7 @@ jobs:
           echo "SLIC_WORDPRESS_DOCKERFILE=Dockerfile.base" >> $GITHUB_ENV
 
       - name: Set run context for slic
-        run: echo "SLIC=1" >> $GITHUB_ENV && echo "CI=1" >> $GITHUB_ENV
+        run: echo "SLIC=1" >> $GITHUB_ENV
 
       - name: Start ssh-agent
         run: |
@@ -94,7 +107,7 @@ jobs:
 
       - name: Set up the library
         run: |
-          ${SLIC_BIN} use plugin-absorber
+          ${SLIC_BIN} use ${{ github.event.repository.name }}
           ${SLIC_BIN} composer set-version 2
           ${SLIC_BIN} composer validate
           ${SLIC_BIN} composer install
@@ -108,16 +121,30 @@ jobs:
         run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
 
       - name: Build codeception
+        id: build
         run: ${SLIC_BIN} cc build
 
       - name: Run unit tests (singlesite)
         run: ${SLIC_BIN} run unit --env singlesite --ext DotReporter
 
       # Run even when singlesite failed: one run should report both envs rather
-      # than making you fix one and rediscover the other.
+      # than making you fix one and rediscover the other. It is gated on the
+      # build having succeeded, because running the suite after a failed
+      # install or build only stacks a second, misleading failure on top of the
+      # real one.
       - name: Run unit tests (multisite)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ${SLIC_BIN} run unit --env multisite --ext DotReporter
+
+      # continue-on-error keeps a red nightly leg from blocking the PR, but it
+      # also makes it report as a pass in the checks list, so the only way to
+      # notice is to open the run. Leave a trace where it will actually be seen.
+      - name: Flag a failing nightly leg
+        if: ${{ failure() && matrix.wp == 'nightly' }}
+        run: |
+          echo "::warning title=WordPress nightly failed::PHP ${{ matrix.php }} against WordPress nightly is red. This does not block the PR."
+          echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+          echo "> PHP ${{ matrix.php }} / WP nightly failed. Non-blocking, but worth a look." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload test output
         if: failure()
