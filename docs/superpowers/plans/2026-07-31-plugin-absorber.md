@@ -724,6 +724,14 @@ jobs:
           path: slic
           fetch-depth: 1
 
+      # Codeception refuses to start unless register_argc_argv is On. slic's
+      # php.ini does not set it, so the base image default applies, and that
+      # differs between PHP versions -- 7.4 is On, 8.5 is Off. This file is
+      # bind-mounted into the slic container as conf.d/zz-docker.ini, which
+      # loads after the main php.ini, so appending here wins.
+      - name: Enable register_argc_argv for Codeception
+        run: echo "register_argc_argv=On" >> ${GITHUB_WORKSPACE}/slic/containers/slic/php.ini
+
       - name: Set up slic env vars
         run: |
           echo "SLIC_BIN=${GITHUB_WORKSPACE}/slic/slic" >> $GITHUB_ENV
