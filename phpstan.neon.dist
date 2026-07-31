@@ -1,0 +1,15 @@
+includes:
+	- vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+	phpVersion: 70400
+	level: 5
+	tmpDir: phpstan-cache
+	treatPhpDocTypesAsCertain: false
+	reportUnmatchedIgnoredErrors: false
+
+	paths:
+		- src
+
+	scanDirectories:
+		- vendor/stellarwp/container-contract/src
