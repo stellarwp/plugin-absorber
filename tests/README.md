@@ -36,8 +36,10 @@ class SomeTest extends WPTestCase {
 ```
 
 Overrides are undone automatically after each test by the trait's `@after` hook,
-so tests never need their own uopz cleanup. Pass `true` as the third argument to
-execute a closure in place of the function rather than returning it:
+so tests never need their own uopz cleanup. `setFunctionReturn()` calls
+`markTestSkipped()` when the uopz extension is missing, so a machine without
+uopz reports skips rather than confusing failures. Pass `true` as the third
+argument to execute a closure in place of the function rather than returning it:
 
 ```php
 $this->setFunctionReturn( 'wp_safe_redirect', static fn( $location ) => true, true );
@@ -56,10 +58,12 @@ behaviour rather than about uopz.
 Given code under test that ends a request:
 
 ```php
-public function redirect_back( string $destination ): void {
-	wp_safe_redirect( $destination );
+class Deactivator {
+	public function redirect_back( string $destination ): void {
+		wp_safe_redirect( $destination );
 
-	exit;
+		exit;
+	}
 }
 ```
 
@@ -76,25 +80,39 @@ public function test_redirects_back(): void {
 		static function ( $location ) use ( &$redirects ) {
 			$redirects[] = $location;
 
-			throw new TestException( 'Avoiding an exit(), which breaks failed test reporting.' );
+			throw new TestException( 'Halted where production calls exit().' );
 		},
 		true
 	);
 
-	$this->expectException( TestException::class );
-	$this->expectExceptionMessage( 'Avoiding an exit(), which breaks failed test reporting.' );
+	$subject = new Deactivator();
+	$halted  = false;
 
 	try {
 		$subject->redirect_back( 'https://example.test/wp-admin/plugins.php' );
 	} catch ( TestException $e ) {
-		$this->assertSame( [ 'https://example.test/wp-admin/plugins.php' ], $redirects );
+		$halted = true;
 
-		// Re-throw so the expectException above is satisfied and the method
-		// stops before reaching exit.
-		throw $e;
+		$this->assertSame( 'Halted where production calls exit().', $e->getMessage() );
 	}
+
+	$this->assertTrue( $halted, 'The redirect must halt where production calls exit().' );
+	$this->assertSame( [ 'https://example.test/wp-admin/plugins.php' ], $redirects );
 }
 ```
 
-Match on the message as well as the class, so an unrelated `TestException`
-thrown earlier cannot make the test pass for the wrong reason.
+The `$halted` flag is the part that cannot be dropped. Catching the exception
+without asserting that it actually arrived turns "the code under test never
+redirected at all" into a silent pass — the same class of failure this section
+opens by warning about, moved out of `preventExit()` and into the test body.
+Matching on the message as well as the class keeps an unrelated `TestException`
+thrown earlier from satisfying the catch for the wrong reason.
+
+A bare `expectException( TestException::class )` is fine when the test only
+cares that the halt happened and asserts nothing about state afterwards. The
+try/catch shape exists so assertions can run after the halt; there is no reason
+to use both mechanisms in one test.
+
+`tests/unit/SmokeTest.php` covers this with
+`test_a_stub_can_throw_to_halt_a_code_path`, which is the executable proof that
+a stub really can throw to stop a code path before it reaches `exit`.
