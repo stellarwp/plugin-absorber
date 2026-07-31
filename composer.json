@@ -19,7 +19,8 @@
         "codeception/util-universalframework": "^1.0",
         "lucatume/di52": "^3.0",
         "lucatume/wp-browser": "^3.6.5",
-        "php-stubs/wordpress-stubs": "^6.4",
+        "php-stubs/wordpress-stubs": "~6.4.0",
+        "phpstan/phpstan": "^1.10",
         "phpunit/phpunit": "^9.5",
         "szepeviktor/phpstan-wordpress": "^1.3"
     },
@@ -31,7 +32,8 @@
     "autoload-dev": {
         "psr-4": {
             "Nexcess\\PluginAbsorber\\Tests\\": "tests/",
-            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support"
+            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support",
+            "Nexcess\\PluginAbsorber\\Tests\\Unit\\": "tests/unit"
         }
     },
     "scripts": {
@@ -48,8 +50,6 @@
         "platform": {
             "php": "7.4"
         },
-        "allow-plugins": {
-            "phpstan/extension-installer": true
-        }
+        "allow-plugins": {}
     }
 }
