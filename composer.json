@@ -1,0 +1,55 @@
+{
+    "name": "stellarwp/plugin-absorber",
+    "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "minimum-stability": "stable",
+    "authors": [
+        {
+            "name": "StellarWP",
+            "email": "dev@stellarwp.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "stellarwp/container-contract": "^1.0"
+    },
+    "require-dev": {
+        "codeception/module-asserts": "^1.0",
+        "codeception/util-universalframework": "^1.0",
+        "lucatume/di52": "^3.0",
+        "lucatume/wp-browser": "^3.6.5",
+        "php-stubs/wordpress-stubs": "~6.4.0",
+        "phpstan/phpstan": "^1.10",
+        "phpunit/phpunit": "^9.5",
+        "szepeviktor/phpstan-wordpress": "^1.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nexcess\\PluginAbsorber\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nexcess\\PluginAbsorber\\Tests\\": "tests/",
+            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support",
+            "Nexcess\\PluginAbsorber\\Tests\\Unit\\": "tests/unit"
+        }
+    },
+    "scripts": {
+        "test:analysis": [
+            "phpstan analyse -c phpstan.neon.dist --memory-limit=512M"
+        ],
+        "test:unit": [
+            "slic run unit"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "platform": {
+            "php": "7.4"
+        },
+        "allow-plugins": {}
+    }
+}

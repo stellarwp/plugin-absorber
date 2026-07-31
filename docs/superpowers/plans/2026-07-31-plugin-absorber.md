@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `nexcess/plugin-absorber` 1.0.0 — a dependency-light PHP library that lets a WordPress host plugin safely load formerly-standalone plugins bundled inside it, without re-declaration fatals.
+**Goal:** Ship `stellarwp/plugin-absorber` 1.0.0 — a dependency-light PHP library that lets a WordPress host plugin safely load formerly-standalone plugins bundled inside it, without re-declaration fatals.
 
 **Architecture:** A static facade (`Config` + `Loader`) over four interface-backed collaborators (`Registrar`, `Notices`, `Conflict\Resolver`, `Activation`), each resolvable from an optional PSR-style container and otherwise instantiated directly. `Loader::boot()` wires two `plugins_loaded` hooks: conflict resolution at priority 1, then the load loop at priority 2. Safety rests on two independent config keys — a load-guard constant checked with `defined()` before `require_once`, and the standalone's plugin basename used for active-detection and deactivation.
 
@@ -12,7 +12,7 @@
 
 Every task's requirements implicitly include this section.
 
-- **Composer package:** `nexcess/plugin-absorber`. **Repository:** `github.com/stellarwp/plugin-absorber`.
+- **Composer package:** `stellarwp/plugin-absorber`. **Repository:** `github.com/stellarwp/plugin-absorber`.
 - **Root namespace:** `Nexcess\PluginAbsorber\`. Tests: `Nexcess\PluginAbsorber\Tests\`. Support: `Nexcess\PluginAbsorber\Tests\Support\`.
 - **PHP floor:** `>=7.4`. **WordPress floor:** 6.4 (the `wp_admin_notice_markup` filter). Stated in the README only — WordPress is not a Composer dependency, so it is not enforceable in `require`.
 - **Class naming:** `Snake_Case` (`Sub_Plugin`, `Conflict_Policy`, `Config_Exception`). Methods fully spelled out and readable. Config keys descriptive and WordPress-centric.
@@ -102,7 +102,7 @@ git checkout -b 01-repo-bootstrap
 
 ```json
 {
-    "name": "nexcess/plugin-absorber",
+    "name": "stellarwp/plugin-absorber",
     "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
     "type": "library",
     "license": "GPL-2.0-or-later",
@@ -271,7 +271,7 @@ re-declaration fatal errors.
 ## Install
 
 ```bash
-composer require nexcess/plugin-absorber
+composer require stellarwp/plugin-absorber
 ```
 
 **Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
@@ -308,9 +308,9 @@ gh pr create --base main --title "Repo bootstrap" --body 'What: composer manifes
 
 Usage:
 
-    composer require nexcess/plugin-absorber
+    composer require stellarwp/plugin-absorber
 
-Why this way: `nexcess/plugin-absorber` over `sub-plugin-loader` — Packagist returns 21 hits for
+Why this way: `stellarwp/plugin-absorber` over `sub-plugin-loader` — Packagist returns 21 hits for
 `plugin-loader` and the top five are WordPress mu-plugin autoloaders, so the term is taken and
 misleading; `plugin-absorber` returns zero. Dropping `-loader` also kills the `PluginAbsorber\Loader`
 stutter. `stellarwp/container-contract` is the only production dependency, matching uplink.

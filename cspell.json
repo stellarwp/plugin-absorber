@@ -1,0 +1,27 @@
+{
+    "version": "0.2",
+    "language": "en",
+    "words": [
+        "absorber",
+        "codeception",
+        "fatals",
+        "kadence",
+        "learndash",
+        "multisite",
+        "nexcess",
+        "packagist",
+        "phpstan",
+        "referer",
+        "slic",
+        "stellarwp",
+        "strauss",
+        "unhookable",
+        "uopz",
+        "wpunit"
+    ],
+    "ignorePaths": [
+        "vendor/**",
+        "tests/_output/**",
+        "composer.lock"
+    ]
+}
