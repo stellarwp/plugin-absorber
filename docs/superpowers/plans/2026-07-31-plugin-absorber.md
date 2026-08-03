@@ -17,7 +17,7 @@ Every task's requirements implicitly include this section.
 - **PHP floor:** `>=7.4`. **WordPress floor:** 6.4 (the `wp_admin_notice_markup` filter). Stated in the README only — WordPress is not a Composer dependency, so it is not enforceable in `require`.
 - **Class naming:** `Snake_Case` (`Sub_Plugin`, `Conflict_Policy`, `Config_Exception`). Methods fully spelled out and readable. Config keys descriptive and WordPress-centric.
 - **Filter names:** `"{$hook_prefix}/plugin_absorber/should_load"` and `"{$hook_prefix}/plugin_absorber/conflict_policy"`.
-- **Storage keys:** option `"{$hook_prefix}_plugin_absorber_activations"`, transient `"{$hook_prefix}_plugin_absorber_notices"`.
+- **Storage keys:** option `"{$hook_prefix}_plugin_absorber_activations"`, option `"{$hook_prefix}_plugin_absorber_notices"`. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
 - **Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only. No other StellarWP library.
 - **PR size cap:** ≤10 files per PR, tests and test infrastructure excluded. No logic-bearing PR exceeds 4 source files.
 - **PR body format** — exactly four parts, nothing else. No boilerplate headings, no restating the diff, no checklists:
@@ -2911,7 +2911,32 @@ Lands before the load path and the resolver because both call into it.
   Task 11 calls `queue_dependency_notice()`; Task 12 calls `queue_merge_notice()` and `queue_conflict_notice()`; Task 14 extends this interface.
 
 **Design notes:**
-- Transient `"{$hook_prefix}_plugin_absorber_notices"`, no expiry, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
+- Option `"{$hook_prefix}_plugin_absorber_notices"`, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
+
+> **Deviations, deliberate (added 2026-08-03, from the PR 10 review):**
+>
+> 1. **An option, not a transient.** Verified in core: `set_transient()` short-circuits to
+>    `wp_cache_set()` and never writes the database when an external object cache is present. On a
+>    Redis or Memcached site the queue would exist only in the cache, and `wp_cache_flush()` — run
+>    by deploy scripts and every "purge cache" button — destroys it. The merge notice is raised
+>    once and never re-queued, so losing it means the site owner is never told. This queue is not
+>    a cache. See the amended Global Constraint.
+> 2. **Network options on multisite.** The resolver passes `$network_wide` to
+>    `deactivate_plugins()`, which removes the plugin from every site in the network. A per-site
+>    option would have parked the explanation in whichever site's options table happened to serve
+>    the request that triggered it — invisible to the superadmin, on one of fifty sites.
+> 3. **`render()` checks `activate_plugins` first.** Rendering *consumes* the queue, so without a
+>    gate any logged-in user loading `profile.php` would silently swallow the one warning an
+>    administrator was going to get. On multisite this correctly resolves to superadmins, since
+>    `activate_plugins` maps through `manage_network_plugins` there.
+> 4. **`all_admin_notices`, not `admin_notices`** (see Task 11). The three notice hooks are
+>    mutually exclusive branches in `admin-header.php`, and `admin_notices` does not fire in the
+>    network admin — exactly where a network-wide deactivation would be noticed.
+> 5. **`get_conflict_notice_message( $default )` replaces the planned private `message_or_default()`
+>    helper**, using the parameter added to `Sub_Plugin` in PR 7. Identical semantics, one less
+>    duplicated method.
+> 6. **`get_queue()` drops non-string entries** rather than printing them, and writes the cleaned
+>    array back, so a corrupted queue heals on the next write.
 - Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
 - Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
 
@@ -3344,7 +3369,7 @@ gh pr create --base 09-loader-resolve --title "Notice queue" --body 'What: the t
 Usage:
 
     Loader::notices()->queue_merge_notice( $sub_plugin );
-    Loader::notices()->render();   // hooked to admin_notices by boot()
+    Loader::notices()->render();   // hooked to all_admin_notices by boot()
 
     // Or supply your own copy:
     "conflict_notice_message" => static fn() => __( "Now bundled with Give.", "give" ),
@@ -3385,7 +3410,7 @@ redirect (queue with one instance, render with another).'
 
   Task 12 adds the `plugins_loaded` @1 hook to `boot()`; Task 13 adds the activation call to `load()`.
 
-**Design note:** `boot()` wires only the @2 load hook and `admin_notices` in this PR. The @1 conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline to a collaborator that does not exist yet would not run.
+**Design note:** `boot()` wires only the @2 load hook and `all_admin_notices` in this PR. The @1 conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline to a collaborator that does not exist yet would not run.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -3614,7 +3639,7 @@ class LoaderBootTest extends WPTestCase {
 
 	public function tearDown(): void {
 		remove_all_actions( 'plugins_loaded' );
-		remove_all_actions( 'admin_notices' );
+		remove_all_actions( 'all_admin_notices' );
 		Loader::reset();
 		Config::reset();
 		parent::tearDown();
@@ -3643,7 +3668,7 @@ class LoaderBootTest extends WPTestCase {
 
 		Loader::boot();
 
-		$this->assertNotFalse( has_action( 'admin_notices', [ Loader::class, 'render_notices' ] ) );
+		$this->assertNotFalse( has_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] ) );
 
 		set_current_screen( 'front' );
 	}
@@ -3690,7 +3715,11 @@ Append these methods, and extend `reset()` as shown at the end:
 		add_action( 'plugins_loaded', [ self::class, 'load_all' ], 2 );
 
 		if ( is_admin() ) {
-			add_action( 'admin_notices', [ self::class, 'render_notices' ] );
+			// all_admin_notices, not admin_notices. WordPress dispatches admin_notices,
+			// network_admin_notices and user_admin_notices as mutually exclusive branches, so a
+			// superadmin working in the network admin -- exactly where a network-wide
+			// deactivation gets noticed -- would never see the queue rendered.
+			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
 		}
 	}
 
@@ -3842,7 +3871,7 @@ gh pr create --base 10-notices-queue --title "Loader boot and load path" --body 
 Usage:
 
     Loader::register( [ ... ] );
-    Loader::boot();   // wires plugins_loaded @2 and admin_notices
+    Loader::boot();   // wires plugins_loaded @2 and all_admin_notices
 
     add_filter( "give/plugin_absorber/should_load", function ( $should_load, $sub_plugin ) {
         return $should_load;
@@ -5135,11 +5164,11 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 	}
 ```
 
-And inside `boot()`'s `is_admin()` block, beside the existing `admin_notices` line:
+And inside `boot()`'s `is_admin()` block, beside the existing `all_admin_notices` line:
 
 ```php
 		if ( is_admin() ) {
-			add_action( 'admin_notices', [ self::class, 'render_notices' ] );
+			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
 			add_filter( 'wp_admin_notice_markup', [ self::class, 'filter_activation_error_markup' ] );
 		}
 ```
