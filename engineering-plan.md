@@ -735,8 +735,9 @@ Codeception + `lucatume/wp-browser`, run through **slic** (StellarWP convention;
   `…/conflict_policy` filter (last wins).
 - **`Loader`:** `require_once` happens exactly once; skipped when disabled / already-loaded /
   file missing / the `…/should_load` filter returns false; `boot()` is idempotent (double-boot
-  wires hooks once). Use `uopz` (as admin-notices' `WithUopz` trait does) to stub `is_plugin_active`,
-  `deactivate_plugins`, `wp_safe_redirect`.
+  wires hooks once). Use `UopzFunctions` from wp-browser (`setFunctionReturn()`; the trait's own
+  `@after` undoes every override) to stub `is_plugin_active`, `deactivate_plugins`,
+  `wp_safe_redirect`.
 - **Container / rebinding:** with a di52 container binding a custom `Registrar_Interface`,
   `Notices_Interface`, or `Conflict\Resolver_Interface`, the resolve helper returns the bound
   instance and the trampolines delegate to it; with no container, the local defaults are used.
@@ -744,6 +745,8 @@ Codeception + `lucatume/wp-browser`, run through **slic** (StellarWP convention;
 - **`Conflict\Resolver`:** DEACTIVATE calls `deactivate_plugins` + queues the merge notice +
   computes a redirect; DEFER does nothing; NOTICE_ONLY queues a conflict notice without
   deactivating; a callable `conflict_policy` (ProPanel-style) selects the branch per sub-plugin.
+  Never mock the `exit` after the redirect — stub `wp_safe_redirect` to throw `TestException`
+  instead, so the test stops where production would (see `tests/README.md`).
 - **`Activation`:** callback runs exactly once ever per slug; a second load does not re-run it;
   never runs without an `activation_callback`.
 - **`Notices`:** transient round-trips the redirect; buffer rewrite replaces the default fatal
@@ -786,8 +789,8 @@ CI: `.github/workflows/static-analysis.yml` (PHPStan level 5 via `composer test:
    `should_load` filter). Unit tests for the happy path + already-loaded/disabled/file-missing skips
    + container-bound vs local resolution.
 3. **Conflict handling** — `Conflict\Resolver` (+ `Resolver_Interface`): deactivate/defer/notice_only
-   + safe redirect; callable `conflict_policy` + `…/conflict_policy` filter. Tests with uopz-stubbed
-   WP functions.
+   + safe redirect; callable `conflict_policy` + `…/conflict_policy` filter. Tests with
+   `UopzFunctions`-stubbed WP functions.
 4. **Activation + Notices** — run-once `Activation` (+ `Activation_Interface`); self-contained
    `Notices` (+ `Notices_Interface`; transient queue + `plugins.php` buffer rewrite). Tests.
 5. **README** — intent, `composer require`, Strauss recommendation, `Config`/`Loader` API,

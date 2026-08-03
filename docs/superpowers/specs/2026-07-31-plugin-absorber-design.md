@@ -212,12 +212,22 @@ Every PR that ships behavior is covered. PRs 1, 2, 5 and 16 carry no tests of th
 is deliberate: 1 is boilerplate with no logic, 2 *is* the test harness, 5 is PHPStan
 configuration (verified by CI running it), and 16 is documentation plus the release tag.
 
-`WithUopz` follows the established StellarWP trait (see
-`learndash-seats-plus/tests/_support/Traits/WithUopz.php`). uopz is present in the slic image
-(`containers/slic/docker-php-ext-uopz.ini`) with `uopz.exit=1`, so `exit` is live by default —
-redirect tests call `uopz_allow_exit( false )` per test.
+Function stubbing uses `lucatume\WPBrowser\Traits\UopzFunctions` from wp-browser, which exists as
+far back as the `^3.6.5` floor this library pins; there is no local trait to keep in sync with the
+other plugin repos. `setFunctionReturn( $function, $value, $execute = false )` takes `true` as its
+third argument when `$value` is a closure to run in place of the function, and the trait's own
+`@after resetUopzAlterations()` undoes every override, so tests never write uopz teardown. uopz is
+present in the slic image (`containers/slic/docker-php-ext-uopz.ini`).
 
-- **3 — smoke.** WP bootstrapped; `uopz` loaded; `uopz_allow_exit( false )` works.
+`exit` is never mocked. `UopzFunctions::preventExit()` exists but is banned: neutralising `exit`
+lets a test keep running past the point production would have halted, so a test that should fail
+can report as passing and CI will not say otherwise. Redirect tests instead stub the function
+called immediately before `exit` — `wp_safe_redirect` — and throw
+`Nexcess\PluginAbsorber\Tests\Support\TestException` from it, then catch it and assert on the
+message. This is documented in `tests/README.md`.
+
+- **3 — smoke.** Three tests: WordPress is loaded; `uopz` is available; a function can be stubbed.
+  There is deliberately no test that `exit` can be neutralised.
 - **4 — `Config`.** Prefix regex rejects invalid characters (throws); `get_hook_prefix()` throws
   when unset; version set/get; container set/get/has; `reset()` clears all three.
 - **6 — `Conflict_Policy`.** Constant values; the three are distinct.
@@ -239,7 +249,8 @@ redirect tests call `uopz_allow_exit( false )` per test.
   skipped when disabled, when dependencies are unmet (and the notice is queued), when the constant
   is already defined, when the file is missing, and when `…/should_load` returns false; the filter
   receives `(bool, Sub_Plugin)`; `boot()` called twice wires each hook once, at priorities 1 and 2.
-- **12 — `Conflict\Resolver`.** With `uopz_allow_exit( false )`: DEACTIVATE calls
+- **12 — `Conflict\Resolver`.** With `wp_safe_redirect` stubbed to throw `TestException` in place
+  of the redirect-then-`exit` pair: DEACTIVATE calls
   `deactivate_plugins` **with** the network flag when network-active and **without** when not,
   queues the merge notice, and redirects; DEFER no-ops; NOTICE_ONLY queues without deactivating; a
   callable `conflict_policy` selects the branch per sub-plugin; disabled sub-plugins are skipped;

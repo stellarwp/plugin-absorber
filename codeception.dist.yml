@@ -1,5 +1,5 @@
-actor: Tester
 bootstrap: _bootstrap.php
+namespace: Nexcess\PluginAbsorber\Tests\Support
 paths:
     tests: tests
     output: tests/_output
