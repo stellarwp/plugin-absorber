@@ -27,7 +27,7 @@ use Nexcess\PluginAbsorber\Config;
 
 Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
 Config::set_version( GIVE_VERSION );        // optional
-Config::set_container( give()->container ); // optional — see Rebinding below
+Config::set_container( give()->container ); // optional — lets you rebind collaborators
 ```
 
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws

@@ -9,11 +9,17 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
+use RuntimeException;
 
 /**
  * @since 1.0.0
  */
 class ConfigTest extends WPTestCase {
+	public function setUp(): void {
+		parent::setUp();
+		Config::reset();
+	}
+
 	public function tearDown(): void {
 		Config::reset();
 		parent::tearDown();
@@ -64,6 +70,12 @@ class ConfigTest extends WPTestCase {
 		$this->expectException( Config_Exception::class );
 
 		Config::get_hook_prefix();
+	}
+
+	public function test_config_exception_is_catchable_as_a_runtime_exception(): void {
+		$this->expectException( RuntimeException::class );
+
+		Config::set_hook_prefix( 'give/recurring' );
 	}
 
 	public function test_it_stores_and_returns_the_version(): void {

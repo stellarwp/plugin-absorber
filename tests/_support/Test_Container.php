@@ -42,6 +42,11 @@ class Test_Container implements ContainerInterface {
 	}
 
 	/**
+	 * Reports whether the id is bound.
+	 *
+	 * Inherits DI52's permissive semantics: any existing *class* name reports true even with
+	 * nothing bound, because DI52 falls back to `class_exists()`. Interface names are unaffected.
+	 *
 	 * @inheritDoc
 	 */
 	public function has( string $id ) {
