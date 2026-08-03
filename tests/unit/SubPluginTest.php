@@ -79,6 +79,56 @@ class SubPluginTest extends WPTestCase {
 		];
 	}
 
+	/**
+	 * @dataProvider unusable_required_values
+	 *
+	 * @param mixed $value Value to put under a required key.
+	 */
+	public function test_it_rejects_a_required_key_that_is_not_a_non_empty_string( $value ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( 'slug' );
+
+		$this->make_sub_plugin( [ 'slug' => $value ] );
+	}
+
+	/**
+	 * An array is the one that matters: it survives a truthiness check and then casts to the
+	 * string "Array", which every sub-plugin making the same mistake would collide on.
+	 *
+	 * @return array<string,array{0:mixed}>
+	 */
+	public function unusable_required_values(): array {
+		return [
+			'empty string' => [ '' ],
+			'array'        => [ [ 'give', 'recurring' ] ],
+			'null'         => [ null ],
+			'integer'      => [ 42 ],
+			'object'       => [ new \stdClass() ],
+		];
+	}
+
+	/**
+	 * @dataProvider callable_only_keys
+	 *
+	 * @param string $key Key that only ever holds a callable.
+	 */
+	public function test_it_rejects_a_callable_only_key_that_cannot_be_called( string $key ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( $key );
+
+		$this->make_sub_plugin( [ $key => 'absorber_no_such_function' ] );
+	}
+
+	/**
+	 * @return array<string,array{0:string}>
+	 */
+	public function callable_only_keys(): array {
+		return [
+			'dependency_check'    => [ 'dependency_check' ],
+			'activation_callback' => [ 'activation_callback' ],
+		];
+	}
+
 	public function test_it_exposes_the_required_values(): void {
 		$sub_plugin = $this->make_sub_plugin();
 
@@ -141,7 +191,54 @@ class SubPluginTest extends WPTestCase {
 		);
 	}
 
-	public function test_it_detects_a_normally_active_standalone(): void {
+	public function test_it_reports_a_configured_standalone(): void {
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+
+		$this->assertTrue( $sub_plugin->has_standalone_plugin() );
+		$this->assertSame( 'give-recurring/give-recurring.php', $sub_plugin->get_standalone_plugin_basename() );
+	}
+
+	/**
+	 * The basename is what later reaches deactivate_plugins() and the activation-error rewrite,
+	 * so asserting only the return value would let the wrong string be passed unnoticed.
+	 */
+	public function test_it_passes_the_standalone_basename_to_wordpress(): void {
+		$received = [];
+
+		$this->setFunctionReturn(
+			'is_plugin_active',
+			static function ( $basename ) use ( &$received ) {
+				$received['is_plugin_active'] = $basename;
+
+				return true;
+			},
+			true
+		);
+		$this->setFunctionReturn(
+			'is_plugin_active_for_network',
+			static function ( $basename ) use ( &$received ) {
+				$received['is_plugin_active_for_network'] = $basename;
+
+				return true;
+			},
+			true
+		);
+
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+
+		$sub_plugin->is_standalone_plugin_active();
+		$sub_plugin->is_standalone_plugin_network_active();
+
+		$this->assertSame(
+			[
+				'is_plugin_active'             => 'give-recurring/give-recurring.php',
+				'is_plugin_active_for_network' => 'give-recurring/give-recurring.php',
+			],
+			$received
+		);
+	}
+
+	public function test_it_delegates_the_active_check_to_wordpress(): void {
 		$this->setFunctionReturn( 'is_plugin_active', true );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
 
@@ -151,8 +248,13 @@ class SubPluginTest extends WPTestCase {
 		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
 	}
 
+	/**
+	 * WordPress's own is_plugin_active() ORs in the network check, so a network-active plugin
+	 * reports true from both. Stubbing is_plugin_active false here would describe a state
+	 * WordPress cannot produce.
+	 */
 	public function test_it_detects_a_network_active_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', false );
+		$this->setFunctionReturn( 'is_plugin_active', true );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
 		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
@@ -277,6 +379,116 @@ class SubPluginTest extends WPTestCase {
 		$this->assertSame(
 			'Needs Give.',
 			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Needs Give.' ] )->get_dependency_notice_message()
+		);
+	}
+
+	/**
+	 * is_callable() is true for any string naming an existing function, and a policy read from
+	 * an option can easily be one. Invoking date() here would be a fatal on PHP 8.
+	 *
+	 * @dataProvider function_names
+	 *
+	 * @param string $name Name of a real PHP function.
+	 */
+	public function test_a_policy_string_is_never_invoked_as_a_function( string $name ): void {
+		$this->assertSame(
+			$name,
+			$this->make_sub_plugin( [ 'conflict_policy' => $name ] )->get_conflict_policy()
+		);
+	}
+
+	/**
+	 * @dataProvider function_names
+	 *
+	 * @param string $name Name of a real PHP function.
+	 */
+	public function test_a_message_string_is_never_invoked_as_a_function( string $name ): void {
+		$this->assertSame(
+			$name,
+			$this->make_sub_plugin( [ 'conflict_notice_message' => $name ] )->get_conflict_notice_message()
+		);
+	}
+
+	/**
+	 * @return array<string,array{0:string}>
+	 */
+	public function function_names(): array {
+		return [
+			'date'  => [ 'date' ],
+			'flush' => [ 'flush' ],
+			'key'   => [ 'key' ],
+		];
+	}
+
+	public function test_a_non_scalar_filter_return_yields_no_policy(): void {
+		add_filter(
+			'give/plugin_absorber/conflict_policy',
+			static function () {
+				return new \WP_Error( 'nope', 'Nope.' );
+			}
+		);
+
+		$this->assertSame(
+			'',
+			$this->make_sub_plugin()->get_conflict_policy(),
+			'Casting an object would be a fatal; an empty string is simply not a valid policy.'
+		);
+	}
+
+	public function test_the_conflict_policy_needs_a_hook_prefix(): void {
+		Config::reset();
+
+		$this->expectException( Config_Exception::class );
+
+		$this->make_sub_plugin()->get_conflict_policy();
+	}
+
+	public function test_the_enabled_callable_receives_the_sub_plugin(): void {
+		$received   = null;
+		$sub_plugin = $this->make_sub_plugin(
+			[
+				'enabled' => static function ( $passed ) use ( &$received ) {
+					$received = $passed;
+
+					return true;
+				},
+			]
+		);
+
+		$sub_plugin->is_enabled();
+
+		$this->assertSame( $sub_plugin, $received );
+	}
+
+	public function test_the_dependency_check_receives_the_sub_plugin(): void {
+		$received   = null;
+		$sub_plugin = $this->make_sub_plugin(
+			[
+				'dependency_check' => static function ( $passed ) use ( &$received ) {
+					$received = $passed;
+
+					return true;
+				},
+			]
+		);
+
+		$sub_plugin->are_dependencies_met();
+
+		$this->assertSame( $sub_plugin, $received );
+	}
+
+	public function test_the_conflict_notice_message_falls_back_to_the_given_default(): void {
+		$this->assertSame(
+			'Bundled now.',
+			$this->make_sub_plugin()->get_conflict_notice_message( 'Bundled now.' )
+		);
+	}
+
+	public function test_a_configured_conflict_notice_message_beats_the_default(): void {
+		$this->assertSame(
+			'Configured.',
+			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Configured.' ] )
+				->get_conflict_notice_message( 'Default.' )
 		);
 	}
 
