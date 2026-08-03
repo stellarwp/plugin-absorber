@@ -6,44 +6,86 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+# This workflow only reads the repository. Narrow the token accordingly.
+permissions:
+  contents: read
+
+# A superseded PR run is a result nobody is waiting on any more. Pushes to a
+# long-lived branch are left alone so their history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   phpstan:
     name: phpstan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
+      # The library's own floor, which is also what config.platform.php pins
+      # dependency resolution to. Matching the two means this job analyses the
+      # exact dependency tree a consumer on the minimum supported PHP gets.
       - name: Configure PHP environment
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.0"
+          php-version: "7.4"
           extensions: mbstring, intl
           coverage: none
 
+      # ext-* only, never the blanket --ignore-platform-reqs. The blanket form
+      # also switches off the config.platform.php pin, which resolves dev
+      # dependencies requiring PHP 8.1+ that cannot run here at all -- PHPStan
+      # would then check src/ against signatures from code this library can
+      # never load. wp-browser hard-requires ext-mysqli, ext-zip, and
+      # ext-fileinfo that a static-analysis run has no use for; those are what
+      # actually need waiving.
       - uses: ramsey/composer-install@v3
         with:
-          composer-options: "--ignore-platform-reqs --optimize-autoloader"
+          composer-options: "--ignore-platform-req=ext-* --optimize-autoloader"
           dependency-versions: highest
 
+      # PHPStan 1.x prints "No files found to analyse" and still exits 0. If
+      # src/ ever moves out from under the paths setting, analysis would stop
+      # running while the check stayed green, and every later task's "keep
+      # test:analysis green" gate would silently become a no-op.
+      - name: Assert there is something to analyse
+        run: |
+          count=$(find src -name '*.php' -type f | wc -l)
+          if [ "${count}" -lt 1 ]; then
+            echo "phpstan.neon.dist points at src/, which holds no PHP files. Analysis would pass without analysing anything." >&2
+            exit 1
+          fi
+
+      # Cache entries are immutable, so the write key carries the run id to keep
+      # it unique and restore-keys does the actual matching, longest prefix
+      # first. head_ref is the branch on a pull_request, where ref_name would be
+      # the far less legible "N/merge".
       - name: Restore PHPStan cache
         uses: actions/cache/restore@v4
         with:
           path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          key: v1-phpstan-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-
+            v1-phpstan-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-
             v1-phpstan-${{ runner.os }}-
             v1-phpstan-
 
       - name: Run PHPStan static analysis
         run: composer test:analysis
 
+      # Saved even on failure: the result cache is per-file and records errors
+      # as legitimately as passes, so the next run still skips unchanged files.
       - name: Save PHPStan cache
         uses: actions/cache/save@v4
         if: ${{ !cancelled() }}
         with:
           path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          key: v1-phpstan-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-${{ github.run_id }}
