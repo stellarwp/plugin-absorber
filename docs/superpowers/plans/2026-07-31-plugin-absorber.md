@@ -32,7 +32,7 @@ Every task's requirements implicitly include this section.
   ```
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
-- **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`.
+- **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
 
 ## File Structure
 
@@ -864,6 +864,11 @@ Expected: all matrix legs green. **Do not proceed until they are** — every lat
 > `RuntimeException`. This throws `Config_Exception`, which extends `RuntimeException`, so the
 > documented contract still holds while callers get one catchable type across the whole library.
 
+> **Second deviation, deliberate (added 2026-08-03):** `set_hook_prefix()` also rejects the empty
+> string. The character-class check alone would accept `''` — it contains no invalid character —
+> and the failure would resurface at `get_hook_prefix()` as the misleading "You must call
+> `Config::set_hook_prefix()`" long after the real mistake.
+
 - [ ] **Step 1: Cut the branch**
 
 ```bash
@@ -976,8 +981,18 @@ class ConfigTest extends WPTestCase {
 }
 ```
 
-> `lucatume\DI52\Container` implements `StellarWP\ContainerContract\ContainerInterface` and is the
-> dev-only container this library tests against.
+> **CORRECTION (2026-07-31, verified against vendor/):** `lucatume\DI52\Container` does **not**
+> implement `StellarWP\ContainerContract\ContainerInterface`. It implements `ArrayAccess` and
+> **PSR's** `Psr\Container\ContainerInterface`. `stellarwp/container-contract` ships an adapter
+> example at `examples/di52/Container.php` precisely because DI52 must be wrapped.
+> `new Container()` therefore cannot be passed to `Config::set_container()` — it is a `TypeError`.
+>
+> Tests must use the test-support adapter `Nexcess\PluginAbsorber\Tests\Support\Test_Container`
+> (wraps a DI52 container, implements the StellarWP contract's four methods: `bind`, `get`,
+> `has`, `singleton`). This affects **Task 4 and Task 10** — both of their test blocks below still
+> show the incorrect `use lucatume\DI52\Container;`. `Config::set_container()`'s signature is
+> unchanged: the StellarWP contract stays the public API, per the Global Constraint that
+> `stellarwp/container-contract` is the only production dependency.
 
 - [ ] **Step 3: Run it to verify it fails**
 
