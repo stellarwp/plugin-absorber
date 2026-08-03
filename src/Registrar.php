@@ -19,8 +19,10 @@ class Registrar implements Registrar_Interface {
 	private $sub_plugins = [];
 
 	/**
-	 * Assigning by key rather than appending is what makes a re-registration replace in place:
-	 * the entry keeps its original position, so a host that registers conditionally in two code
+	 * Register a sub-plugin, replacing any earlier one with the same slug.
+	 *
+	 * Assigning by key rather than appending is what makes the replacement happen in place: the
+	 * entry keeps its original position, so a host that registers conditionally from two code
 	 * paths gets one entry and an unchanged load order.
 	 *
 	 * @since 1.0.0

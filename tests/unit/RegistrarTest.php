@@ -44,18 +44,7 @@ class RegistrarTest extends WPTestCase {
 		$this->assertSame( [ 'give-recurring' => $sub_plugin ], $registrar->all() );
 	}
 
-	public function test_it_keeps_multiple_registrations(): void {
-		$registrar = new Registrar();
-
-		$registrar->register( $this->make_sub_plugin( 'give-recurring' ) );
-		$registrar->register( $this->make_sub_plugin( 'give-fee-recovery' ) );
-
-		$this->assertCount( 2, $registrar->all() );
-		$this->assertArrayHasKey( 'give-recurring', $registrar->all() );
-		$this->assertArrayHasKey( 'give-fee-recovery', $registrar->all() );
-	}
-
-	public function test_it_preserves_registration_order(): void {
+	public function test_it_keeps_multiple_registrations_in_order(): void {
 		$registrar = new Registrar();
 
 		$registrar->register( $this->make_sub_plugin( 'give-recurring' ) );

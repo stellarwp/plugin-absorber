@@ -60,6 +60,10 @@ When a sub-plugin's standalone counterpart is still active:
 The load guard and the standalone basename are deliberately **two separate keys**. No constant does
 double duty as both a guard and a path resolver.
 
+Sub-plugins load in **registration order**, so register a dependency before anything that extends it
+at include time. Registering the same slug twice replaces the entry in place rather than moving it,
+which keeps that order stable for a host that registers conditionally from more than one code path.
+
 A value that is a `string` is always used as a value, never called — even when a function of that
 name exists. `dependency_check` and `activation_callback` are the two keys that are only ever
 callables, and a value under either that cannot be called is rejected when the sub-plugin is
