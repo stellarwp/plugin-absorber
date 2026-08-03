@@ -1540,6 +1540,13 @@ git checkout 06-conflict-policy && git checkout -b 07-sub-plugin
 
 `wp-admin/includes/plugin.php` is required in `setUp()` because uopz cannot stub a function that does not yet exist.
 
+> **CORRECTION (2026-08-03, hit while implementing):** the fixture helper below is named `make()`,
+> which collides with `Codeception\Test\Unit::make()` — a public method on `WPTestCase`'s ancestor.
+> Declaring it `private` is a fatal at class-compile time: *"Access level to
+> SubPluginTest::make() must be public"*. The suite does not fail, it fails to start. Renamed to
+> `make_sub_plugin()` throughout. Any later task adding a fixture helper must avoid Codeception's
+> own `Unit` API — `make`, `makeEmpty`, `construct`, and `constructEmpty` are all taken.
+
 ```php
 <?php
 /**
