@@ -3701,6 +3701,13 @@ Append these methods, and extend `reset()` as shown at the end:
 	 */
 	public static function load_all(): void {
 		foreach ( self::all() as $sub_plugin ) {
+			// Registrar_Interface::all() only declares `array`. A host binding its own registrar
+			// that returns anything else would otherwise fatal inside plugins_loaded on the first
+			// predicate call -- the exact failure this library exists to prevent.
+			if ( ! $sub_plugin instanceof Sub_Plugin ) {
+				continue;
+			}
+
 			self::load( $sub_plugin );
 		}
 	}
