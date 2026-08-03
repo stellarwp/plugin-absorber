@@ -1540,6 +1540,32 @@ git checkout 06-conflict-policy && git checkout -b 07-sub-plugin
 
 `wp-admin/includes/plugin.php` is required in `setUp()` because uopz cannot stub a function that does not yet exist.
 
+> **Deviations, deliberate (added 2026-08-03, from the PR 7 review):**
+>
+> 1. **`is_callable()` is no longer the type discriminator.** It returns true for *any* string
+>    naming an existing function, and `conflict_policy` is explicitly designed to be readable from
+>    an option. A stored value of `date` or `flush` would have been invoked rather than used —
+>    a `TypeError` at `plugins_loaded` on PHP 8, a silent `''` on 7.4. Strings and bools are now
+>    always values; only real callables are called.
+> 2. **The constructor type-checks.** Required keys must be non-empty *strings*: an array survived
+>    the old `empty()` check and then cast to `"Array"`, which every misconfigured sub-plugin would
+>    have collided on as its registry key, activation key, and notice id. `dependency_check` and
+>    `activation_callback` must be callable when present — `is_callable()` at read time conflated
+>    "not configured" with "configured but uncallable", so a `dependency_check` pointing at a
+>    private method reported dependencies *met* and let the load proceed into the fatal it exists
+>    to prevent.
+> 3. **`is_standalone_plugin_active()` no longer ORs in `is_plugin_active_for_network()`.** Verified
+>    against core: `is_plugin_active()` already does, so the OR was dead code costing a second
+>    `get_site_option()` per sub-plugin per request. The test that pinned it described a state
+>    WordPress cannot produce.
+> 4. **`load_plugin_functions()` guards on `is_plugin_active_for_network`,** not `is_plugin_active`.
+>    Both live in the same file, but a third party defining an `is_plugin_active` shim — a known WP
+>    idiom — would short-circuit the require and leave the network predicate undefined.
+> 5. **`get_conflict_notice_message()` takes a `$default`.** Task 14 has no fallback of its own, so
+>    an unconfigured host would have been shown WordPress's raw fatal-error screen.
+> 6. **The filter result is `is_scalar()`-guarded.** A filter returning `WP_Error` would otherwise
+>    be a fatal on cast; `''` is simply not a valid policy and routes to the conservative branch.
+
 > **CORRECTION (2026-08-03, hit while implementing):** the fixture helper below is named `make()`,
 > which collides with `Codeception\Test\Unit::make()` — a public method on `WPTestCase`'s ancestor.
 > Declaring it `private` is a fatal at class-compile time: *"Access level to
@@ -4949,7 +4975,15 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 			return $markup;
 		}
 
-		$message = $sub_plugin->get_conflict_notice_message();
+		// The default matters: without one, a host that never configured a message gets
+		// WordPress's raw "triggered a fatal error" screen -- the exact outcome this rewrite
+		// exists to prevent -- and the rewrite would silently do nothing.
+		$message = $sub_plugin->get_conflict_notice_message(
+			sprintf(
+				'%s is bundled with this plugin and loads automatically. The standalone copy cannot be activated alongside it.',
+				$sub_plugin->get_slug()
+			)
+		);
 
 		if ( $message === '' ) {
 			return $markup;
