@@ -8,7 +8,11 @@ namespace Nexcess\PluginAbsorber;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 
 /**
- * One registered sub-plugin: its configuration and every decision about it.
+ * One registered sub-plugin: its configuration, and the answers that configuration alone decides.
+ *
+ * Deliberately not a window onto WordPress. Asking whether the standalone counterpart is active is
+ * a question about the site rather than about this configuration, and it belongs to
+ * Plugin_State_Interface; this object only names the plugin to ask about.
  *
  * @since 1.0.0
  */
@@ -118,7 +122,7 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_conflict_policy(): string {
-		$policy = $this->config['conflict_policy'] ?? Conflict_Policy::DEACTIVATE;
+		$policy = $this->config['conflict_policy'] ?? Conflict_Policy::default();
 
 		$policy = apply_filters(
 			Config::get_hook_prefix() . '/plugin_absorber/conflict_policy',
@@ -171,46 +175,6 @@ class Sub_Plugin {
 	 */
 	public function get_standalone_plugin_basename(): string {
 		return (string) ( $this->config['standalone_plugin_basename'] ?? '' );
-	}
-
-	/**
-	 * Whether the standalone is active, site-wide or network-wide.
-	 *
-	 * WordPress's own is_plugin_active() already ORs in the network check, so asking it again
-	 * here would only buy a second get_site_option() per sub-plugin per request.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_standalone_plugin_active(): bool {
-		if ( ! $this->has_standalone_plugin() ) {
-			return false;
-		}
-
-		$this->load_plugin_functions();
-
-		return is_plugin_active( $this->get_standalone_plugin_basename() );
-	}
-
-	/**
-	 * Whether the standalone is network-activated.
-	 *
-	 * Deactivating it requires passing $network_wide to deactivate_plugins(); without that the
-	 * call silently no-ops and the resolver redirects forever.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_standalone_plugin_network_active(): bool {
-		if ( ! $this->has_standalone_plugin() ) {
-			return false;
-		}
-
-		$this->load_plugin_functions();
-
-		return is_plugin_active_for_network( $this->get_standalone_plugin_basename() );
 	}
 
 	/**
@@ -312,22 +276,5 @@ class Sub_Plugin {
 		}
 
 		return $value( $this );
-	}
-
-	/**
-	 * WordPress only loads these in the admin, and we run at plugins_loaded on every request.
-	 *
-	 * Guarded on is_plugin_active_for_network() rather than is_plugin_active(), because the
-	 * latter is a common third-party shim: something else defining it would short-circuit this
-	 * and leave the network predicate calling a function that was never loaded.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	private function load_plugin_functions(): void {
-		if ( ! function_exists( 'is_plugin_active_for_network' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		}
 	}
 }

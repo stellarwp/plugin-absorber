@@ -177,18 +177,17 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertFalse( $sub_plugin->has_standalone_plugin() );
 		$this->assertSame( '', $sub_plugin->get_standalone_plugin_basename() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
 	}
 
-	public function test_it_never_calls_wordpress_without_a_standalone(): void {
+	/**
+	 * Whether the standalone is active is a question about the site, and this object answers only
+	 * from its own configuration. Stubbing WordPress into saying yes must change nothing here.
+	 */
+	public function test_it_asks_wordpress_nothing_about_the_standalone(): void {
 		$this->setFunctionReturn( 'is_plugin_active', true );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
-		$this->assertFalse(
-			$this->make_sub_plugin()->is_standalone_plugin_active(),
-			'Absent a standalone basename the predicate must short-circuit.'
-		);
+		$this->assertFalse( $this->make_sub_plugin()->has_standalone_plugin() );
 	}
 
 	public function test_it_reports_a_configured_standalone(): void {
@@ -196,80 +195,6 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertTrue( $sub_plugin->has_standalone_plugin() );
 		$this->assertSame( 'give-recurring/give-recurring.php', $sub_plugin->get_standalone_plugin_basename() );
-	}
-
-	/**
-	 * The basename is what later reaches deactivate_plugins() and the activation-error rewrite,
-	 * so asserting only the return value would let the wrong string be passed unnoticed.
-	 */
-	public function test_it_passes_the_standalone_basename_to_wordpress(): void {
-		$received = [];
-
-		$this->setFunctionReturn(
-			'is_plugin_active',
-			static function ( $basename ) use ( &$received ) {
-				$received['is_plugin_active'] = $basename;
-
-				return true;
-			},
-			true
-		);
-		$this->setFunctionReturn(
-			'is_plugin_active_for_network',
-			static function ( $basename ) use ( &$received ) {
-				$received['is_plugin_active_for_network'] = $basename;
-
-				return true;
-			},
-			true
-		);
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$sub_plugin->is_standalone_plugin_active();
-		$sub_plugin->is_standalone_plugin_network_active();
-
-		$this->assertSame(
-			[
-				'is_plugin_active'             => 'give-recurring/give-recurring.php',
-				'is_plugin_active_for_network' => 'give-recurring/give-recurring.php',
-			],
-			$received
-		);
-	}
-
-	public function test_it_delegates_the_active_check_to_wordpress(): void {
-		$this->setFunctionReturn( 'is_plugin_active', true );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
-	}
-
-	/**
-	 * WordPress's own is_plugin_active() ORs in the network check, so a network-active plugin
-	 * reports true from both. Stubbing is_plugin_active false here would describe a state
-	 * WordPress cannot produce.
-	 */
-	public function test_it_detects_a_network_active_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', true );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_network_active() );
-	}
-
-	public function test_it_detects_an_inactive_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', false );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_active() );
 	}
 
 	public function test_dependencies_are_met_without_a_check(): void {
@@ -285,8 +210,12 @@ class SubPluginTest extends WPTestCase {
 		);
 	}
 
-	public function test_the_conflict_policy_defaults_to_deactivate(): void {
-		$this->assertSame( Conflict_Policy::DEACTIVATE, $this->make_sub_plugin()->get_conflict_policy() );
+	/**
+	 * Asserted against Conflict_Policy::default() rather than a named policy: which policy is the
+	 * default is that class's to state, and this only proves an unconfigured sub-plugin asks it.
+	 */
+	public function test_an_unconfigured_conflict_policy_falls_back_to_the_library_default(): void {
+		$this->assertSame( Conflict_Policy::default(), $this->make_sub_plugin()->get_conflict_policy() );
 	}
 
 	public function test_it_resolves_a_string_conflict_policy(): void {

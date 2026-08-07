@@ -1554,17 +1554,45 @@ git checkout 06-conflict-policy && git checkout -b 07-sub-plugin
 >    "not configured" with "configured but uncallable", so a `dependency_check` pointing at a
 >    private method reported dependencies *met* and let the load proceed into the fatal it exists
 >    to prevent.
-> 3. **`is_standalone_plugin_active()` no longer ORs in `is_plugin_active_for_network()`.** Verified
->    against core: `is_plugin_active()` already does, so the OR was dead code costing a second
+> 3. **The active check no longer ORs in `is_plugin_active_for_network()`.** Verified against core:
+>    `is_plugin_active()` already does, so the OR was dead code costing a second
 >    `get_site_option()` per sub-plugin per request. The test that pinned it described a state
->    WordPress cannot produce.
-> 4. **`load_plugin_functions()` guards on `is_plugin_active_for_network`,** not `is_plugin_active`.
->    Both live in the same file, but a third party defining an `is_plugin_active` shim — a known WP
->    idiom — would short-circuit the require and leave the network predicate undefined.
-> 5. **`get_conflict_notice_message()` takes a `$default`.** Task 14 has no fallback of its own, so
+>    WordPress cannot produce. *(The check has since moved off `Sub_Plugin` — see deviation 8.)*
+> 4. **`get_conflict_notice_message()` takes a `$default`.** Task 14 has no fallback of its own, so
 >    an unconfigured host would have been shown WordPress's raw fatal-error screen.
-> 6. **The filter result is `is_scalar()`-guarded.** A filter returning `WP_Error` would otherwise
+> 5. **The filter result is `is_scalar()`-guarded.** A filter returning `WP_Error` would otherwise
 >    be a fatal on cast; `''` is simply not a valid policy and routes to the conservative branch.
+
+> **Deviations, deliberate (added 2026-08-07, from the PR 7 follow-up review):**
+>
+> 6. **`Conflict_Policy` owns the default policy.** `get_conflict_policy()` used to name
+>    `Conflict_Policy::DEACTIVATE` as its fallback, which put "which policy applies when none is
+>    configured" in the object that merely holds one sub-plugin's config. It asks
+>    `Conflict_Policy::default()` now. The value is unchanged, and the two fallbacks stay
+>    deliberately different: *unconfigured* means the sub-plugin accepted the default, whereas an
+>    *unrecognised* policy — the conservative `NOTICE_ONLY` branch a dispatching caller takes — is
+>    a value nobody chose, and reading a typo as consent to deactivate is the outcome worth
+>    refusing.
+> 7. **`Plugin_State_Interface` is the library's only route to WordPress's plugin functions.**
+>    `Sub_Plugin` was a config value object that also queried global plugin state and
+>    `require_once`'d `wp-admin/includes/plugin.php`. That is a second reason to change, and it is
+>    what forced this task's tests to stub WordPress functions to exercise plain config reads. The
+>    gateway owns the reads *and* the deactivation, so the include exists once, guarded on
+>    `deactivate_plugins` — a function the library actually calls, and still not `is_plugin_active`,
+>    whose third-party shims would short-circuit the require. This supersedes the guard named in
+>    deviation 4 of the original block.
+> 8. **`is_standalone_plugin_active()` is deleted, not delegated.** Delegating would have bought
+>    `Sub_Plugin` a collaborator to answer a question that was never about its configuration. It
+>    keeps `has_standalone_plugin()` and `get_standalone_plugin_basename()` — which name the plugin
+>    to ask about — and the consumer pairs them with the gateway. Wiring that up needs `Loader` and
+>    `Conflict\Resolver`, neither of which exists at this task, so it lands with Task 12.
+> 9. **`is_standalone_plugin_network_active()` is deleted outright.** No production caller ever
+>    appeared. Its stated reason for existing — that `deactivate_plugins()` needs a computed
+>    `$network_wide` — was disproved in Task 12: core's `null` default already covers both scopes,
+>    and passing a computed `true` *skips* the blog branch.
+>
+> `Sub_Plugin` now makes no global WordPress call beyond the `defined()` that is intrinsic to it,
+> and its tests no longer stub `is_plugin_active`.
 
 > **CORRECTION (2026-08-03, hit while implementing):** the fixture helper below is named `make()`,
 > which collides with `Codeception\Test\Unit::make()` — a public method on `WPTestCase`'s ancestor.
