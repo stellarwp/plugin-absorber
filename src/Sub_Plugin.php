@@ -21,11 +21,11 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  *     bundled_plugin_file: string,
  *     plugin_loaded_constant: string,
  *     enabled?: bool|callable,
- *     conflict_policy?: string|callable,
+ *     conflict_policy?: string,
  *     standalone_plugin_basename?: string,
  *     dependency_check?: callable,
- *     conflict_notice_message?: string|callable,
- *     dependency_notice_message?: string|callable,
+ *     conflict_notice_message?: string,
+ *     dependency_notice_message?: string,
  *     activation_callback?: callable
  * }
  */
@@ -47,6 +47,20 @@ class Sub_Plugin {
 	 * @var string[]
 	 */
 	private const CALLABLE_KEYS = [ 'dependency_check', 'activation_callback' ];
+
+	/**
+	 * Optional keys that are only ever a string, never a callable.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string[]
+	 */
+	private const STRING_KEYS = [
+		'standalone_plugin_basename',
+		'conflict_policy',
+		'conflict_notice_message',
+		'dependency_notice_message',
+	];
 
 	/**
 	 * Validated configuration, keyed as the constructor accepts it.
@@ -91,9 +105,19 @@ class Sub_Plugin {
 			}
 		}
 
-		// The loops above have proved every key this class reads without a guard of its own. The
-		// rest are read through resolve_callable(), which returns anything it cannot call as-is,
-		// and through the is_scalar() casts in resolve_message() and get_conflict_policy().
+		// These keys take a value, not a decision. A closure under one of them would render as the
+		// string "Closure" at best, so it is worth a loud failure at registration rather than a
+		// puzzling notice much later; the filters are how these are decided at runtime.
+		foreach ( self::STRING_KEYS as $key ) {
+			if ( isset( $config[ $key ] ) && ! is_string( $config[ $key ] ) ) {
+				throw new Config_Exception(
+					"Sub-plugin config key must be a string, and is filterable at runtime: {$key}"
+				);
+			}
+		}
+
+		// The loops above have proved every key this class reads. Only `enabled` is read without a
+		// type behind it, and its two forms -- a bool and a callable -- cannot be confused.
 		/** @var Sub_Plugin_Config $config */
 		$this->config = $config;
 	}
@@ -130,7 +154,7 @@ class Sub_Plugin {
 	}
 
 	/**
-	 * Resolve the policy from a string or callable, then let the filter override it.
+	 * The configured policy, after the filter has had the final say.
 	 *
 	 * The result is not checked against the known policies here: a filter may legitimately
 	 * return anything, and rejecting it at this boundary would hide the override rather than
@@ -143,18 +167,10 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_conflict_policy(): string {
-		$policy = $this->config['conflict_policy'] ?? Conflict_Policy::default();
-
-		$policy = apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/conflict_policy',
-			$this->resolve_callable( $policy ),
-			$this
+		return $this->filter_string(
+			'conflict_policy',
+			(string) ( $this->config['conflict_policy'] ?? Conflict_Policy::default() )
 		);
-
-		// A filter returning an object or an array is a mistake, and casting one would be a
-		// fatal at plugins_loaded. An empty string is not a valid policy, so it routes to the
-		// conservative branch instead.
-		return is_scalar( $policy ) ? (string) $policy : '';
 	}
 
 	/**
@@ -163,7 +179,12 @@ class Sub_Plugin {
 	 * @return bool
 	 */
 	public function is_enabled(): bool {
-		return (bool) $this->resolve_callable( $this->config['enabled'] ?? true );
+		$enabled = $this->config['enabled'] ?? true;
+
+		// A bool is never callable, so nothing here is guessing at intent the way it would if this
+		// key also took a string. Every callable form works, a plain function name included, and a
+		// callable is re-evaluated on each call rather than resolved once at registration.
+		return (bool) ( is_callable( $enabled ) ? $enabled( $this ) : $enabled );
 	}
 
 	/**
@@ -223,33 +244,37 @@ class Sub_Plugin {
 	 *
 	 * @param string $default Used when nothing is configured.
 	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
 	 * @return string
 	 */
 	public function get_conflict_notice_message( string $default = '' ): string {
-		$message = $this->resolve_message( $this->config['conflict_notice_message'] ?? '' );
+		$message = (string) ( $this->config['conflict_notice_message'] ?? '' );
 
-		return $message !== '' ? $message : $default;
+		return $this->filter_string( 'conflict_notice_message', $message !== '' ? $message : $default );
 	}
 
 	/**
 	 * Shown when a dependency_check fails. Falls back to a generic, untranslated sentence —
-	 * pass a callable returning __() to localise it.
+	 * hook the filter to localise it, which also runs late enough for the textdomain to be loaded.
 	 *
 	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return string
 	 */
 	public function get_dependency_notice_message(): string {
-		$message = $this->resolve_message( $this->config['dependency_notice_message'] ?? '' );
+		$message = (string) ( $this->config['dependency_notice_message'] ?? '' );
 
-		if ( $message !== '' ) {
-			return $message;
+		if ( $message === '' ) {
+			$message = sprintf(
+				'%s could not be loaded because its requirements are not met.',
+				$this->get_slug()
+			);
 		}
 
-		return sprintf(
-			'%s could not be loaded because its requirements are not met.',
-			$this->get_slug()
-		);
+		return $this->filter_string( 'dependency_notice_message', $message );
 	}
 
 	/**
@@ -264,38 +289,36 @@ class Sub_Plugin {
 	}
 
 	/**
-	 * Resolve a string-or-callable message.
+	 * Let the host have the last word on a configured string.
+	 *
+	 * This is where a runtime decision belongs. The alternative — accepting a callable under the
+	 * key itself — cannot work for a key whose value is a string, because a string naming a
+	 * function is indistinguishable from a string meaning itself, and which one you got would
+	 * depend on what else the site happens to have loaded.
+	 *
+	 * Filtering last, after the configured value and any fallback, is also what makes deferred
+	 * translation possible: the hook fires when the message is asked for rather than when the
+	 * sub-plugin is registered, by which time the textdomain is loaded.
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param string|callable $message Configured message, or a callable returning one.
+	 * @param string $hook  Hook name, less the prefix this library shares.
+	 * @param string $value Value to filter.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return string
 	 */
-	private function resolve_message( $message ): string {
-		$message = $this->resolve_callable( $message );
+	private function filter_string( string $hook, string $value ): string {
+		$filtered = apply_filters(
+			Config::get_hook_prefix() . '/plugin_absorber/' . $hook,
+			$value,
+			$this
+		);
 
-		return is_scalar( $message ) ? (string) $message : '';
-	}
-
-	/**
-	 * Call a configured value if it is meant to be called, and return it as-is otherwise.
-	 *
-	 * Strings are returned untouched even when a function of that name exists. is_callable()
-	 * alone would treat a policy or a message read from an option as a function to invoke —
-	 * "date" and "flush" are both valid function names and plausible option values.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param string|bool|callable $value Configured value, or a callable returning one.
-	 *
-	 * @return string|bool
-	 */
-	private function resolve_callable( $value ) {
-		if ( is_string( $value ) || is_bool( $value ) || ! is_callable( $value ) ) {
-			return $value;
-		}
-
-		return $value( $this );
+		// A filter returning an object or an array is a mistake, and casting one would be a fatal
+		// at plugins_loaded. An empty string is not a valid policy and renders no notice, so both
+		// route to the conservative branch instead.
+		return is_scalar( $filtered ) ? (string) $filtered : '';
 	}
 }
