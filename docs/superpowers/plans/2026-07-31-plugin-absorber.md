@@ -32,7 +32,8 @@ Every task's requirements implicitly include this section.
   ```
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
-- **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`.
+- **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
+- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** The same applies to `Registrar` and `Loader` when tasks 8 and 9 land.
 
 ## File Structure
 
@@ -854,15 +855,38 @@ Expected: all matrix legs green. **Do not proceed until they are** — every lat
   - `Config_Exception extends \RuntimeException`
   - `Config::set_hook_prefix( string ): void` — throws `Config_Exception` on characters outside `[a-zA-Z0-9_-]`
   - `Config::get_hook_prefix(): string` — throws `Config_Exception` when unset
-  - `Config::set_version( string ): void` / `Config::get_version(): string`
   - `Config::set_container( ContainerInterface ): void` / `get_container(): ?ContainerInterface` / `has_container(): bool`
-  - `Config::reset(): void`
 
-  Every later task calls `Config::set_hook_prefix()` in `setUp()` and `Config::reset()` in `tearDown()`.
+  Every later task calls `Config::set_hook_prefix()` in `setUp()` and `Config_State::reset()` in `tearDown()`.
 
 > **Deviation from the engineering plan, deliberate:** the plan's sketch throws bare
 > `RuntimeException`. This throws `Config_Exception`, which extends `RuntimeException`, so the
 > documented contract still holds while callers get one catchable type across the whole library.
+
+> **Second deviation, deliberate (added 2026-08-03):** `set_hook_prefix()` also rejects the empty
+> string. The character-class check alone would accept `''` — it contains no invalid character —
+> and the failure would resurface at `get_hook_prefix()` as the misleading "You must call
+> `Config::set_hook_prefix()`" long after the real mistake.
+
+> **Third deviation, from the PR 4 review (2026-08-11) — two removals. The code blocks below still
+> show both; they are wrong and were left for the record.**
+>
+> 1. **`set_version()` / `get_version()` are gone**, along with the `$version` property, its two
+>    tests, and the README line. Nothing in the library reads a host version, and the one scenario
+>    that would want it — telling a bundled copy apart from a standalone at a specific release, à la
+>    ProPanel v3.0 — is the host's problem, not this library's. This closes spec known-issue F by
+>    deletion rather than by use.
+> 2. **`Config::reset()` is gone.** It existed only so the suite could clear static state, and a
+>    public method is a promise to everyone, not just to tests. The suite now uses
+>    `Tests\Support\Config_State::reset()`, which walks `Config`'s declared static defaults by
+>    reflection — so state added to `Config` later is cleared with no change to the helper. See the
+>    Global Constraint on test-only seams.
+>
+> The `ConfigTest` block below is also superseded on two points the review raised: the prefix tests
+> are driven by `public static` `Generator` data providers (valid and invalid, the empty string
+> among the invalid), and the `RuntimeException` test now catches as `RuntimeException` and asserts
+> `instanceof Config_Exception` — proving both halves of the contract instead of passing merely
+> because one extends the other.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -976,8 +1000,18 @@ class ConfigTest extends WPTestCase {
 }
 ```
 
-> `lucatume\DI52\Container` implements `StellarWP\ContainerContract\ContainerInterface` and is the
-> dev-only container this library tests against.
+> **CORRECTION (2026-07-31, verified against vendor/):** `lucatume\DI52\Container` does **not**
+> implement `StellarWP\ContainerContract\ContainerInterface`. It implements `ArrayAccess` and
+> **PSR's** `Psr\Container\ContainerInterface`. `stellarwp/container-contract` ships an adapter
+> example at `examples/di52/Container.php` precisely because DI52 must be wrapped.
+> `new Container()` therefore cannot be passed to `Config::set_container()` — it is a `TypeError`.
+>
+> Tests must use the test-support adapter `Nexcess\PluginAbsorber\Tests\Support\Test_Container`
+> (wraps a DI52 container, implements the StellarWP contract's four methods: `bind`, `get`,
+> `has`, `singleton`). This affects **Task 4 and Task 10** — both of their test blocks below still
+> show the incorrect `use lucatume\DI52\Container;`. `Config::set_container()`'s signature is
+> unchanged: the StellarWP contract stays the public API, per the Global Constraint that
+> `stellarwp/container-contract` is the only production dependency.
 
 - [ ] **Step 3: Run it to verify it fails**
 
@@ -1194,9 +1228,9 @@ RuntimeException`, so the documented contract still holds and callers get one ca
 the library. `set_hook_prefix()` validates eagerly rather than at use, because a bad prefix
 otherwise surfaces as a silently-never-firing filter much later.
 
-Verify: `slic run unit` — 13 tests covering the validation regex, the unset-prefix throw, container
-storage, and `reset()`. `get_version()` is stored but not yet read by anything; see the spec is
-known-issue F.'
+Verify: `slic run unit` — the validation regex over valid and invalid prefixes, the unset-prefix
+throw, the `RuntimeException` catchability contract, and container storage. Version handling is not
+covered because it no longer exists; see the third deviation above.'
 ```
 
 ---
@@ -5620,7 +5654,8 @@ Recorded in the spec, deliberately not fixed in 1.0.0:
   Matches both reference implementations as-is.
 - **E** — `Activation::maybe_run()` reads the option, runs the callback, then writes. Two
   simultaneous first requests can both run it. `add_option()` as an atomic claim would close it.
-- **F** — `Config::get_version()` is stored but never read.
+- ~~**F** — `Config::get_version()` is stored but never read.~~ Closed 2026-08-11 by removing
+  version handling from `Config` outright; see Task 4's third deviation.
 
 ## Self-review
 

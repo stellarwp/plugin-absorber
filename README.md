@@ -20,7 +20,17 @@ Requires PHP 7.4+ and WordPress 6.4+.
 
 ## Usage
 
-_Added as each piece lands._
+### Configure
+
+```php
+use Nexcess\PluginAbsorber\Config;
+
+Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
+Config::set_container( give()->container ); // optional — lets you rebind collaborators
+```
+
+The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
+`Config_Exception`, as does reading it before it is set.
 
 ## License
 

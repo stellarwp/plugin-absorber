@@ -100,6 +100,8 @@ callback — which may be `create_tables()`. Claiming the slot with `add_option(
 would close the window.
 
 **F. `Config::get_version()` is never read.** Set by the consumer, unused by the library.
+*Resolved 2026-08-11 (PR 4 review): version handling was removed from `Config` rather than given a
+reader. Nothing in the library needs the host's version.*
 
 ---
 
@@ -228,8 +230,10 @@ message. This is documented in `tests/README.md`.
 
 - **3 — smoke.** Three tests: WordPress is loaded; `uopz` is available; a function can be stubbed.
   There is deliberately no test that `exit` can be neutralised.
-- **4 — `Config`.** Prefix regex rejects invalid characters (throws); `get_hook_prefix()` throws
-  when unset; version set/get; container set/get/has; `reset()` clears all three.
+- **4 — `Config`.** Prefix regex accepts valid characters and rejects invalid ones, the empty
+  string included (throws); `get_hook_prefix()` throws when unset; `Config_Exception` is catchable
+  as `RuntimeException`; container set/get/has. No version handling and no production `reset()` —
+  see the plan's Task 4 deviations.
 - **6 — `Conflict_Policy`.** Constant values; the three are distinct.
 - **7 — `Sub_Plugin`.** Each of the three required keys missing throws `Config_Exception`;
   `is_enabled()` bool vs callable; `is_already_loaded()` reacts to `define()`;
