@@ -11,12 +11,14 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
  * @since 1.0.0
  */
 class SubPluginTest extends WPTestCase {
 	use UopzFunctions;
+	use WithSubPlugins;
 
 	public function setUp(): void {
 		parent::setUp();
@@ -31,22 +33,6 @@ class SubPluginTest extends WPTestCase {
 	public function tearDown(): void {
 		Config::reset();
 		parent::tearDown();
-	}
-
-	/**
-	 * @param array<string,mixed> $overrides Config overrides.
-	 */
-	private function make_sub_plugin( array $overrides = [] ): Sub_Plugin {
-		return new Sub_Plugin(
-			array_merge(
-				[
-					'slug'                   => 'give-recurring',
-					'bundled_plugin_file'    => '/tmp/give-recurring/give-recurring.php',
-					'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION_TEST',
-				],
-				$overrides
-			)
-		);
 	}
 
 	/**
@@ -134,7 +120,7 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertSame( 'give-recurring', $sub_plugin->get_slug() );
 		$this->assertSame( '/tmp/give-recurring/give-recurring.php', $sub_plugin->get_bundled_plugin_file() );
-		$this->assertSame( 'GIVE_RECURRING_VERSION_TEST', $sub_plugin->get_plugin_loaded_constant() );
+		$this->assertSame( 'GIVE_RECURRING_VERSION_FIXTURE', $sub_plugin->get_plugin_loaded_constant() );
 	}
 
 	public function test_it_is_enabled_by_default(): void {

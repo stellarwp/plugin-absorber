@@ -16,6 +16,53 @@ slic run unit --env multisite     # multisite
 CI runs both envs on PHP 7.4 and 8.5 — the ends of the supported range — against WordPress
 `latest` and `nightly`. Four legs, with the `nightly` ones non-blocking.
 
+## Sub-plugin fixtures
+
+`WithSubPlugins` builds a well-formed `Sub_Plugin`, so a test states only the
+key it is actually about:
+
+```php
+use Codeception\TestCase\WPTestCase;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
+
+class SomeTest extends WPTestCase {
+	use WithSubPlugins;
+
+	public function test_something(): void {
+		$sub_plugin = $this->make_sub_plugin( [ 'enabled' => false ] );
+	}
+}
+```
+
+The slug defaults to `give-recurring`, and the other two required keys are
+derived from whichever slug is in play, so fixtures for two sub-plugins never
+collide on a path or a guard constant:
+
+```php
+$this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] );
+// bundled_plugin_file:    /tmp/give-fee-recovery/give-fee-recovery.php
+// plugin_loaded_constant: GIVE_FEE_RECOVERY_VERSION_FIXTURE
+```
+
+Never `define()` a constant ending in `_VERSION_FIXTURE`. `define()` lasts for
+the whole PHP process, so a defined default would make `is_already_loaded()`
+report true for every test that runs afterwards, in every class. A test that
+needs the constant defined names its own:
+
+```php
+define( 'ABSORBER_TEST_LOADED_CONSTANT', '1.0.0' );
+
+$this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONSTANT' ] );
+```
+
+Overrides are merged last, so a deliberately unusable value still reaches the
+constructor — that is how the tests for rejected config work.
+
+A fixture helper cannot be called `make()`, `makeEmpty()`, `construct()`, or
+`constructEmpty()`: those are public methods on `Codeception\Test\Unit`, which
+`WPTestCase` extends, and redeclaring one with narrower visibility is a fatal at
+class-compile time. The suite does not fail, it fails to start.
+
 ## Stubbing functions
 
 Use `UopzFunctions` from wp-browser. Do not add a local `WithUopz` trait — this
