@@ -24,44 +24,57 @@ a host can rebind them.
 | `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads. Both copies must define the *same* name, **at file scope**. See [Conflict handling](conflict-handling.md). **Load guard only.** |
 | `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename. Used for `is_plugin_active()` and `deactivate_plugins()`. Omit when there is no standalone. **Detection only.** |
 | `enabled` | `bool\|callable` | | `true` by default. A `callable( Sub_Plugin ): bool` is re-evaluated on every call, not cached. |
-| `conflict_policy` | `string` | | `Conflict_Policy::DEACTIVATE` by default. |
-| `conflict_notice_message` | `string` | | Shown on auto-deactivation and on a re-activation attempt. Empty by default. |
-| `dependency_notice_message` | `string` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
+| `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. |
+| `conflict_notice_message` | `callable` | | Shown on auto-deactivation and on a re-activation attempt. Empty by default. |
+| `dependency_notice_message` | `callable` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
 | `activation_callback` | `callable( Sub_Plugin )` | | Runs **exactly once, ever**, per slug. |
 | `dependency_check` | `callable( Sub_Plugin ): bool` | | Skips the load and queues a notice when it returns false. |
 
 The load guard and the standalone basename are deliberately two separate keys. No constant does
 double duty as both a guard and a path resolver.
 
-## Values or callables, never both
+## Messages are callables, never strings
 
-Every key is either a value or a callable. The four `string` keys take strings only — a string
-function name is indistinguishable from a string value, and honouring both would make the outcome
-depend on whatever else the site has loaded. A non-string under one of them throws
-`Config_Exception` when the sub-plugin is registered.
-
-So a function name under one of them is stored and returned as text. It is never called, however
-real the function is:
+Your config array is built at plugin load — before `init`, and before your textdomain. Calling
+`__()` there is what raises WordPress's `_load_textdomain_just_in_time` notice. So the two message
+keys take something to call, and refuse a string outright:
 
 ```php
-// Returns the literal string 'give_recurring_conflict_message'. It is not invoked.
-'conflict_notice_message' => 'give_recurring_conflict_message',
+'conflict_notice_message' => static fn() => __( 'Recurring ships with Give now.', 'give' ),
+'conflict_notice_message' => [ Give_Recurring::class, 'get_conflict_message' ],
+'conflict_notice_message' => static fn() => give()->container->get( Conflict_Message::class ),
 ```
-
-To decide a policy or a message at runtime — or to defer `__()` until after the textdomain
-loads — use the [filters](filters.md):
 
 ```php
-add_filter(
-    'give/plugin_absorber/conflict_notice_message',
-    static function ( string $message, Sub_Plugin $sub_plugin ): string {
-        return give_recurring_conflict_message( $sub_plugin );
-    },
-    10,
-    2
-);
+// Config_Exception at registration. Translated or not, a string here can only have been produced
+// too early -- and nothing in the value says which it was.
+'conflict_notice_message' => __( 'Recurring ships with Give now.', 'give' ),
 ```
 
-`dependency_check`, `activation_callback`, and `enabled` have nothing a string could collide with,
-so they accept every callable form, a plain function name included. A key in that group that holds
-something uncallable also throws `Config_Exception` at registration.
+Each callable is passed the `Sub_Plugin` and called on every read, so nothing is resolved at
+registration. A return that will not cast to a string is treated as though nothing were configured.
+
+**A plain function name is text, not a call.** `date`, `flush` and `key` are all real functions and
+all plausible values, so wherever a string *is* accepted it is the value itself. That bars both
+string spellings of a callable — `'give_recurring_conflict_message'` and
+`'Give_Recurring::get_conflict_message'` — in favour of the array and closure forms above.
+
+`conflict_policy` is the one key that takes either. A policy is usually a `Conflict_Policy`
+constant with nothing to defer, and it is never text a user reads:
+
+```php
+'conflict_policy' => Conflict_Policy::DEFER,
+'conflict_policy' => static fn( Sub_Plugin $sub_plugin ) => give_conflict_policy_for( $sub_plugin ),
+```
+
+`standalone_plugin_basename` takes a string only: it names a file already on disk, so there is
+nothing to wait for.
+
+`dependency_check`, `activation_callback` and `enabled` have nothing a string could collide with, so
+they accept every callable form, a plain function name included.
+
+Every key rejects a shape it cannot use at registration rather than at read time — including a
+`[ class, method ]` pair naming a method that does not exist.
+
+The [filters](filters.md) are the other way in, and they run last — after the configured value and
+any fallback, so they see the default text too.
