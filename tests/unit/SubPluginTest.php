@@ -11,6 +11,7 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -23,7 +24,7 @@ class SubPluginTest extends WPTestCase {
 	public function setUp(): void {
 		parent::setUp();
 
-		Config::reset();
+		Config_State::reset();
 		Config::set_hook_prefix( 'give' );
 
 		// uopz cannot stub a function that does not exist yet.
@@ -31,7 +32,7 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
-		Config::reset();
+		Config_State::reset();
 		parent::tearDown();
 	}
 
@@ -351,7 +352,7 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_the_conflict_policy_needs_a_hook_prefix(): void {
-		Config::reset();
+		Config_State::reset();
 
 		$this->expectException( Config_Exception::class );
 

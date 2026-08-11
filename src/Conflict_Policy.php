@@ -59,21 +59,6 @@ final class Conflict_Policy {
 	}
 
 	/**
-	 * Every policy this library understands.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string[]
-	 */
-	public static function all(): array {
-		return [
-			self::DEACTIVATE,
-			self::DEFER,
-			self::NOTICE_ONLY,
-		];
-	}
-
-	/**
 	 * Whether a policy string is one this library understands.
 	 *
 	 * Hosts may persist a policy in an option and filters may return anything, so callers that
@@ -89,5 +74,20 @@ final class Conflict_Policy {
 	 */
 	public static function is_valid( string $policy ): bool {
 		return in_array( $policy, self::all(), true );
+	}
+
+	/**
+	 * Every policy this library understands.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return string[]
+	 */
+	private static function all(): array {
+		return [
+			self::DEACTIVATE,
+			self::DEFER,
+			self::NOTICE_ONLY,
+		];
 	}
 }

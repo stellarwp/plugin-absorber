@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
+use Generator;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use ReflectionClass;
 
@@ -48,13 +49,6 @@ class ConflictPolicyTest extends WPTestCase {
 		$this->assertTrue( Conflict_Policy::is_valid( Conflict_Policy::default() ) );
 	}
 
-	public function test_all_returns_every_policy(): void {
-		$this->assertSame(
-			[ 'deactivate', 'defer', 'notice_only' ],
-			Conflict_Policy::all()
-		);
-	}
-
 	/**
 	 * @dataProvider valid_policies
 	 *
@@ -65,14 +59,17 @@ class ConflictPolicyTest extends WPTestCase {
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * Drawn from the constants rather than a hand-written list, so a fourth policy declared
+	 * without being added to the set behind is_valid() fails here instead of passing unnoticed.
+	 *
+	 * @return Generator<string,array{0:string}>
 	 */
-	public function valid_policies(): array {
-		return [
-			'deactivate'  => [ Conflict_Policy::DEACTIVATE ],
-			'defer'       => [ Conflict_Policy::DEFER ],
-			'notice_only' => [ Conflict_Policy::NOTICE_ONLY ],
-		];
+	public static function valid_policies(): Generator {
+		$constants = ( new ReflectionClass( Conflict_Policy::class ) )->getConstants();
+
+		foreach ( $constants as $name => $value ) {
+			yield $name => [ (string) $value ];
+		}
 	}
 
 	/**
@@ -85,14 +82,12 @@ class ConflictPolicyTest extends WPTestCase {
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return Generator<string,array{0:string}>
 	 */
-	public function invalid_policies(): array {
-		return [
-			'typo'       => [ 'defered' ],
-			'empty'      => [ '' ],
-			'wrong case' => [ 'DEACTIVATE' ],
-			'constant'   => [ 'Conflict_Policy::DEFER' ],
-		];
+	public static function invalid_policies(): Generator {
+		yield 'typo'       => [ 'defered' ];
+		yield 'empty'      => [ '' ];
+		yield 'wrong case' => [ 'DEACTIVATE' ];
+		yield 'constant'   => [ 'Conflict_Policy::DEFER' ];
 	}
 }
