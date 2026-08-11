@@ -107,7 +107,7 @@ class QueueTest extends WPTestCase {
 	public static function queued_notices(): Generator {
 		yield 'merge, configured' => [
 			'queue_merge_notice',
-			[ 'conflict_notice_message' => 'Bundled now.' ],
+			[ 'conflict_notice_message' => static fn() => 'Bundled now.' ],
 			'give-recurring:merge',
 			'Bundled now.',
 			true,
@@ -123,7 +123,7 @@ class QueueTest extends WPTestCase {
 
 		yield 'conflict, configured' => [
 			'queue_conflict_notice',
-			[ 'conflict_notice_message' => 'Bundled now.' ],
+			[ 'conflict_notice_message' => static fn() => 'Bundled now.' ],
 			'give-recurring:conflict',
 			'Bundled now.',
 			true,
@@ -139,7 +139,7 @@ class QueueTest extends WPTestCase {
 
 		yield 'dependency, configured' => [
 			'queue_dependency_notice',
-			[ 'dependency_notice_message' => 'Needs Give.' ],
+			[ 'dependency_notice_message' => static fn() => 'Needs Give.' ],
 			'give-recurring:dependency',
 			'Needs Give.',
 			true,
@@ -170,8 +170,12 @@ class QueueTest extends WPTestCase {
 
 	public function test_a_configured_message_is_used_for_both_conflict_types(): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Ours.' ] ) );
-		$notices->queue_conflict_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Ours.' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Ours.' ] )
+		);
+		$notices->queue_conflict_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Ours.' ] )
+		);
 
 		$queue = $this->queue();
 
@@ -209,7 +213,9 @@ class QueueTest extends WPTestCase {
 
 	public function test_render_outputs_dismissible_markup(): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
+		);
 
 		$output = $this->render_to_string( $notices );
 
@@ -225,7 +231,9 @@ class QueueTest extends WPTestCase {
 	 */
 	public function test_render_uses_the_severity_of_the_notice_type( string $method, string $class ): void {
 		$notices = new Queue();
-		$notices->{$method}( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Something happened.' ] ) );
+		$notices->{$method}(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Something happened.' ] )
+		);
 
 		$this->assertStringContainsString( 'notice ' . $class . ' is-dismissible', $this->render_to_string( $notices ) );
 	}
@@ -244,7 +252,9 @@ class QueueTest extends WPTestCase {
 
 	public function test_render_strips_a_script_from_the_message(): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Careful.<script>alert(1)</script>' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Careful.<script>alert(1)</script>' ] )
+		);
 
 		$output = $this->render_to_string( $notices );
 
@@ -263,7 +273,7 @@ class QueueTest extends WPTestCase {
 		$notices = new Queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin(
-				[ 'conflict_notice_message' => 'See <a href="https://example.com" onclick="alert(1)">the docs</a>.' ]
+				[ 'conflict_notice_message' => static fn() => 'See <a href="https://example.com" onclick="alert(1)">the docs</a>.' ]
 			)
 		);
 
@@ -285,8 +295,12 @@ class QueueTest extends WPTestCase {
 
 	public function test_render_outputs_every_queued_notice(): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'First.' ] ) );
-		$notices->queue_dependency_notice( $this->make_sub_plugin( [ 'dependency_notice_message' => 'Second.' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'First.' ] )
+		);
+		$notices->queue_dependency_notice(
+			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Second.' ] )
+		);
 
 		$output = $this->render_to_string( $notices );
 
@@ -336,7 +350,7 @@ class QueueTest extends WPTestCase {
 		};
 
 		( new Queue( $store ) )->queue_merge_notice(
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
 
 		$this->assertSame( [ 'give-recurring:merge' => 'Bundled now.' ], $store->written );
@@ -407,7 +421,9 @@ class QueueTest extends WPTestCase {
 	 */
 	public function test_render_does_nothing_for_a_user_who_cannot_activate_plugins( ?string $role ): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
+		);
 
 		wp_set_current_user( $role === null ? 0 : $this->create_user( $role ) );
 
@@ -435,7 +451,9 @@ class QueueTest extends WPTestCase {
 		}
 
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
+		);
 
 		wp_set_current_user( $this->create_user( 'administrator' ) );
 
@@ -451,7 +469,9 @@ class QueueTest extends WPTestCase {
 	 * transient-backed design this class exists to avoid.
 	 */
 	public function test_the_queue_is_a_durable_database_row(): void {
-		( new Queue() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		( new Queue() )->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
+		);
 
 		$this->assertStringContainsString(
 			'Bundled now.',

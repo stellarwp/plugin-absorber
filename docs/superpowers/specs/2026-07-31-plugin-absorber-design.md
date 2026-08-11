@@ -84,6 +84,28 @@ specified it can only queue an empty notice. Added as `string|callable`, same sh
 
 interpolating the sub-plugin slug.
 
+**E. The message keys take a callable and refuse a string.**
+
+Raised in review on PR 7. `conflict_notice_message` and `dependency_notice_message` were specified
+as `string|callable`; they are now `callable` alone, and a string of any kind throws
+`Config_Exception` at registration.
+
+A config array is built at plugin load, before `init` and before the host's textdomain, so a
+translated string under one of these keys can only have been produced too early — the
+`_load_textdomain_just_in_time` notice that motivated the change. Nothing in the value distinguishes
+a translated string from an untranslated one, so the two cannot be told apart at registration and
+the string form has to go. The cost to a host is one `static fn()`, refused the first time the code
+runs; the alternative is a log notice on someone else's site.
+
+Separately, no string is ever *called*, on any key that also accepts one. `date`, `flush` and `key`
+are all real functions and all plausible configured values, so honouring a string callable would
+make the result depend on what else the site had loaded. Both string spellings —
+`'give_conflict_message'` and `'Give_Recurring::get_conflict_message'` — are therefore excluded; the
+array, closure and invokable-object forms are what a host uses instead.
+
+`conflict_policy` keeps `string|callable`: it is usually a `Conflict_Policy` constant with nothing
+to defer, and it is never text a user reads.
+
 ### 2.2 Deferred — known issues, tracked for 1.0.1
 
 **B. Conflict resolution runs on front-end requests.** `resolve_all()` is hooked at
@@ -158,8 +180,8 @@ Per the engineering plan, plus `dependency_notice_message`:
 | `standalone_plugin_basename` | string | |
 | `enabled` | bool \| callable | |
 | `conflict_policy` | string \| `callable( Sub_Plugin ): string` | |
-| `conflict_notice_message` | string \| callable | |
-| `dependency_notice_message` | string \| callable | |
+| `conflict_notice_message` | `callable` — never a string, see 2.1 E | |
+| `dependency_notice_message` | `callable` — never a string, see 2.1 E | |
 | `activation_callback` | callable | |
 | `dependency_check` | callable | |
 
@@ -240,7 +262,8 @@ message. This is documented in `tests/README.md`.
   `is_standalone_plugin_active()` and `is_standalone_plugin_network_active()` against uopz-stubbed
   `is_plugin_active` / `is_plugin_active_for_network`; `are_dependencies_met()` with and without a
   callable; `get_conflict_policy()` for string, for callable, and with the
-  `…/conflict_policy` filter overriding both; both message getters, string and callable.
+  `…/conflict_policy` filter overriding both; both message getters over every callable form, and
+  rejecting a string of any kind.
 - **8 — `Registrar`.** register; `all()`; a duplicate slug throws `Config_Exception` naming both
   bundled files and leaves the registry untouched; `reset()` clears the guard with the registry.
 - **9 — `Loader::resolve()`.** No container → default instance; di52 container binding a custom

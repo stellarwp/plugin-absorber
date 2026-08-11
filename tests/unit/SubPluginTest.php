@@ -13,6 +13,7 @@ use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Deferred_Message;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -122,29 +123,237 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
-	 * A closure under one of these is the mistake worth catching: it would render as the string
-	 * "Closure" much later, in a notice, with nothing pointing back at the registration that
-	 * caused it. The filters are how these keys are decided at runtime.
-	 *
-	 * @dataProvider string_only_keys
-	 *
-	 * @param string $key Key that only ever holds a string.
+	 * A basename names a file already on disk. Nothing about it waits on anything, so a closure
+	 * under it is a mistake worth catching at registration: it would reach deactivate_plugins() as
+	 * the string "Closure" much later, with nothing pointing back at the registration that caused
+	 * it.
 	 */
-	public function test_it_rejects_a_string_only_key_that_is_not_a_string( string $key ): void {
+	public function test_it_rejects_a_standalone_basename_that_is_not_a_string(): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $key );
+		$this->expectExceptionMessage( 'standalone_plugin_basename' );
 
-		$this->make_sub_plugin( [ $key => static fn() => 'nope' ] );
+		$this->make_sub_plugin( [ 'standalone_plugin_basename' => static fn() => 'give/give.php' ] );
 	}
 
 	/**
-	 * @return Generator<string,array{0:string}>
+	 * Neither form, so it is rejected where the mistake was made. At read time an array would cast
+	 * to the string "Array", and a [ class, method ] pair naming a method that does not exist would
+	 * become the notice text itself.
+	 *
+	 * @dataProvider deferrable_keys
+	 *
+	 * @param string $key Key that holds a string or a callable.
 	 */
-	public static function string_only_keys(): Generator {
-		yield 'standalone_plugin_basename' => [ 'standalone_plugin_basename' ];
-		yield 'conflict_policy'            => [ 'conflict_policy' ];
-		yield 'conflict_notice_message'    => [ 'conflict_notice_message' ];
-		yield 'dependency_notice_message'  => [ 'dependency_notice_message' ];
+	public function test_it_rejects_a_deferrable_key_that_is_neither_a_string_nor_a_callable( string $key ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( $key );
+
+		$this->make_sub_plugin( [ $key => [ Deferred_Message::class, 'no_such_method' ] ] );
+	}
+
+	/**
+	 * The shapes a host can land on by mistake, checked exhaustively on the one key that also takes
+	 * a string; the test above proves each of the others rejects a shape of its own. `null` is
+	 * deliberately absent: an unset key and a key set to null both mean "not configured", not
+	 * "configured wrongly".
+	 *
+	 * @dataProvider unusable_deferrable_values
+	 *
+	 * @param mixed $value Value that is neither a string nor callable.
+	 */
+	public function test_it_rejects_a_deferrable_value_of_any_other_shape( $value ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( 'conflict_policy' );
+
+		$this->make_sub_plugin( [ 'conflict_policy' => $value ] );
+	}
+
+	/**
+	 * @return Generator<string,array{0:mixed}>
+	 */
+	public static function unusable_deferrable_values(): Generator {
+		yield 'array of strings'          => [ [ 'give', 'recurring' ] ];
+		yield 'object without __invoke'   => [ new \stdClass() ];
+		yield 'integer'                   => [ 42 ];
+		yield 'boolean'                   => [ true ];
+		yield 'pair naming no such class' => [ [ 'Give_No_Such_Class', 'get_conflict_message' ] ];
+	}
+
+	/**
+	 * The two keys carrying human-readable text take a callable and nothing else.
+	 *
+	 * A string under one of them is either already translated -- the too-early `__()` these keys
+	 * exist to move -- or the name of a function the host hoped would be called. Nothing tells the
+	 * two apart, and the library cannot honour the second without making the result depend on what
+	 * else the site loaded. Refusing both at registration costs a host one `static fn()` and is
+	 * caught the first time the code runs, where an eagerly translated string is a log notice on
+	 * someone else's site.
+	 *
+	 * @dataProvider message_key_strings
+	 *
+	 * @param string $key     Key that only ever holds a callable.
+	 * @param string $message String of any shape.
+	 */
+	public function test_it_rejects_a_message_that_is_already_a_string( string $key, string $message ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( $key );
+
+		$this->make_sub_plugin( [ $key => $message ] );
+	}
+
+	/**
+	 * Every string shape against both message keys. The first case is what a host gets back from
+	 * `__()` -- there is nothing in the value to say so, which is the whole reason the rule cannot
+	 * be narrower. The other two are the spellings a host reaches for when it wants a call.
+	 *
+	 * @return Generator<string,array{0:string,1:string}>
+	 */
+	public static function message_key_strings(): Generator {
+		foreach ( [ 'conflict_notice_message', 'dependency_notice_message' ] as $key ) {
+			yield "{$key}: translated text"    => [ $key, 'Recurring ships with Give now.' ];
+			yield "{$key}: function name"      => [ $key, '__return_empty_string' ];
+			yield "{$key}: static method name" => [ $key, Deferred_Message::class . '::from_a_static_method' ];
+		}
+	}
+
+	/**
+	 * The deferral these keys exist for. A host that writes `__()` into its config array translates
+	 * while the array is being built -- at plugin load, before `init` and before its own textdomain
+	 * -- which is what raises the `_load_textdomain_just_in_time` notice. Handing over something to
+	 * call instead moves the translation to the moment the text is actually wanted.
+	 *
+	 * @dataProvider deferrable_keys
+	 *
+	 * @param string $key    Key that holds a string or a callable.
+	 * @param string $getter Method under test.
+	 */
+	public function test_it_invokes_a_closure_under_a_deferrable_key( string $key, string $getter ): void {
+		$this->assertSame(
+			'Deferred.',
+			$this->make_sub_plugin( [ $key => static fn() => 'Deferred.' ] )->{$getter}()
+		);
+	}
+
+	/**
+	 * Every callable form a string cannot be mistaken for. These are what a host reaches for when
+	 * the text lives on one of its own classes, or comes out of its container.
+	 *
+	 * @dataProvider deferrable_keys
+	 *
+	 * @param string $key    Key that holds a string or a callable.
+	 * @param string $getter Method under test.
+	 */
+	public function test_it_invokes_every_callable_form_that_is_not_a_string( string $key, string $getter ): void {
+		$this->assertSame(
+			'static: give-recurring',
+			$this->make_sub_plugin( [ $key => [ Deferred_Message::class, 'from_a_static_method' ] ] )->{$getter}(),
+			'A [ class, method ] pair.'
+		);
+		$this->assertSame(
+			'instance: give-recurring',
+			$this->make_sub_plugin( [ $key => [ new Deferred_Message(), 'from_an_instance_method' ] ] )->{$getter}(),
+			'An [ object, method ] pair.'
+		);
+		$this->assertSame(
+			'invoked: give-recurring',
+			$this->make_sub_plugin( [ $key => new Deferred_Message() ] )->{$getter}(),
+			'An object with __invoke().'
+		);
+	}
+
+	/**
+	 * @dataProvider deferrable_keys
+	 *
+	 * @param string $key    Key that holds a string or a callable.
+	 * @param string $getter Method under test.
+	 */
+	public function test_a_deferrable_callable_receives_the_sub_plugin( string $key, string $getter ): void {
+		$received = null;
+
+		$sub_plugin = $this->make_sub_plugin(
+			[
+				$key => static function ( $passed ) use ( &$received ): string {
+					$received = $passed;
+
+					return 'Deferred.';
+				},
+			]
+		);
+
+		$sub_plugin->{$getter}();
+
+		$this->assertSame( $sub_plugin, $received );
+	}
+
+	/**
+	 * Called on every read rather than resolved once at registration -- resolving in the
+	 * constructor would move the too-early call from the config array to the line after it.
+	 *
+	 * @dataProvider deferrable_keys
+	 *
+	 * @param string $key    Key that holds a string or a callable.
+	 * @param string $getter Method under test.
+	 */
+	public function test_a_deferrable_callable_is_called_on_every_read( string $key, string $getter ): void {
+		$text = 'First.';
+
+		$sub_plugin = $this->make_sub_plugin(
+			[
+				$key => static function () use ( &$text ): string {
+					return $text;
+				},
+			]
+		);
+
+		$this->assertSame( 'First.', $sub_plugin->{$getter}() );
+
+		$text = 'Second.';
+
+		$this->assertSame( 'Second.', $sub_plugin->{$getter}() );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string,1:string}>
+	 */
+	public static function deferrable_keys(): Generator {
+		yield 'conflict_policy'           => [ 'conflict_policy', 'get_conflict_policy' ];
+		yield 'conflict_notice_message'   => [ 'conflict_notice_message', 'get_conflict_notice_message' ];
+		yield 'dependency_notice_message' => [ 'dependency_notice_message', 'get_dependency_notice_message' ];
+	}
+
+	/**
+	 * A callable is the host's code, and casting what it returned would be a fatal at
+	 * plugins_loaded. It is dropped the same way an uncastable filter return is, which leaves each
+	 * key at the value it carries when nothing usable was configured.
+	 *
+	 * @dataProvider uncastable_callable_returns
+	 *
+	 * @param string $key      Key that holds a string or a callable.
+	 * @param string $getter   Method under test.
+	 * @param string $expected What the key is worth once the return is dropped.
+	 */
+	public function test_an_uncastable_callable_return_yields_nothing( string $key, string $getter, string $expected ): void {
+		$this->assertSame(
+			$expected,
+			$this->make_sub_plugin( [ $key => static fn() => new \WP_Error( 'nope', 'Nope.' ) ] )->{$getter}()
+		);
+	}
+
+	/**
+	 * The policy is the one that differs: its key is set, so there is no configured value to fall
+	 * back to, and an empty string matches no known policy -- which is where a caller that
+	 * dispatches on it takes the conservative branch rather than deactivating anything.
+	 *
+	 * @return Generator<string,array{0:string,1:string,2:string}>
+	 */
+	public static function uncastable_callable_returns(): Generator {
+		yield 'conflict_policy'         => [ 'conflict_policy', 'get_conflict_policy', '' ];
+		yield 'conflict_notice_message' => [ 'conflict_notice_message', 'get_conflict_notice_message', '' ];
+		yield 'dependency_notice_message' => [
+			'dependency_notice_message',
+			'get_dependency_notice_message',
+			'give-recurring could not be loaded because its requirements are not met.',
+		];
 	}
 
 	public function test_it_exposes_the_required_values(): void {
@@ -296,34 +505,15 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
-	 * @dataProvider configured_strings
+	 * The last two are the ones a host is most likely to reach for: its own zero-argument
+	 * `..._policy()` helper, and the `Class::method` spelling of the pair form that *is* honoured
+	 * as an array. Both come back as raw text like every other string. `__return_empty_string`
+	 * stands in for the helper because calling it is harmless and unmistakable -- an invoked case
+	 * would return '', not the name.
 	 *
-	 * @param string $message Configured message.
-	 */
-	public function test_it_returns_a_configured_conflict_notice_message( string $message ): void {
-		$this->assertSame(
-			$message,
-			$this->make_sub_plugin( [ 'conflict_notice_message' => $message ] )->get_conflict_notice_message()
-		);
-	}
-
-	/**
-	 * @dataProvider configured_strings
-	 *
-	 * @param string $message Configured message.
-	 */
-	public function test_it_returns_a_configured_dependency_notice_message( string $message ): void {
-		$this->assertSame(
-			$message,
-			$this->make_sub_plugin( [ 'dependency_notice_message' => $message ] )->get_dependency_notice_message()
-		);
-	}
-
-	/**
-	 * The last case is the one a host is most likely to reach for: its own zero-argument
-	 * `..._message()` helper, named under a message key in the hope of being called. It comes back
-	 * as the raw name like every other string. `__return_empty_string` stands in for one because
-	 * calling it is harmless and unmistakable -- an invoked case would return '', not the name.
+	 * Both forms are callable as far as PHP is concerned. Barring them is what keeps a policy read
+	 * from an option from depending on whether some plugin elsewhere on the site happens to have
+	 * declared a function of that name.
 	 *
 	 * @return Generator<string,array{0:string}>
 	 */
@@ -334,6 +524,7 @@ class SubPluginTest extends WPTestCase {
 		yield 'wordpress function name' => [ 'flush' ];
 		yield 'array pointer function'  => [ 'key' ];
 		yield 'host helper name'        => [ '__return_empty_string' ];
+		yield 'static method name'      => [ Deferred_Message::class . '::from_a_static_method' ];
 	}
 
 	public function test_the_filter_overrides_the_resolved_policy(): void {
@@ -363,7 +554,8 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertSame(
 			'Filtered.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Configured.' ] )->get_conflict_notice_message()
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Configured.' ] )
+				->get_conflict_notice_message()
 		);
 	}
 
@@ -377,7 +569,8 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertSame(
 			'Filtered.',
-			$this->make_sub_plugin( [ 'dependency_notice_message' => 'Configured.' ] )->get_dependency_notice_message()
+			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Configured.' ] )
+				->get_dependency_notice_message()
 		);
 	}
 
@@ -549,7 +742,7 @@ class SubPluginTest extends WPTestCase {
 	public function test_a_configured_conflict_notice_message_beats_the_default(): void {
 		$this->assertSame(
 			'Configured.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Configured.' ] )
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Configured.' ] )
 				->get_conflict_notice_message( 'Default.' )
 		);
 	}

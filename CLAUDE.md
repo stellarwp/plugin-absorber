@@ -107,7 +107,7 @@ config predicates there is what lets collaborators stay thin and lets them be te
 ```
 Config::set_hook_prefix( 'give' );
 Config::set_container( $container );          // optional
-Loader::register( [ …config… ] );             // once per sub-plugin; last-wins dedupe by slug
+Loader::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
 Loader::boot();                               // idempotent
 
 plugins_loaded @1      → Conflict\Resolver::resolve_all()
@@ -220,10 +220,19 @@ treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means
 - **Notice messages are rendered through `wp_kses_post()`, not escaped.** They come from the host's
   own config or filter, never from user input, so a knowledge-base link survives. Tightening this to
   `esc_html()` after 1.0 would break every host that shipped one.
-- **String-only config keys reject callables.** `standalone_plugin_basename`, `conflict_policy`,
-  `conflict_notice_message`, `dependency_notice_message` throw `Config_Exception` on a non-string.
-  A string function name is indistinguishable from a string value, so honouring both would make the
-  result depend on what else the site loaded. Runtime decisions belong in the filters.
+- **A configured string is never called; every other callable form is.** A string function name is
+  indistinguishable from a string value, so honouring it would make the result depend on what else
+  the site loaded — `date`, `flush` and `key` are all real functions and plausible values. Closures,
+  `[ class, method ]` pairs and invokable objects say "call me" and nothing else.
+- **`conflict_notice_message` and `dependency_notice_message` reject a string outright.** Not just
+  string callables — any string. A config array is built before `init`, so a translated string under
+  one of these can only have been produced too early, and nothing in the value distinguishes it from
+  one that was not. Refusing both costs the host a `static fn()` and fails the first time the code
+  runs, where an eager `__()` is the `_load_textdomain_just_in_time` notice in someone else's log.
+  This is a deliberate departure from the spec's `string | callable`.
+- **`conflict_policy` takes either**, because a policy is usually a `Conflict_Policy` constant with
+  nothing to defer, and is never text a user reads. `standalone_plugin_basename` is string-only: it
+  names a file already on disk.
 - **Callable-only keys reject non-callables at registration**, not at read time — otherwise "not
   configured" and "configured but uncallable" collapse into the same answer, and a typo'd
   `dependency_check` reports dependencies met.
