@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
+use Generator;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
@@ -49,15 +50,13 @@ class ConfigTest extends WPTestCase {
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return Generator<string,array{0:string}>
 	 */
-	public function invalid_hook_prefixes(): array {
-		return [
-			'slash'     => [ 'give/recurring' ],
-			'space'     => [ 'give recurring' ],
-			'dot'       => [ 'give.recurring' ],
-			'backslash' => [ 'give\\recurring' ],
-		];
+	public function invalid_hook_prefixes(): Generator {
+		yield 'slash' => [ 'give/recurring' ];
+		yield 'space' => [ 'give recurring' ];
+		yield 'dot' => [ 'give.recurring' ];
+		yield 'backslash' => [ 'give\\recurring' ];
 	}
 
 	public function test_it_rejects_an_empty_hook_prefix(): void {
