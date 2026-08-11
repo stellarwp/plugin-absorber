@@ -35,17 +35,4 @@ interface Registrar_Interface {
 	 * @return array<string,Sub_Plugin> Keyed by slug.
 	 */
 	public function all(): array;
-
-	/**
-	 * Empty the registry.
-	 *
-	 * On the contract rather than on the implementation because a container-bound singleton
-	 * registrar survives a Loader reset — the same populated instance comes back on the next
-	 * resolve. An implementation that no-ops this leaks registrations between boots.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void;
 }

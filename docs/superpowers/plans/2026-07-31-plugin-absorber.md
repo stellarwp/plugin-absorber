@@ -33,7 +33,7 @@ Every task's requirements implicitly include this section.
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
-- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** The same applies to `Registrar` and `Loader` when tasks 8 and 9 land.
+- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** `Registrar` is served by `Tests\Support\Registrar_State::reset( Registrar $registrar )` and `Loader` by `Tests\Support\Loader_State::reset()`, which empties the memoized registrar through `Registrar_State` before discarding the memo; both are spelled out in full in the task blocks below.
 
 ## File Structure
 
@@ -2321,7 +2321,15 @@ filter, last wins) and both network-activation branches.'
 
 **Interfaces:**
 - Consumes: `Sub_Plugin` (Task 7), and the `WithSubPlugins` trait (Task 7) for its fixtures — the test builds no sub-plugin of its own.
-- Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void`, `all(): array` returning `array<string,Sub_Plugin>` keyed by slug, and `reset(): void`. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
+- Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void` and `all(): array` returning `array<string,Sub_Plugin>` keyed by slug. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
+
+> The contract is those two methods and nothing else. A registry that can be emptied is only ever
+> wanted by the suite, and a method on the contract is a promise to every host that implements it.
+> The tests here need no such method — each one builds its own `Registrar`, so nothing leaks
+> between them. Emptying an already-populated registrar first becomes necessary in Task 9, where a
+> container-bound singleton survives a `Loader` reset, and that task adds
+> `Tests\Support\Registrar_State::reset()` to do it by reflection. See the Global Constraint on
+> test-only seams.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -2405,15 +2413,6 @@ class RegistrarTest extends WPTestCase {
 			array_keys( $registrar->all() )
 		);
 	}
-
-	public function test_reset_empties_the_registry(): void {
-		$registrar = new Registrar();
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$registrar->reset();
-
-		$this->assertSame( [], $registrar->all() );
-	}
 }
 ```
 
@@ -2457,13 +2456,6 @@ interface Registrar_Interface {
 	 * @return array<string,Sub_Plugin> Keyed by slug.
 	 */
 	public function all(): array;
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void;
 }
 ```
 
@@ -2509,22 +2501,13 @@ class Registrar implements Registrar_Interface {
 	public function all(): array {
 		return $this->sub_plugins;
 	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void {
-		$this->sub_plugins = [];
-	}
 }
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
-Expected: PASS — 6 tests.
+Expected: PASS — 5 tests.
 
 - [ ] **Step 7: Commit, push, open the PR**
 
@@ -2542,9 +2525,11 @@ Usage:
 
 Why this way: keyed by slug so re-registering the same slug replaces rather than duplicates — a host
 that conditionally registers in two code paths gets one entry, not two loads. The interface ships in
-this PR rather than in a contracts-only PR so it arrives with an implementation and tests.
+this PR rather than in a contracts-only PR so it arrives with an implementation and tests. It
+carries no way to empty the registry: that is wanted only by the suite, which clears the map by
+reflection from `tests/_support/` rather than making every host implementation carry the method.
 
-Verify: `slic run unit` — 6 tests.'
+Verify: `slic run unit` — 5 tests.'
 ```
 
 ---
@@ -2554,7 +2539,7 @@ Verify: `slic run unit` — 6 tests.'
 **PR 9** · branch `09-loader-resolve` from `08-registrar` · 2 source files
 
 **Files:**
-- Create: `src/Loader.php`, `tests/unit/LoaderResolveTest.php`
+- Create: `src/Loader.php`, `tests/_support/Registrar_State.php`, `tests/_support/Loader_State.php`, `tests/unit/LoaderResolveTest.php`
 - Modify: `README.md`
 
 **Interfaces:**
@@ -2564,7 +2549,8 @@ Verify: `slic run unit` — 6 tests.'
   - `Loader::registrar(): Registrar_Interface`
   - `Loader::register( array $config ): void`
   - `Loader::all(): array`
-  - `Loader::reset(): void` — clears the memo **and** the registry
+  - `Tests\Support\Loader_State::reset(): void` — clears the memo **and** the registry, for the suite only
+  - `Tests\Support\Registrar_State::reset( Registrar $registrar ): void`
 
   Tasks 10, 12 and 13 each add one accessor alongside their own interface.
 
@@ -2574,7 +2560,146 @@ Verify: `slic run unit` — 6 tests.'
 git checkout 08-registrar && git checkout -b 09-loader-resolve
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write `tests/_support/Registrar_State.php` and `tests/_support/Loader_State.php`**
+
+`Loader` is the second static facade in the library, and like `Config` it needs clearing between
+tests without carrying a public `reset()` for the suite's benefit. Both helpers land here, in the
+task that first needs them, modelled on `Config_State`: the properties are walked by reflection and
+an unknown one is a `LogicException` rather than a silent leak, so state added to `Loader` later
+fails loudly instead of surviving into the next test.
+
+`Registrar_State` is separate because emptying the registry is a different job from resetting the
+facade — it acts on an instance, not on static state — and because the `Loader` reset needs it
+before it drops the memo.
+
+```php
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Support;
+
+use Nexcess\PluginAbsorber\Registrar;
+use ReflectionProperty;
+
+/**
+ * Empties a `Registrar` between tests.
+ *
+ * `Registrar_Interface` carries no way to do this deliberately: it would be a method every host
+ * implementation then has to provide, for no reason but this suite. Reflection keeps that seam on
+ * this side of the fence.
+ */
+class Registrar_State {
+	/**
+	 * Discard every registration the given registrar holds.
+	 *
+	 * @param Registrar $registrar Registrar to empty.
+	 *
+	 * @return void
+	 */
+	public static function reset( Registrar $registrar ): void {
+		$property = new ReflectionProperty( Registrar::class, 'sub_plugins' );
+
+		$property->setAccessible( true );
+		$property->setValue( $registrar, [] );
+	}
+}
+```
+
+```php
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Support;
+
+use LogicException;
+use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Registrar;
+use ReflectionClass;
+use ReflectionProperty;
+
+/**
+ * Restores `Loader`'s static state between tests.
+ *
+ * `Loader` memoizes what it resolves, and that memo outlives a single test. Clearing it is the
+ * suite's business rather than the library's, so the seam lives here instead of in a public method
+ * the library would then owe its hosts forever.
+ */
+class Loader_State {
+	/**
+	 * The value each of `Loader`'s static properties starts life with.
+	 *
+	 * Spelled out rather than read from `ReflectionClass::getDefaultProperties()`, which reports a
+	 * static property's *current* value on PHP below 8.3 — a reset built on it is a silent no-op on
+	 * the 7.4 leg.
+	 *
+	 * @var array<string,mixed>
+	 */
+	protected const DEFAULTS = [
+		'resolved' => [],
+	];
+
+	/**
+	 * Empty the registry, then return every static property of `Loader` to its default.
+	 *
+	 * The registrar is emptied before the memo is dropped, and not the other way round: when the
+	 * registrar came from a container binding as a singleton, the container hands back the same
+	 * populated instance on the next resolve, so discarding the memo alone leaves every
+	 * registration in place.
+	 *
+	 * @throws LogicException When `Loader` has grown a static property this helper does not know
+	 *                        about, rather than leaving it to leak between tests.
+	 *
+	 * @return void
+	 */
+	public static function reset(): void {
+		self::empty_registrar();
+
+		$reflection = new ReflectionClass( Loader::class );
+
+		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
+			$name = $property->getName();
+
+			if ( ! array_key_exists( $name, self::DEFAULTS ) ) {
+				throw new LogicException(
+					sprintf( 'Loader::$%s has no default in %s. Add one.', $name, self::class )
+				);
+			}
+
+			$property->setAccessible( true );
+			$property->setValue( null, self::DEFAULTS[ $name ] );
+		}
+	}
+
+	/**
+	 * Empty the memoized registrar, when one was resolved and it is the shipped `Registrar`.
+	 *
+	 * A test that binds a registrar of its own owns that instance: it should build a fresh one per
+	 * test, or give it its own way to clear itself.
+	 *
+	 * @return void
+	 */
+	private static function empty_registrar(): void {
+		$resolved = new ReflectionProperty( Loader::class, 'resolved' );
+
+		$resolved->setAccessible( true );
+
+		/** @var array<string,object> $memo */
+		$memo      = $resolved->getValue();
+		$registrar = $memo[ Registrar_Interface::class ] ?? null;
+
+		if ( $registrar instanceof Registrar ) {
+			Registrar_State::reset( $registrar );
+		}
+	}
+}
+```
+
+- [ ] **Step 3: Write the failing test**
 
 ```php
 <?php
@@ -2591,6 +2716,7 @@ use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -2603,7 +2729,7 @@ class LoaderResolveTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -2640,10 +2766,6 @@ class LoaderResolveTest extends WPTestCase {
 
 			public function all(): array {
 				return $this->sub_plugins;
-			}
-
-			public function reset(): void {
-				$this->sub_plugins = [];
 			}
 		};
 
@@ -2682,10 +2804,6 @@ class LoaderResolveTest extends WPTestCase {
 			public function all(): array {
 				return $this->sub_plugins;
 			}
-
-			public function reset(): void {
-				$this->sub_plugins = [];
-			}
 		};
 
 		$container = new Container();
@@ -2697,11 +2815,11 @@ class LoaderResolveTest extends WPTestCase {
 		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
 	}
 
-	public function test_reset_clears_both_the_memo_and_the_registry(): void {
+	public function test_the_state_helper_clears_both_the_memo_and_the_registry(): void {
 		Loader::register( $this->config( 'give-recurring' ) );
 		$first = Loader::registrar();
 
-		Loader::reset();
+		Loader_State::reset();
 
 		$this->assertSame( [], Loader::all(), 'The registry must be empty after reset.' );
 		$this->assertNotSame( $first, Loader::registrar(), 'The memo must be discarded after reset.' );
@@ -2709,12 +2827,12 @@ class LoaderResolveTest extends WPTestCase {
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [ ] **Step 4: Run it to verify it fails**
 
 Run: `slic run unit`
 Expected: FAIL — `Class "Nexcess\PluginAbsorber\Loader" not found`.
 
-- [ ] **Step 4: Write `src/Loader.php`**
+- [ ] **Step 5: Write `src/Loader.php`**
 
 Only resolution and registration in this PR. `boot()` and the load loop land in Task 11.
 
@@ -2804,39 +2922,32 @@ class Loader {
 	public static function all(): array {
 		return self::registrar()->all();
 	}
-
-	/**
-	 * Discard every resolved collaborator and the registry. Test seam.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public static function reset(): void {
-		if ( isset( self::$resolved[ Registrar_Interface::class ] ) ) {
-			self::registrar()->reset();
-		}
-
-		self::$resolved = [];
-	}
 }
 ```
 
-> `reset()` empties the registrar before discarding the memo. Dropping the memo alone is not
-> enough: when the registrar came from a container binding as a singleton, the container hands back
-> the same populated instance on the next resolve.
+> The facade has no `reset()`. Nothing in production ever needs to un-resolve a collaborator — the
+> memo is built once per request and dies with it — so the only caller would be the suite, and a
+> public static method is a promise to every host that reads the class. `Loader_State::reset()`
+> does the job from `tests/_support/` instead, emptying the registrar through `Registrar_State`
+> before it discards the memo: dropping the memo alone is not enough, because when the registrar
+> came from a container binding as a singleton the container hands back the same populated instance
+> on the next resolve.
+>
+> That reflection reaches into the shipped `Registrar` only. A test that binds a registrar of its
+> own — the two below do — owns that fake, and should build a fresh one per test or give it its own
+> way to clear itself. That is test-side code, which is exactly where this seam belongs.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
 Expected: PASS — 7 tests.
 
-- [ ] **Step 6: Confirm static analysis is still clean**
+- [ ] **Step 7: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 Expected: `[OK] No errors`.
 
-- [ ] **Step 7: Append to the README**
+- [ ] **Step 8: Append to the README**
 
 ```markdown
 ### Rebinding a collaborator
@@ -2860,13 +2971,13 @@ The container is **not** used to wire hooks — those stay plain static callback
 stays genuinely optional.
 ```
 
-- [ ] **Step 8: Commit, push, open the PR**
+- [ ] **Step 9: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/unit/LoaderResolveTest.php README.md
+git add src/Loader.php tests/_support/Registrar_State.php tests/_support/Loader_State.php tests/unit/LoaderResolveTest.php README.md
 git commit -m "Add Loader resolution and registration"
 git push -u origin 09-loader-resolve
-gh pr create --base 08-registrar --title "Loader resolution and registration" --body 'What: `Loader::resolve()`, the `registrar()` accessor, `register()`, `all()`, and `reset()`.
+gh pr create --base 08-registrar --title "Loader resolution and registration" --body 'What: `Loader::resolve()`, the `registrar()` accessor, `register()`, and `all()`.
 
 Usage:
 
@@ -2882,9 +2993,11 @@ accessors with their own fallback logic, so adding a collaborator is one line. T
 checked with `has()` before `get()`, which is what keeps it optional — a host with no container, or
 with one that binds nothing, gets plain `new` instances.
 
-`reset()` empties the registrar before dropping the memo. Discarding the memo alone is not enough:
-a container-bound singleton hands back the same populated instance on the next resolve, so the
-registry would survive a reset and leak between tests.
+The facade carries no `reset()`: nothing in production un-resolves a collaborator, so it would be a
+public promise made for the test suite alone. The suite clears the state by reflection from
+`tests/_support/` instead, and `Loader_State::reset()` empties the registrar before dropping the
+memo — discarding the memo alone is not enough, since a container-bound singleton hands back the
+same populated instance on the next resolve and the registry would survive the reset.
 
 Verify: `slic run unit` — 7 tests, covering both the bound and unbound paths with a real di52
 container.'
@@ -2935,6 +3048,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -2954,7 +3068,7 @@ class NoticesTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_transient( self::TRANSIENT );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3371,7 +3485,7 @@ redirect (queue with one instance, render with another).'
 **PR 11** · branch `11-loader-load-path` from `10-notices-queue` · 2 source files
 
 **Files:**
-- Modify: `src/Loader.php`, `README.md`
+- Modify: `src/Loader.php`, `tests/_support/Loader_State.php` (the new `$booted` property needs a default), `README.md`
 - Create: `tests/unit/LoaderLoadTest.php`, `tests/unit/LoaderBootTest.php`
 
 **Interfaces:**
@@ -3408,6 +3522,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -3435,7 +3550,7 @@ class LoaderLoadTest extends WPTestCase {
 
 		unset( $GLOBALS['absorber_loads'] );
 		delete_transient( 'give_plugin_absorber_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3601,6 +3716,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -3615,7 +3731,7 @@ class LoaderBootTest extends WPTestCase {
 	public function tearDown(): void {
 		remove_all_actions( 'plugins_loaded' );
 		remove_all_actions( 'admin_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3666,7 +3782,7 @@ Add the `$booted` property beside `$resolved`:
 	private static $booted = false;
 ```
 
-Append these methods, and extend `reset()` as shown at the end:
+Append these methods:
 
 ```php
 	/**
@@ -3765,29 +3881,30 @@ Append these methods, and extend `reset()` as shown at the end:
 	}
 ```
 
-Then extend `reset()` so the boot flag clears too:
+- [ ] **Step 6: Teach `tests/_support/Loader_State.php` about the boot flag**
+
+`Loader_State::reset()` walks `Loader`'s static properties and refuses one it has no default for,
+so until `$booted` is listed every test that resets throws a `LogicException` naming it. That is
+the helper doing its job: a boot flag left standing would wire the hooks once and then let every
+later test's `boot()` no-op.
 
 ```php
-	public static function reset(): void {
-		if ( isset( self::$resolved[ Registrar_Interface::class ] ) ) {
-			self::registrar()->reset();
-		}
-
-		self::$resolved = [];
-		self::$booted   = false;
-	}
+	protected const DEFAULTS = [
+		'resolved' => [],
+		'booted'   => false,
+	];
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `slic run unit`
 Expected: PASS — 9 load tests + 3 boot tests.
 
-- [ ] **Step 7: Confirm static analysis is still clean**
+- [ ] **Step 8: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 
-- [ ] **Step 8: Append to the README**
+- [ ] **Step 9: Append to the README**
 
 ```markdown
 ### Bootstrap
@@ -3831,10 +3948,10 @@ A sub-plugin is skipped when it is disabled, its dependencies are unmet, its gua
 already defined, its bundled file is missing, or this filter returns false.
 ```
 
-- [ ] **Step 9: Commit, push, open the PR**
+- [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md
+git add src/Loader.php tests/_support/Loader_State.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md
 git commit -m "Add Loader boot and the load path"
 git push -u origin 11-loader-load-path
 gh pr create --base 10-notices-queue --title "Loader boot and load path" --body 'What: `boot()`, `load_all()`, the five-gate load path, and the `should_load` filter.
@@ -3901,6 +4018,7 @@ use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 
@@ -3964,7 +4082,7 @@ class ResolverTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_transient( 'give_plugin_absorber_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -4511,6 +4629,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Activation;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -4530,7 +4649,7 @@ class ActivationTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_option( self::OPTION );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -4882,6 +5001,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -4914,7 +5034,7 @@ class NoticesActivationErrorTest extends WPTestCase {
 	public function tearDown(): void {
 		unset( $_GET['plugin'], $_GET['_error_nonce'] );
 		set_current_screen( 'front' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -5391,6 +5511,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use lucatume\WPBrowser\Traits\UopzFunctions;
@@ -5432,7 +5553,7 @@ class EndToEndTest extends WPTestCase {
 		delete_option( self::OPTION );
 		update_option( 'active_plugins', [] );
 		unset( $GLOBALS['absorber_loads'] );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}

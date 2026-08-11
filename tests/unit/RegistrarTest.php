@@ -108,29 +108,6 @@ class RegistrarTest extends WPTestCase {
 		$this->fail( 'register() accepted a duplicate slug instead of throwing.' );
 	}
 
-	/**
-	 * A host that boots twice in one process re-runs its registration routine, so the guard has to
-	 * live in the same state `reset()` clears or the second boot fatals.
-	 */
-	public function test_reset_lets_a_slug_be_registered_again(): void {
-		$registrar = new Registrar();
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$registrar->reset();
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$this->assertCount( 1, $registrar->all() );
-	}
-
-	public function test_reset_empties_the_registry(): void {
-		$registrar = new Registrar();
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$registrar->reset();
-
-		$this->assertSame( [], $registrar->all() );
-	}
-
 	public function test_registrars_do_not_share_state(): void {
 		$first  = new Registrar();
 		$second = new Registrar();
