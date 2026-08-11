@@ -209,9 +209,10 @@ class Notices implements Notices_Interface {
 
 		$queue[ $sub_plugin->get_slug() . ':' . $type ] = $message;
 
-		// One call covers both install types: outside multisite `update_site_option()` runs
-		// `update_option( $option, $value, false )`, which is also exactly the autoload=false the
-		// queue wants — it is empty on almost every request and only the admin ever reads it.
+		// One call covers both install types. Outside multisite `update_site_option()` ends in
+		// `update_option( $option, $value, false )`, or `add_option( $option, $value, '', false )`
+		// the first time — either way autoload is off, which is exactly what this queue wants: it
+		// is empty on almost every request and only ever read in the admin.
 		update_site_option( self::option_name(), $queue );
 	}
 

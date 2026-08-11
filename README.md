@@ -83,6 +83,30 @@ after the bundled copy has already loaded, so that re-declaration is a real fata
 it in its activation sandbox, and this library rewrites the resulting error screen into an
 explanation.
 
+### Notices
+
+The three notices this library raises — the standalone was deactivated, the standalone is still
+active, a dependency check failed — are queued in a single option named
+`{prefix}_plugin_absorber_notices`, where `{prefix}` is the hook prefix you set. On multisite it is
+a **network** option, so the queue is shared across every site on the network.
+
+An option and not a transient, on purpose. With a persistent object cache a transient never reaches
+the database, so a `wp_cache_flush()` from a deploy script or a "purge cache" button would destroy
+the queue. The deactivation notice is raised exactly once and never re-queued, so losing it means
+the site owner is never told their plugin was turned off.
+
+`Notices::render()` prints the queue and then clears it, and it is gated on the `activate_plugins`
+capability. Since rendering consumes the queue, a user who cannot act on a notice must not be shown
+one — a subscriber loading their profile page would otherwise silently swallow the only warning an
+administrator was ever going to get. Note that on multisite `activate_plugins` maps through
+`manage_network_plugins`, so it is a network administrator, not the site administrator who installed
+the plugin, who sees these.
+
+`Notices::option_name()` is public so you can render the queue yourself without replacing anything.
+The value is an `array<string,string>` keyed `slug:type` — for example `give-recurring:merge` — and
+the messages are plain text; the default rendering escapes them with `esc_html()`, so a link in a
+message comes out as literal angle brackets.
+
 ### Filters
 
 | Filter | Arguments | Purpose |

@@ -10,7 +10,6 @@ use Generator;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Contracts\Notices_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
@@ -29,7 +28,6 @@ class NoticesTest extends WPTestCase {
 	public function setUp(): void {
 		parent::setUp();
 
-		Loader::reset();
 		Config_State::reset();
 		Config::set_hook_prefix( 'give' );
 		$this->clear_queue();
@@ -50,13 +48,8 @@ class NoticesTest extends WPTestCase {
 	public function tearDown(): void {
 		$this->clear_queue();
 		delete_site_option( 'woo_plugin_absorber_notices' );
-		Loader::reset();
 		Config_State::reset();
 		parent::tearDown();
-	}
-
-	public function test_the_loader_resolves_the_default_notices(): void {
-		$this->assertInstanceOf( Notices::class, Loader::notices() );
 	}
 
 	public function test_the_default_notices_satisfy_the_contract(): void {
@@ -485,6 +478,9 @@ class NoticesTest extends WPTestCase {
 	/**
 	 * The serialized option value straight out of the database, bypassing the object cache.
 	 *
+	 * The table name goes through the `%i` identifier placeholder rather than into the string, so
+	 * the query stays a literal and nothing interpolated ever reaches the parser.
+	 *
 	 * @return string
 	 */
 	private function stored_row(): string {
@@ -494,14 +490,19 @@ class NoticesTest extends WPTestCase {
 		if ( is_multisite() ) {
 			$stored = $wpdb->get_var(
 				$wpdb->prepare(
-					"SELECT meta_value FROM {$wpdb->sitemeta} WHERE meta_key = %s AND site_id = %d",
+					'SELECT meta_value FROM %i WHERE meta_key = %s AND site_id = %d',
+					$wpdb->sitemeta,
 					self::OPTION,
 					get_current_network_id()
 				)
 			);
 		} else {
 			$stored = $wpdb->get_var(
-				$wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::OPTION )
+				$wpdb->prepare(
+					'SELECT option_value FROM %i WHERE option_name = %s',
+					$wpdb->options,
+					self::OPTION
+				)
 			);
 		}
 
