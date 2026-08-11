@@ -167,10 +167,28 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_conflict_policy(): string {
-		return $this->filter_string(
-			'conflict_policy',
-			(string) ( $this->config['conflict_policy'] ?? Conflict_Policy::default() )
-		);
+		$policy = (string) ( $this->config['conflict_policy'] ?? Conflict_Policy::default() );
+
+		/**
+		 * Filters the policy applied when a standalone copy of a sub-plugin is found active.
+		 *
+		 * The dynamic portion of the hook name, `$hook_prefix`, is the prefix given to
+		 * Config::set_hook_prefix().
+		 *
+		 * Fires after the configured value and its default, so a host can decide per request
+		 * rather than at registration. Returning a value that is not one of the Conflict_Policy
+		 * constants is not consent to deactivate — callers leave the standalone alone instead.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param string     $policy     One of the Conflict_Policy constants.
+		 * @param Sub_Plugin $sub_plugin The sub-plugin the policy applies to.
+		 */
+		$policy = apply_filters( Config::get_hook_name( 'conflict_policy' ), $policy, $this );
+
+		// An empty string matches no known policy, so a filter that returned something uncastable
+		// lands at the conservative branch rather than at a deactivation.
+		return $this->as_string( $policy );
 	}
 
 	/**
@@ -251,7 +269,30 @@ class Sub_Plugin {
 	public function get_conflict_notice_message( string $default = '' ): string {
 		$message = (string) ( $this->config['conflict_notice_message'] ?? '' );
 
-		return $this->filter_string( 'conflict_notice_message', $message !== '' ? $message : $default );
+		if ( $message === '' ) {
+			$message = $default;
+		}
+
+		/**
+		 * Filters the notice shown when a standalone copy is deactivated, and when the user tries
+		 * to activate it again.
+		 *
+		 * The dynamic portion of the hook name, `$hook_prefix`, is the prefix given to
+		 * Config::set_hook_prefix().
+		 *
+		 * Fires when the message is asked for rather than when the sub-plugin is registered, which
+		 * is what makes this the place to translate it: the textdomain is loaded by then.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param string     $message    The configured message, or the caller's fallback.
+		 * @param Sub_Plugin $sub_plugin The sub-plugin in conflict.
+		 */
+		$message = apply_filters( Config::get_hook_name( 'conflict_notice_message' ), $message, $this );
+
+		// An empty string renders no notice, which is where a filter returning an array or an
+		// object lands rather than in a fatal cast.
+		return $this->as_string( $message );
 	}
 
 	/**
@@ -274,7 +315,26 @@ class Sub_Plugin {
 			);
 		}
 
-		return $this->filter_string( 'dependency_notice_message', $message );
+		/**
+		 * Filters the notice shown when a sub-plugin's dependency_check fails.
+		 *
+		 * The dynamic portion of the hook name, `$hook_prefix`, is the prefix given to
+		 * Config::set_hook_prefix().
+		 *
+		 * Fires when the message is asked for rather than when the sub-plugin is registered, which
+		 * is what makes this the place to translate the generic default: the textdomain is loaded
+		 * by then.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param string     $message    The configured message, or a generic untranslated one.
+		 * @param Sub_Plugin $sub_plugin The sub-plugin whose dependencies are unmet.
+		 */
+		$message = apply_filters( Config::get_hook_name( 'dependency_notice_message' ), $message, $this );
+
+		// An empty string renders no notice, which is where a filter returning an array or an
+		// object lands rather than in a fatal cast.
+		return $this->as_string( $message );
 	}
 
 	/**
@@ -289,36 +349,27 @@ class Sub_Plugin {
 	}
 
 	/**
-	 * Let the host have the last word on a configured string.
+	 * Reduce whatever a filter returned to a string.
 	 *
-	 * This is where a runtime decision belongs. The alternative — accepting a callable under the
-	 * key itself — cannot work for a key whose value is a string, because a string naming a
+	 * Only the cast is shared. Each filter is applied at the method that owns it rather than
+	 * through a common helper, so that every hook keeps a documented call site a reader and a hook
+	 * scanner can both find, and a version of its own.
+	 *
+	 * These filters run at plugins_loaded, where casting an array or an object would be a fatal.
+	 * Anything uncastable is treated as though the filter had returned nothing at all; what
+	 * nothing means is for each caller to say.
+	 *
+	 * Runtime decisions belong here rather than under the config key itself: a string naming a
 	 * function is indistinguishable from a string meaning itself, and which one you got would
-	 * depend on what else the site happens to have loaded.
-	 *
-	 * Filtering last, after the configured value and any fallback, is also what makes deferred
-	 * translation possible: the hook fires when the message is asked for rather than when the
-	 * sub-plugin is registered, by which time the textdomain is loaded.
+	 * depend on what else the site happened to have loaded.
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param string $hook  Hook name, less the prefix this library shares.
-	 * @param string $value Value to filter.
-	 *
-	 * @throws Config_Exception When no hook prefix has been set.
+	 * @param mixed $value Whatever came back from apply_filters().
 	 *
 	 * @return string
 	 */
-	private function filter_string( string $hook, string $value ): string {
-		$filtered = apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/' . $hook,
-			$value,
-			$this
-		);
-
-		// A filter returning an object or an array is a mistake, and casting one would be a fatal
-		// at plugins_loaded. An empty string is not a valid policy and renders no notice, so both
-		// route to the conservative branch instead.
-		return is_scalar( $filtered ) ? (string) $filtered : '';
+	private function as_string( $value ): string {
+		return is_scalar( $value ) ? (string) $value : '';
 	}
 }
