@@ -12,4 +12,5 @@
 /codeception.slic.yml   export-ignore
 /cspell.json        export-ignore
 /engineering-plan.md    export-ignore
+/phpstan-cache      export-ignore
 /phpstan.neon.dist  export-ignore

@@ -26,7 +26,6 @@ Requires PHP 7.4+ and WordPress 6.4+.
 use Nexcess\PluginAbsorber\Config;
 
 Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
-Config::set_version( GIVE_VERSION );        // optional
 Config::set_container( give()->container ); // optional — lets you rebind collaborators
 ```
 

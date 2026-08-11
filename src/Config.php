@@ -20,11 +20,6 @@ class Config {
 	protected static $hook_prefix = '';
 
 	/**
-	 * @var string
-	 */
-	protected static $version = '';
-
-	/**
 	 * @var ContainerInterface|null
 	 */
 	protected static $container = null;
@@ -72,26 +67,6 @@ class Config {
 	}
 
 	/**
-	 * @since 1.0.0
-	 *
-	 * @param string $version Host plugin version.
-	 *
-	 * @return void
-	 */
-	public static function set_version( string $version ): void {
-		self::$version = $version;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public static function get_version(): string {
-		return self::$version;
-	}
-
-	/**
 	 * Share the host's container so collaborators become bindable.
 	 *
 	 * Entirely optional — with no container the library instantiates its own defaults.
@@ -122,18 +97,5 @@ class Config {
 	 */
 	public static function has_container(): bool {
 		return self::$container !== null;
-	}
-
-	/**
-	 * Reset all static state. Test seam.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public static function reset(): void {
-		self::$hook_prefix = '';
-		self::$version     = '';
-		self::$container   = null;
 	}
 }

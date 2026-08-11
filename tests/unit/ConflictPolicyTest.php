@@ -52,11 +52,11 @@ class ConflictPolicyTest extends WPTestCase {
 	 *
 	 * @return Generator<string,array{0:string}>
 	 */
-	public function valid_policies(): Generator {
+	public static function valid_policies(): Generator {
 		$constants = ( new ReflectionClass( Conflict_Policy::class ) )->getConstants();
 
 		foreach ( $constants as $name => $value ) {
-			yield $name => [ $value ];
+			yield $name => [ (string) $value ];
 		}
 	}
 
@@ -72,10 +72,10 @@ class ConflictPolicyTest extends WPTestCase {
 	/**
 	 * @return Generator<string,array{0:string}>
 	 */
-	public function invalid_policies(): Generator {
-		yield 'typo' => [ 'defered' ];
-		yield 'empty' => [ '' ];
+	public static function invalid_policies(): Generator {
+		yield 'typo'       => [ 'defered' ];
+		yield 'empty'      => [ '' ];
 		yield 'wrong case' => [ 'DEACTIVATE' ];
-		yield 'constant' => [ 'Conflict_Policy::DEFER' ];
+		yield 'constant'   => [ 'Conflict_Policy::DEFER' ];
 	}
 }
