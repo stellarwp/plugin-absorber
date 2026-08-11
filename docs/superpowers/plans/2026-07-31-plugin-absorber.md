@@ -3623,7 +3623,7 @@ completely unhelpful. Swap in the sub-plugin's own explanation.
 
 **Files:**
 - Modify: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Loader.php`, `README.md`
-- Create: `tests/unit/NoticesActivationErrorTest.php`
+- Create: `tests/unit/Notices/QueueActivationErrorTest.php`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Sub_Plugin::get_standalone_plugin_basename()` / `get_conflict_notice_message()` (Task 7).
@@ -3981,7 +3981,8 @@ registered standalone basename, and a valid `plugin-activation-error_{basename}`
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
+This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no
+consumers.
 
 Verify: `slic run unit` — 8 tests, one per gate plus `wp_kses_post()` sanitising and the Loader
 trampoline.'
@@ -4607,8 +4608,8 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   (`is_standalone_plugin_network_active()`) + Task 12 (the `$network_wide` argument); D → Task 7
   (`get_dependency_notice_message()`) + Task 10 (rendering). Deferred B/E/F are recorded above and
   in the PR bodies that touch them. Every spec test bullet has a corresponding test method.
-- **Interface consistency.** `Notices\Contracts\Queue_Interface` grows one method in Task 14 — flagged in both the
-  task and the PR body rather than left implicit. `Loader_State::reset()` is written once in Task 9 and
+- **Interface consistency.** `Notices\Contracts\Queue_Interface` grows one method in Task 14 —
+  flagged in both the task and the PR body rather than left implicit. `Loader_State::reset()` is written once in Task 9 and
   extended once in Task 11 (`$booted`), shown in full both times. `redirect_destination()` is
   `protected`, matching how the Task 12 tests subclass it.
 - **Placeholder scan.** No TBD, no "add error handling", no "similar to Task N". Every code step
