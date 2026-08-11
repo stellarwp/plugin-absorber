@@ -15,6 +15,19 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * Plugin_State_Interface; this object only names the plugin to ask about.
  *
  * @since 1.0.0
+ *
+ * @phpstan-type Sub_Plugin_Config array{
+ *     slug: string,
+ *     bundled_plugin_file: string,
+ *     plugin_loaded_constant: string,
+ *     enabled?: bool|callable,
+ *     conflict_policy?: string|callable,
+ *     standalone_plugin_basename?: string,
+ *     dependency_check?: callable,
+ *     conflict_notice_message?: string|callable,
+ *     dependency_notice_message?: string|callable,
+ *     activation_callback?: callable
+ * }
  */
 class Sub_Plugin {
 	/**
@@ -36,7 +49,11 @@ class Sub_Plugin {
 	private const CALLABLE_KEYS = [ 'dependency_check', 'activation_callback' ];
 
 	/**
-	 * @var array<string,mixed>
+	 * Validated configuration, keyed as the constructor accepts it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var Sub_Plugin_Config
 	 */
 	private $config;
 
@@ -74,6 +91,10 @@ class Sub_Plugin {
 			}
 		}
 
+		// The loops above have proved every key this class reads without a guard of its own. The
+		// rest are read through resolve_callable(), which returns anything it cannot call as-is,
+		// and through the is_scalar() casts in resolve_message() and get_conflict_policy().
+		/** @var Sub_Plugin_Config $config */
 		$this->config = $config;
 	}
 
@@ -247,7 +268,7 @@ class Sub_Plugin {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param mixed $message Configured message.
+	 * @param string|callable $message Configured message, or a callable returning one.
 	 *
 	 * @return string
 	 */
@@ -266,9 +287,9 @@ class Sub_Plugin {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param mixed $value Configured value.
+	 * @param string|bool|callable $value Configured value, or a callable returning one.
 	 *
-	 * @return mixed
+	 * @return string|bool
 	 */
 	private function resolve_callable( $value ) {
 		if ( is_string( $value ) || is_bool( $value ) || ! is_callable( $value ) ) {
