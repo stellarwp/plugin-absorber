@@ -102,6 +102,45 @@ class RendererTest extends WPTestCase {
 	}
 
 	/**
+	 * A bare message still has to reach the screen as a paragraph: `.notice` styles the `<p>` inside
+	 * it, and text sitting directly in the div loses that spacing.
+	 */
+	public function test_it_wraps_a_bare_message_in_a_paragraph(): void {
+		$this->assertStringContainsString( '<p>Bundled now.</p>', $this->render( [ 'a:merge' => 'Bundled now.' ] ) );
+	}
+
+	/**
+	 * The same allowlist that keeps a link keeps a `<p>`, so a host may well send one. Wrapping that
+	 * in another paragraph is markup no browser can honour: the parser closes the outer `<p>` at the
+	 * inner one and leaves a stray `</p>` behind, so the notice renders with an empty leading line.
+	 */
+	public function test_it_does_not_wrap_a_paragraph_the_host_already_wrote(): void {
+		$output = $this->render( [ 'a:merge' => '<p>Bundled now.</p>' ] );
+
+		$this->assertStringNotContainsString( '<p><p>', $output );
+		$this->assertSame( 1, substr_count( $output, '<p>' ), 'One paragraph in, one paragraph out.' );
+	}
+
+	/**
+	 * The class docblock promises a list survives, and a `<ul>` inside a `<p>` is not a list that
+	 * survived: the browser closes the paragraph before it, orphaning the closing tag.
+	 */
+	public function test_it_keeps_a_list_out_of_the_paragraph(): void {
+		$output = $this->render( [ 'a:merge' => 'Requires:<ul><li>Give</li></ul>' ] );
+
+		$this->assertMatchesRegularExpression( '#</p>\s*<ul>#', $output, 'The paragraph must close first.' );
+		$this->assertStringContainsString( '<li>Give</li>', $output );
+	}
+
+	/**
+	 * A blank line is the only paragraph break available to a host whose message is a plain
+	 * translated string, so it has to survive as one rather than collapse into running text.
+	 */
+	public function test_a_blank_line_starts_a_second_paragraph(): void {
+		$this->assertSame( 2, substr_count( $this->render( [ 'a:merge' => "One.\n\nTwo." ] ), '<p>' ) );
+	}
+
+	/**
 	 * @dataProvider empty_messages
 	 *
 	 * @param string $message Message that must print nothing at all.

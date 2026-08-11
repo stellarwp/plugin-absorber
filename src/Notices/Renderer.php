@@ -42,6 +42,14 @@ class Renderer {
 	 * link to a knowledge-base article, emphasis or a list survives, while a script or an event
 	 * handler attribute does not.
 	 *
+	 * The paragraph comes from `wpautop()` rather than a literal `<p>` around the message. That
+	 * same allowlist keeps a `<p>`, so a host may well send one already wrapped, and a hard wrap
+	 * around it is markup no browser can honour: the parser closes the outer paragraph at the
+	 * inner one and leaves a stray `</p>`, which draws an empty line above the notice. A `<ul>`
+	 * fares worse — it cannot legally sit in a `<p>` at all, so the list the allowlist just
+	 * preserved would break straight back out of it. `wpautop()` wraps only what needs wrapping,
+	 * and turns the blank line a plain translated string uses as a break into a real one.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param array<string,string> $queue Queue to draw, keyed `slug:type`.
@@ -61,11 +69,12 @@ class Renderer {
 			}
 
 			printf(
-				'<div class="notice %s is-dismissible"><p>%s</p></div>',
+				'<div class="notice %s is-dismissible">%s</div>',
 				esc_attr( $this->notice_class( (string) $key ) ),
 				// Already filtered: escaping it again here would undo the whole point and print a
-				// link as literal angle brackets.
-				$message
+				// link as literal angle brackets. Trimmed because `wpautop()` leaves a trailing
+				// newline, which would otherwise sit inside the div on every notice.
+				trim( wpautop( $message ) )
 			);
 		}
 	}

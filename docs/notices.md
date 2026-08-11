@@ -27,7 +27,8 @@ administrator, not the site administrator who installed the plugin, who sees the
 anything. The value is an `array<string,string>` keyed `slug:type` — `give-recurring:merge`, for
 example — and the messages may contain markup; the default rendering passes them through
 `wp_kses_post()`, so a link, emphasis or a list survives while scripts and event handlers are
-stripped.
+stripped. Paragraphs come from `wpautop()`, so send the message unwrapped and let a blank line
+break it — a `<p>` of your own is left as it is rather than nested inside another.
 
 The queue is three classes: `Notices\Queue` decides what a notice says and who may consume it,
 `Notices\Store` keeps it, `Notices\Renderer` draws it. Both collaborators are constructor arguments,
