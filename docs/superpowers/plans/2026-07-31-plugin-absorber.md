@@ -5636,10 +5636,6 @@ Recorded in the spec, deliberately not fixed in 1.0.0:
 - **E** — `Activation::maybe_run()` reads the option, runs the callback, then writes. Two
   simultaneous first requests can both run it. `add_option()` as an atomic claim would close it.
 - **F** — `Config::get_version()` is stored but never read.
-- **G** — PHPStan analyses `src/` only. Hand-written test-support code is thin for now, and adding
-  `tests/` wholesale would drag in Codeception's generated actor and `WPTestCase` module magic —
-  a well-known source of level-5 false positives. Once real support classes accumulate, put
-  `tests/_support` alone under a second config rather than widening `paths`.
 
 ## Self-review
 
