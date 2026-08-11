@@ -1,0 +1,26 @@
+includes:
+	- vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+	phpVersion: 70400
+	level: 8
+	tmpDir: phpstan-cache
+	# This library is called from untyped WordPress plugin code, so runtime type
+	# guards have to survive even where the PHPDoc says they cannot fail.
+	treatPhpDocTypesAsCertain: false
+
+	paths:
+		- src
+		- tests
+
+	excludePaths:
+		analyse:
+			# Codeception generates the actor's trait from the suite's module list.
+			# It is not committed, so on a fresh checkout it does not exist at all;
+			# the actor that uses it is excluded alongside it. Everything else under
+			# tests/ is hand-written and is analysed.
+			- tests/_support/_generated/*
+			- tests/_support/UnitTester.php
+
+	scanDirectories:
+		- vendor/stellarwp/container-contract/src
