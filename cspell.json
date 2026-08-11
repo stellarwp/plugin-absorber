@@ -5,6 +5,7 @@
         "absorber",
         "codeception",
         "fatals",
+        "invokable",
         "kadence",
         "learndash",
         "multisite",
@@ -15,6 +16,8 @@
         "slic",
         "stellarwp",
         "strauss",
+        "uncallable",
+        "uncastable",
         "unhookable",
         "uopz",
         "wpunit"

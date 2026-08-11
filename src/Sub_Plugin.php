@@ -21,11 +21,11 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  *     bundled_plugin_file: string,
  *     plugin_loaded_constant: string,
  *     enabled?: bool|callable,
- *     conflict_policy?: string,
+ *     conflict_policy?: string|callable,
  *     standalone_plugin_basename?: string,
  *     dependency_check?: callable,
- *     conflict_notice_message?: string,
- *     dependency_notice_message?: string,
+ *     conflict_notice_message?: callable,
+ *     dependency_notice_message?: callable,
  *     activation_callback?: callable
  * }
  */
@@ -55,12 +55,25 @@ class Sub_Plugin {
 	 *
 	 * @var string[]
 	 */
-	private const STRING_KEYS = [
-		'standalone_plugin_basename',
-		'conflict_policy',
-		'conflict_notice_message',
-		'dependency_notice_message',
-	];
+	private const STRING_KEYS = [ 'standalone_plugin_basename' ];
+
+	/**
+	 * Keys that take a string, or something to call for one when it is wanted.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string[]
+	 */
+	private const DEFERRABLE_KEYS = [ 'conflict_policy' ];
+
+	/**
+	 * Keys that carry human-readable text, and so only ever hold something to call for it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string[]
+	 */
+	private const MESSAGE_KEYS = [ 'conflict_notice_message', 'dependency_notice_message' ];
 
 	/**
 	 * Validated configuration, keyed as the constructor accepts it.
@@ -76,8 +89,9 @@ class Sub_Plugin {
 	 *
 	 * @param array<string,mixed> $config Sub-plugin configuration.
 	 *
-	 * @throws Config_Exception When a required key is missing, empty, or not a string, or when a
-	 *                          callable-only key holds something that cannot be called.
+	 * @throws Config_Exception When a required key is missing, empty, or not a string; when a
+	 *                          callable-only key holds something that cannot be called; or when a
+	 *                          message key holds a string rather than something to call for one.
 	 */
 	public function __construct( array $config ) {
 		foreach ( self::REQUIRED_KEYS as $required ) {
@@ -105,13 +119,45 @@ class Sub_Plugin {
 			}
 		}
 
-		// These keys take a value, not a decision. A closure under one of them would render as the
-		// string "Closure" at best, so it is worth a loud failure at registration rather than a
-		// puzzling notice much later; the filters are how these are decided at runtime.
+		// A basename names a file already on disk; nothing about it waits on anything. A closure
+		// under it would reach deactivate_plugins() as the string "Closure", so it is worth a loud
+		// failure at registration rather than a puzzling one much later.
 		foreach ( self::STRING_KEYS as $key ) {
 			if ( isset( $config[ $key ] ) && ! is_string( $config[ $key ] ) ) {
 				throw new Config_Exception(
-					"Sub-plugin config key must be a string, and is filterable at runtime: {$key}"
+					"Sub-plugin config key must be a string: {$key}"
+				);
+			}
+		}
+
+		// Anything that is neither a string nor a callable is rejected where the mistake was made.
+		// At read time an array would cast to the string "Array", and a [ class, method ] pair
+		// naming a method that does not exist would become the value itself.
+		foreach ( self::DEFERRABLE_KEYS as $key ) {
+			if ( ! isset( $config[ $key ] ) ) {
+				continue;
+			}
+
+			if ( ! is_string( $config[ $key ] ) && ! is_callable( $config[ $key ] ) ) {
+				throw new Config_Exception(
+					"Sub-plugin config key must be a string, or a callable that is not one: {$key}"
+				);
+			}
+		}
+
+		// A string is refused outright here, unlike everywhere else. Text a host has already
+		// translated cannot be told from text it has not, and a config array is built before init
+		// -- so accepting the one shape that can only have been produced too early would leave the
+		// just-in-time textdomain notice these keys exist to prevent. One `static fn()` at the call
+		// site fails here the first time the code runs, rather than in someone else's log.
+		foreach ( self::MESSAGE_KEYS as $key ) {
+			if ( ! isset( $config[ $key ] ) ) {
+				continue;
+			}
+
+			if ( is_string( $config[ $key ] ) || ! is_callable( $config[ $key ] ) ) {
+				throw new Config_Exception(
+					"Sub-plugin config key must be a callable that is not a string: {$key}"
 				);
 			}
 		}
@@ -167,7 +213,8 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_conflict_policy(): string {
-		$policy = (string) ( $this->config['conflict_policy'] ?? Conflict_Policy::default() );
+		$policy = $this->config['conflict_policy'] ?? Conflict_Policy::default();
+		$policy = $this->as_string( $this->resolve_deferred( $policy ) );
 
 		/**
 		 * Filters the policy applied when a standalone copy of a sub-plugin is found active.
@@ -258,6 +305,9 @@ class Sub_Plugin {
 	 * The fallback is a parameter because the two contexts want different wording, and because
 	 * a caller with no fallback of its own would otherwise render nothing at all.
 	 *
+	 * Configured as a callable and never as a string, so that __() cannot run in the config array,
+	 * where it would run before the textdomain is loaded.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param string $default Used when nothing is configured.
@@ -267,7 +317,8 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_conflict_notice_message( string $default = '' ): string {
-		$message = (string) ( $this->config['conflict_notice_message'] ?? '' );
+		$configured = $this->config['conflict_notice_message'] ?? '';
+		$message    = $this->as_string( $this->resolve_deferred( $configured ) );
 
 		if ( $message === '' ) {
 			$message = $default;
@@ -296,8 +347,9 @@ class Sub_Plugin {
 	}
 
 	/**
-	 * Shown when a dependency_check fails. Falls back to a generic, untranslated sentence —
-	 * hook the filter to localise it, which also runs late enough for the textdomain to be loaded.
+	 * Shown when a dependency_check fails. Falls back to a generic, untranslated sentence — the key
+	 * takes a callable, and never a string, so that a host's own __() cannot run in its config
+	 * array, before the textdomain is loaded.
 	 *
 	 * @since 1.0.0
 	 *
@@ -306,7 +358,8 @@ class Sub_Plugin {
 	 * @return string
 	 */
 	public function get_dependency_notice_message(): string {
-		$message = (string) ( $this->config['dependency_notice_message'] ?? '' );
+		$configured = $this->config['dependency_notice_message'] ?? '';
+		$message    = $this->as_string( $this->resolve_deferred( $configured ) );
 
 		if ( $message === '' ) {
 			$message = sprintf(
@@ -349,23 +402,52 @@ class Sub_Plugin {
 	}
 
 	/**
-	 * Reduce whatever a filter returned to a string.
+	 * Take a configured value as it stands, or call it for one.
+	 *
+	 * A string is always the value itself, however real a function of that name happens to be.
+	 * `date`, `flush` and `key` are all existing functions and all plausible configured values, so
+	 * honouring a string as a call would make the answer depend on what else the site had loaded --
+	 * and calling one of those with a Sub_Plugin argument is a fatal, not a value. Only the policy
+	 * arrives here as one; the message keys take no string at all.
+	 *
+	 * Every other callable form says "call me" and nothing else: a closure, a [ class, method ]
+	 * pair, an invokable object, a container callback. That is what lets a host defer __() to the
+	 * moment the text is wanted, rather than translating while it builds its config array -- which
+	 * happens before init, and is what raises WordPress's just-in-time textdomain notice.
+	 *
+	 * Called on every read. Resolving once in the constructor would move the too-early call from
+	 * the config array to the line after it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param mixed $value Configured value, proved a string or a callable at registration.
+	 *
+	 * @return mixed
+	 */
+	private function resolve_deferred( $value ) {
+		// The constructor has already made this good. It stays because reaching a call on something
+		// uncallable would be a fatal where the wrong shape is merely a notice that says so.
+		if ( is_string( $value ) || ! is_callable( $value ) ) {
+			return $value;
+		}
+
+		return $value( $this );
+	}
+
+	/**
+	 * Reduce whatever a filter or a configured callable returned to a string.
 	 *
 	 * Only the cast is shared. Each filter is applied at the method that owns it rather than
 	 * through a common helper, so that every hook keeps a documented call site a reader and a hook
 	 * scanner can both find, and a version of its own.
 	 *
-	 * These filters run at plugins_loaded, where casting an array or an object would be a fatal.
-	 * Anything uncastable is treated as though the filter had returned nothing at all; what
-	 * nothing means is for each caller to say.
-	 *
-	 * Runtime decisions belong here rather than under the config key itself: a string naming a
-	 * function is indistinguishable from a string meaning itself, and which one you got would
-	 * depend on what else the site happened to have loaded.
+	 * Both run at plugins_loaded, where casting an array or an object would be a fatal. Anything
+	 * uncastable is treated as though nothing had come back at all; what nothing means is for each
+	 * caller to say.
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param mixed $value Whatever came back from apply_filters().
+	 * @param mixed $value Whatever came back from apply_filters() or from a configured callable.
 	 *
 	 * @return string
 	 */
