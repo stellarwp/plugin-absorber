@@ -105,6 +105,51 @@ class ConfigTest extends WPTestCase {
 		Config::get_hook_name( 'conflict_policy' );
 	}
 
+	/**
+	 * The assertion that keeps hook names and option names apart. Only the storage key is folded,
+	 * so a host that passed `Give-Core` can still hook the filter name it was given.
+	 */
+	public function test_a_hook_name_keeps_the_prefix_verbatim(): void {
+		Config::set_hook_prefix( 'Give-Core' );
+
+		$this->assertSame(
+			'Give-Core/plugin_absorber/should_load',
+			Config::get_hook_name( 'should_load' )
+		);
+	}
+
+	/**
+	 * @dataProvider option_name_prefixes
+	 *
+	 * @param string $prefix   Prefix under test.
+	 * @param string $expected Option name it must produce.
+	 */
+	public function test_it_builds_an_option_name_from_a_normalised_prefix(
+		string $prefix,
+		string $expected
+	): void {
+		Config::set_hook_prefix( $prefix );
+
+		$this->assertSame( $expected, Config::get_option_name( 'notices' ) );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string,1:string}>
+	 */
+	public static function option_name_prefixes(): Generator {
+		yield 'nothing to fold'       => [ 'give', 'give_plugin_absorber_notices' ];
+		yield 'underscore is kept'    => [ 'give_recurring', 'give_recurring_plugin_absorber_notices' ];
+		yield 'mixed case'            => [ 'GiveRecurring', 'giverecurring_plugin_absorber_notices' ];
+		yield 'hyphen'                => [ 'give-recurring', 'give_recurring_plugin_absorber_notices' ];
+		yield 'mixed case and hyphen' => [ 'Give-Core', 'give_core_plugin_absorber_notices' ];
+	}
+
+	public function test_an_option_name_needs_a_prefix(): void {
+		$this->expectException( Config_Exception::class );
+
+		Config::get_option_name( 'notices' );
+	}
+
 	public function test_it_reports_no_container_by_default(): void {
 		$this->assertFalse( Config::has_container() );
 		$this->assertNull( Config::get_container() );

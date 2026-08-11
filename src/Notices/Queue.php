@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber\Notices;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**

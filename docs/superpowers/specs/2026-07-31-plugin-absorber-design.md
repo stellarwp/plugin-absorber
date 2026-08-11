@@ -16,7 +16,7 @@ Where the two disagree, this document wins.
 | Repository | `github.com/stellarwp/plugin-absorber` |
 | Root namespace | `Nexcess\PluginAbsorber\` |
 | Filter segment | `{hook_prefix}/plugin_absorber/…` |
-| Option / transient | `{hook_prefix}_plugin_absorber_activations` / `…_notices` |
+| Option / transient | `{option_prefix}_plugin_absorber_activations` / `…_notices`, where `{option_prefix}` is the hook prefix lowercased with hyphens folded to underscores |
 | PR strategy | Stacked branches, merged to `main` in order |
 | Test strategy | Codeception + `wp-browser`, WPLoader (real WP) + `uopz` for unhookable functions |
 | PR size cap | ≤ 10 files, tests excluded; no logic-bearing PR exceeds 4 source files |
@@ -50,7 +50,7 @@ fatal string. The filter is strictly better: no buffering, no risk of mangling u
 output, and testable by calling the filter directly.
 
 Consequences:
-- `Notices\Queue_Interface` does **not** declare `start_buffer()`.
+- `Notices\Contracts\Queue_Interface` does **not** declare `start_buffer()`.
 - `Loader::boot()` does **not** hook `admin_head-plugins.php`.
 - The library requires **WordPress 6.4+** (when the filter landed). Stated in the README only —
   not enforceable through Composer, since WordPress is not a Composer dependency.
@@ -142,8 +142,8 @@ trampolines, per the `admin-notices` precedent.
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
-| `Notices\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
-| `Conflict\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
 | `Contracts\Activation_Interface` | `Activation` | run-once activation-callback tracking |
 
 ### Config schema
@@ -182,9 +182,9 @@ from the size cap.
 | 7 | `07-sub-plugin` | 2 | `Sub_Plugin`, README |
 | 8 | `08-registrar` | 3 | `Contracts\Registrar_Interface`, `Registrar`, README |
 | 9 | `09-loader-resolve` | 2 | `Loader`, README |
-| 10 | `10-notices-queue` | 4 | `Notices\Queue_Interface`, `Notices\Queue`, `Notices\Store`, `Notices\Renderer`, README |
+| 10 | `10-notices-queue` | 4 | `Notices\Contracts\Queue_Interface`, `Notices\Queue`, `Notices\Store`, `Notices\Renderer`, README |
 | 11 | `11-loader-load-path` | 2 | `Loader` mod, README |
-| 12 | `12-conflict-resolver` | 4 | `Conflict\Resolver_Interface`, `Conflict\Resolver`, `Loader` mod, README |
+| 12 | `12-conflict-resolver` | 4 | `Conflict\Contracts\Resolver_Interface`, `Conflict\Resolver`, `Loader` mod, README |
 | 13 | `13-activation` | 4 | `Contracts\Activation_Interface`, `Activation`, `Loader` mod, README |
 | 14 | `14-activation-error-notice` | 3 | `Notices\Queue` mod, `Loader` mod, README |
 | 15 | `15-e2e-fixtures` | 1 | README |

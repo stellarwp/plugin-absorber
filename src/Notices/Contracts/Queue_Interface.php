@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Notices;
+namespace Nexcess\PluginAbsorber\Notices\Contracts;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;

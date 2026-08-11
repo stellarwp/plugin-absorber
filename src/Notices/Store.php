@@ -24,7 +24,9 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  */
 class Store {
 	/**
-	 * The option name backing the queue. Read it directly to render these notices yourself.
+	 * The option name backing the queue. Read it directly to render these notices yourself — and
+	 * read it from here rather than composing it, since the hook prefix is normalised on its way
+	 * into a storage key.
 	 *
 	 * @since 1.0.0
 	 *
@@ -33,7 +35,7 @@ class Store {
 	 * @return string
 	 */
 	public static function option_name(): string {
-		return Config::get_hook_prefix() . '_plugin_absorber_notices';
+		return Config::get_option_name( 'notices' );
 	}
 
 	/**

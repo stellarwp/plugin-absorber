@@ -24,6 +24,10 @@ use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 class StoreTest extends WPTestCase {
 	private const OPTION = 'give_plugin_absorber_notices';
 
+	private const OPTION_WOO = 'woo_plugin_absorber_notices';
+
+	private const OPTION_NORMALISED = 'give_core_plugin_absorber_notices';
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -34,7 +38,8 @@ class StoreTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_site_option( self::OPTION );
-		delete_site_option( 'woo_plugin_absorber_notices' );
+		delete_site_option( self::OPTION_WOO );
+		delete_site_option( self::OPTION_NORMALISED );
 		Config_State::reset();
 		parent::tearDown();
 	}
@@ -131,7 +136,26 @@ class StoreTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( 'woo_plugin_absorber_notices', Store::option_name() );
+		$this->assertSame( self::OPTION_WOO, Store::option_name() );
+	}
+
+	/**
+	 * The hook prefix is allowed mixed case and hyphens because it names filters. An option name
+	 * is a storage key, so the prefix reaches the database folded rather than raw.
+	 */
+	public function test_the_option_name_normalises_the_hook_prefix(): void {
+		Config_State::reset();
+		Config::set_hook_prefix( 'Give-Core' );
+
+		$this->assertSame( self::OPTION_NORMALISED, Store::option_name() );
+
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+
+		$this->assertSame(
+			[ 'give-recurring:merge' => 'Bundled now.' ],
+			get_site_option( self::OPTION_NORMALISED ),
+			'The queue must be written under the normalised name.'
+		);
 	}
 
 	public function test_it_needs_a_hook_prefix(): void {
