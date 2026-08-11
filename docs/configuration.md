@@ -17,6 +17,33 @@ option names lowercase it and turn hyphens into underscores, so `Give-Core` hook
 The container is optional. Without one, the library instantiates its own collaborators; with one,
 a host can rebind them.
 
+## Rebinding a collaborator
+
+Every collaborator is interface-backed. With a container set, bind one to override the library
+globally; with no container, the defaults are used and nothing is required.
+
+```php
+use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+
+$container->singleton( Registrar_Interface::class, My_Registrar::class );
+Config::set_container( $container );
+```
+
+| Interface | Default | Responsibility |
+|---|---|---|
+| `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
+
+`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter: it may
+come before or after your `Loader::register()` calls, so long as it comes before boot. Registering
+buffers the sub-plugin and resolves nothing, so nothing is decided until the first read.
+
+A binding that does not implement the interface it is bound to throws `Config_Exception` when it is
+resolved, rather than being cached and failing later somewhere less obvious. So does a binding whose
+factory throws — with the original failure kept as the previous exception.
+
+The container is **not** used to wire hooks — those stay plain static callbacks, so the container
+stays genuinely optional.
+
 ## Sub-plugin keys
 
 | Key | Type | Required | Meaning |
@@ -43,8 +70,10 @@ at include time.
 Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
 activation record, so a second registration under the same slug is refused with a
 `Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Register unconditionally and put anything you cannot decide up front — a licence that may not
-be active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+load. Because registrations are buffered until boot, that collision is reported at boot rather than
+at the second `register()` call; a config array the library cannot use is still rejected on the spot.
+Register unconditionally and put anything you cannot decide up front — a licence that may not be
+active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
 
 ## Messages are callables, never strings
 

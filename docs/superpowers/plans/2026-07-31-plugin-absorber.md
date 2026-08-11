@@ -35,7 +35,7 @@ Every task's requirements implicitly include this section.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
 - **Container tests use the test-support adapter, never di52 directly** (verified 2026-07-31 against `vendor/`). `lucatume\DI52\Container` implements `ArrayAccess` and **PSR's** `Psr\Container\ContainerInterface` — not `StellarWP\ContainerContract\ContainerInterface`; `stellarwp/container-contract` ships an adapter example at `examples/di52/Container.php` precisely because DI52 must be wrapped. Passing `new Container()` to `Config::set_container()` is a `TypeError`. Tests use `Nexcess\PluginAbsorber\Tests\Support\Test_Container`, which wraps a di52 container and implements the contract's four methods (`bind`, `get`, `has`, `singleton`); **every `use lucatume\DI52\Container;` in the task blocks below means `Test_Container`.** `Config::set_container()`'s signature is unchanged — the StellarWP contract stays the public API, per the production-dependency constraint above.
 - **`Config` carries no version handling** (ruled 2026-08-11, PR 4 review). `set_version()`/`get_version()` and the `$version` property were removed: nothing in the library reads a host version, and the one scenario that would want it — telling a bundled copy apart from a standalone at a specific release — is the host's problem. This closes spec known-issue F by deletion rather than by use.
-- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** `Registrar` is served by `Tests\Support\Registrar_State::reset( Registrar $registrar )` and `Loader` by `Tests\Support\Loader_State::reset()`, which empties the memoized registrar through `Registrar_State` before discarding the memo; both are spelled out in full in the task blocks below.
+- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** `Loader` is served by `Tests\Support\Loader_State::reset()`, which returns each of `Loader`'s static properties to its default by reflection. There is no `Registrar_State`: `Registrar_Interface` declares only `register()` and `all()`, so there is nothing to empty a registrar with, and dropping the memo is enough for the default one. A test that binds a registrar of its own owns that instance and builds a fresh one.
 
 ## File Structure
 
@@ -88,1028 +88,43 @@ you need to read one back.
 
 ---
 
-## Task 7: `Sub_Plugin`
-
-**PR 7** · branch `07-sub-plugin` from `06-conflict-policy` · 2 source files
-
-The largest genuine review surface in the project. Every per-sub-plugin decision lives here so the collaborators stay thin and every predicate is testable without hooks.
-
-**Files:**
-- Create: `src/Sub_Plugin.php`, `tests/_support/Traits/WithSubPlugins.php`, `tests/unit/SubPluginTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Conflict_Policy::*` (Task 6), `Config_Exception` (Task 4).
-- Produces — every later task calls into these:
-  - `__construct( array $config )` — throws `Config_Exception` if `slug`, `bundled_plugin_file`, or `plugin_loaded_constant` is empty
-  - `get_slug(): string`, `get_bundled_plugin_file(): string`, `get_plugin_loaded_constant(): string`
-  - `get_conflict_policy(): string`, `is_enabled(): bool`, `is_already_loaded(): bool`
-  - `has_standalone_plugin(): bool`, `get_standalone_plugin_basename(): string`
-  - `is_standalone_plugin_active(): bool`, `is_standalone_plugin_network_active(): bool`
-  - `are_dependencies_met(): bool`
-  - `get_conflict_notice_message(): string`, `get_dependency_notice_message(): string`
-  - `get_activation_callback(): ?callable`
-- Produces for the tests: `Tests\Support\Traits\WithSubPlugins` with
-  `make_sub_plugin( array $overrides = [] ): Sub_Plugin`. Tasks 8, 10 and 13 use it instead of each
-  declaring their own fixture helper.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 06-conflict-policy && git checkout -b 07-sub-plugin
-```
-
-- [ ] **Step 2: Write `tests/_support/Traits/WithSubPlugins.php`**
-
-Every test from here on builds sub-plugins the same way, so the builder is a trait rather than a
-private method each class repeats. `tests/_support` is already PSR-4 mapped to
-`Nexcess\PluginAbsorber\Tests\Support\` (Task 1), so no composer change is needed.
-
-```php
-<?php
-/**
- * Builds Sub_Plugin fixtures.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
-
-use Nexcess\PluginAbsorber\Sub_Plugin;
-
-/**
- * @since 1.0.0
- */
-trait WithSubPlugins {
-	/**
-	 * Build a well-formed sub-plugin, overriding only what the test is about.
-	 *
-	 * The two remaining required keys are derived from the slug, so fixtures for different
-	 * sub-plugins never share a bundled file path or a guard constant. The constant carries a
-	 * `_FIXTURE` suffix that nothing ever defines: `define()` lasts for the whole PHP process, so
-	 * a default some other test defined would report `is_already_loaded()` true for the rest of
-	 * the suite. Tests that need a defined constant pass their own name for it.
-	 *
-	 * Overrides are merged last, so an invalid value can still be handed to the constructor to
-	 * assert that it is rejected; the derived defaults fall back to the default slug in that case.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param array<string,mixed> $overrides Config values to override.
-	 *
-	 * @return Sub_Plugin
-	 */
-	protected function make_sub_plugin( array $overrides = [] ): Sub_Plugin {
-		$slug = isset( $overrides['slug'] ) && is_string( $overrides['slug'] ) && '' !== $overrides['slug']
-			? $overrides['slug']
-			: 'give-recurring';
-
-		return new Sub_Plugin(
-			array_merge(
-				[
-					'slug'                   => $slug,
-					'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
-					'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION_FIXTURE',
-				],
-				$overrides
-			)
-		);
-	}
-}
-```
-
-- [ ] **Step 3: Write the failing test**
-
-`wp-admin/includes/plugin.php` is required in `setUp()` because uopz cannot stub a function that does not yet exist.
-
-> **Deviations, deliberate (added 2026-08-03, from the PR 7 review):**
->
-> 1. **`is_callable()` is no longer the type discriminator.** It returns true for *any* string
->    naming an existing function, and `conflict_policy` is explicitly designed to be readable from
->    an option. A stored value of `date` or `flush` would have been invoked rather than used —
->    a `TypeError` at `plugins_loaded` on PHP 8, a silent `''` on 7.4. Strings and bools are now
->    always values; only real callables are called.
-> 2. **The constructor type-checks.** Required keys must be non-empty *strings*: an array survived
->    the old `empty()` check and then cast to `"Array"`, which every misconfigured sub-plugin would
->    have collided on as its registry key, activation key, and notice id. `dependency_check` and
->    `activation_callback` must be callable when present — `is_callable()` at read time conflated
->    "not configured" with "configured but uncallable", so a `dependency_check` pointing at a
->    private method reported dependencies *met* and let the load proceed into the fatal it exists
->    to prevent.
-> 3. **The active check no longer ORs in `is_plugin_active_for_network()`.** Verified against core:
->    `is_plugin_active()` already does, so the OR was dead code costing a second
->    `get_site_option()` per sub-plugin per request. The test that pinned it described a state
->    WordPress cannot produce. *(The check has since moved off `Sub_Plugin` — see deviation 8.)*
-> 4. **`get_conflict_notice_message()` takes a `$default`.** Task 14 has no fallback of its own, so
->    an unconfigured host would have been shown WordPress's raw fatal-error screen.
-> 5. **The filter result is `is_scalar()`-guarded.** A filter returning `WP_Error` would otherwise
->    be a fatal on cast; `''` is simply not a valid policy and routes to the conservative branch.
-
-> **Deviations, deliberate (added 2026-08-07, from the PR 7 follow-up review):**
->
-> 6. **`Conflict_Policy` owns the default policy.** `get_conflict_policy()` used to name
->    `Conflict_Policy::DEACTIVATE` as its fallback, which put "which policy applies when none is
->    configured" in the object that merely holds one sub-plugin's config. It asks
->    `Conflict_Policy::default()` now. The value is unchanged, and the two fallbacks stay
->    deliberately different: *unconfigured* means the sub-plugin accepted the default, whereas an
->    *unrecognised* policy — the conservative `NOTICE_ONLY` branch a dispatching caller takes — is
->    a value nobody chose, and reading a typo as consent to deactivate is the outcome worth
->    refusing.
-> 7. **`Plugin_State_Interface` is the library's only route to WordPress's plugin functions.**
->    `Sub_Plugin` was a config value object that also queried global plugin state and
->    `require_once`'d `wp-admin/includes/plugin.php`. That is a second reason to change, and it is
->    what forced this task's tests to stub WordPress functions to exercise plain config reads. The
->    gateway owns the reads *and* the deactivation, so the include exists once, guarded on
->    `deactivate_plugins` — a function the library actually calls, and still not `is_plugin_active`,
->    whose third-party shims would short-circuit the require. This supersedes the guard named in
->    deviation 4 of the original block.
-> 8. **`is_standalone_plugin_active()` is deleted, not delegated.** Delegating would have bought
->    `Sub_Plugin` a collaborator to answer a question that was never about its configuration. It
->    keeps `has_standalone_plugin()` and `get_standalone_plugin_basename()` — which name the plugin
->    to ask about — and the consumer pairs them with the gateway. Wiring that up needs `Loader` and
->    `Conflict\Resolver`, neither of which exists at this task, so it lands with Task 12.
-> 9. **`is_standalone_plugin_network_active()` is deleted outright.** No production caller ever
->    appeared. Its stated reason for existing — that `deactivate_plugins()` needs a computed
->    `$network_wide` — was disproved in Task 12: core's `null` default already covers both scopes,
->    and passing a computed `true` *skips* the blog branch.
->
-> `Sub_Plugin` now makes no global WordPress call beyond the `defined()` that is intrinsic to it,
-> and its tests no longer stub `is_plugin_active`.
-
-> **Deviation, deliberate (added 2026-08-11, from the PR 8 review):**
->
-> 10. **The fixture helper is a shared trait, not a private method copied into each test class.**
->     `make_sub_plugin()` moves to `tests/_support/Traits/WithSubPlugins.php`, keeping the
->     `$overrides` signature this task already had. Tasks 8, 10 and 13 each declared their own
->     helper, so the same scaffolding was about to be written a fourth time, and the reviewer asked
->     for the `$overrides` shape to be the one every test gets rather than the one this class
->     happened to have. The extraction lands here, at the bottom of the stack, so the later PRs
->     consume it; done in PR 8 instead, it would have meant reaching back to edit a test file that
->     its own base branch is still revising.
->
->     The trait derives the guard constant from the slug and suffixes it `_FIXTURE`, replacing the
->     per-class `_TEST`, `_NOTICES` and `_ACTIVATION` names. Nothing anywhere defines the derived
->     default, and that is the point: `define()` lasts for the whole PHP process, so a default that
->     some test defined would make `is_already_loaded()` report true for every test that ran after
->     it. Tests that need a defined constant pass their own name for it.
-
-> **CORRECTION (2026-08-03, hit while implementing):** the fixture helper was first named `make()`,
-> which collides with `Codeception\Test\Unit::make()` — a public method on `WPTestCase`'s ancestor.
-> Declaring it `private` is a fatal at class-compile time: *"Access level to
-> SubPluginTest::make() must be public"*. The suite does not fail, it fails to start. Renamed to
-> `make_sub_plugin()`, which is the name `WithSubPlugins` carries. The constraint outlives the
-> move: a trait method overrides the inherited one, so any fixture helper must still avoid
-> Codeception's own `Unit` API — `make`, `makeEmpty`, `construct`, and `constructEmpty` are all
-> taken.
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Sub_Plugin;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
-use lucatume\WPBrowser\Traits\UopzFunctions;
-
-/**
- * @since 1.0.0
- */
-class SubPluginTest extends WPTestCase {
-	use UopzFunctions;
-	use WithSubPlugins;
-
-	public function setUp(): void {
-		parent::setUp();
-
-		Config::set_hook_prefix( 'give' );
-
-		// uopz cannot stub a function that does not exist yet.
-		require_once ABSPATH . 'wp-admin/includes/plugin.php';
-	}
-
-	public function tearDown(): void {
-		Config::reset();
-		parent::tearDown();
-	}
-
-	/**
-	 * @dataProvider required_keys
-	 *
-	 * @param string $missing_key Key to omit.
-	 */
-	public function test_it_requires_every_required_key( string $missing_key ): void {
-		$config = [
-			'slug'                   => 'give-recurring',
-			'bundled_plugin_file'    => '/tmp/x.php',
-			'plugin_loaded_constant' => 'X_VERSION',
-		];
-		unset( $config[ $missing_key ] );
-
-		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $missing_key );
-
-		new Sub_Plugin( $config );
-	}
-
-	/**
-	 * @return array<string,array{0:string}>
-	 */
-	public function required_keys(): array {
-		return [
-			'slug'                   => [ 'slug' ],
-			'bundled_plugin_file'    => [ 'bundled_plugin_file' ],
-			'plugin_loaded_constant' => [ 'plugin_loaded_constant' ],
-		];
-	}
-
-	public function test_it_exposes_the_required_values(): void {
-		$sub_plugin = $this->make_sub_plugin();
-
-		$this->assertSame( 'give-recurring', $sub_plugin->get_slug() );
-		$this->assertSame( '/tmp/give-recurring/give-recurring.php', $sub_plugin->get_bundled_plugin_file() );
-		$this->assertSame( 'GIVE_RECURRING_VERSION_FIXTURE', $sub_plugin->get_plugin_loaded_constant() );
-	}
-
-	public function test_it_is_enabled_by_default(): void {
-		$this->assertTrue( $this->make_sub_plugin()->is_enabled() );
-	}
-
-	public function test_it_honours_a_boolean_enabled_flag(): void {
-		$this->assertFalse( $this->make_sub_plugin( [ 'enabled' => false ] )->is_enabled() );
-	}
-
-	public function test_it_resolves_a_callable_enabled_flag_at_call_time(): void {
-		$switch     = false;
-		$sub_plugin = $this->make_sub_plugin(
-			[
-				'enabled' => static function () use ( &$switch ) {
-					return $switch;
-				},
-			]
-		);
-
-		$this->assertFalse( $sub_plugin->is_enabled() );
-
-		$switch = true;
-
-		$this->assertTrue( $sub_plugin->is_enabled(), 'The callable must be re-evaluated on each call.' );
-	}
-
-	public function test_it_reports_not_loaded_when_the_constant_is_undefined(): void {
-		$this->assertFalse( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_NEVER_DEFINED' ] )->is_already_loaded() );
-	}
-
-	public function test_it_reports_loaded_once_the_constant_is_defined(): void {
-		define( 'ABSORBER_TEST_LOADED_CONSTANT', '1.0.0' );
-
-		$this->assertTrue( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONSTANT' ] )->is_already_loaded() );
-	}
-
-	public function test_it_reports_no_standalone_when_the_basename_is_absent(): void {
-		$sub_plugin = $this->make_sub_plugin();
-
-		$this->assertFalse( $sub_plugin->has_standalone_plugin() );
-		$this->assertSame( '', $sub_plugin->get_standalone_plugin_basename() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
-	}
-
-	public function test_it_never_calls_wordpress_without_a_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', true );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
-
-		$this->assertFalse(
-			$this->make_sub_plugin()->is_standalone_plugin_active(),
-			'Absent a standalone basename the predicate must short-circuit.'
-		);
-	}
-
-	public function test_it_detects_a_normally_active_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', true );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
-	}
-
-	public function test_it_detects_a_network_active_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', false );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
-		$this->assertTrue( $sub_plugin->is_standalone_plugin_network_active() );
-	}
-
-	public function test_it_detects_an_inactive_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', false );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
-
-		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
-
-		$this->assertFalse( $sub_plugin->is_standalone_plugin_active() );
-	}
-
-	public function test_dependencies_are_met_without_a_check(): void {
-		$this->assertTrue( $this->make_sub_plugin()->are_dependencies_met() );
-	}
-
-	public function test_it_honours_the_dependency_check(): void {
-		$this->assertFalse(
-			$this->make_sub_plugin( [ 'dependency_check' => static fn() => false ] )->are_dependencies_met()
-		);
-		$this->assertTrue(
-			$this->make_sub_plugin( [ 'dependency_check' => static fn() => true ] )->are_dependencies_met()
-		);
-	}
-
-	public function test_the_conflict_policy_defaults_to_deactivate(): void {
-		$this->assertSame( Conflict_Policy::DEACTIVATE, $this->make_sub_plugin()->get_conflict_policy() );
-	}
-
-	public function test_it_resolves_a_string_conflict_policy(): void {
-		$this->assertSame(
-			Conflict_Policy::DEFER,
-			$this->make_sub_plugin( [ 'conflict_policy' => Conflict_Policy::DEFER ] )->get_conflict_policy()
-		);
-	}
-
-	public function test_it_resolves_a_callable_conflict_policy_and_passes_itself(): void {
-		$received   = null;
-		$sub_plugin = $this->make_sub_plugin(
-			[
-				'conflict_policy' => static function ( Sub_Plugin $passed ) use ( &$received ) {
-					$received = $passed;
-
-					return Conflict_Policy::NOTICE_ONLY;
-				},
-			]
-		);
-
-		$this->assertSame( Conflict_Policy::NOTICE_ONLY, $sub_plugin->get_conflict_policy() );
-		$this->assertSame( $sub_plugin, $received );
-	}
-
-	public function test_the_filter_overrides_the_resolved_policy(): void {
-		add_filter(
-			'give/plugin_absorber/conflict_policy',
-			static function () {
-				return Conflict_Policy::DEFER;
-			}
-		);
-
-		$sub_plugin = $this->make_sub_plugin( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
-
-		$this->assertSame(
-			Conflict_Policy::DEFER,
-			$sub_plugin->get_conflict_policy(),
-			'The filter runs after the config value and the callable, and wins.'
-		);
-	}
-
-	public function test_the_filter_receives_the_sub_plugin(): void {
-		$received = null;
-
-		add_filter(
-			'give/plugin_absorber/conflict_policy',
-			static function ( $policy, $passed ) use ( &$received ) {
-				$received = $passed;
-
-				return $policy;
-			},
-			10,
-			2
-		);
-
-		$sub_plugin = $this->make_sub_plugin();
-		$sub_plugin->get_conflict_policy();
-
-		$this->assertSame( $sub_plugin, $received );
-	}
-
-	public function test_the_conflict_notice_message_defaults_to_empty(): void {
-		$this->assertSame( '', $this->make_sub_plugin()->get_conflict_notice_message() );
-	}
-
-	public function test_it_resolves_conflict_notice_messages_from_strings_and_callables(): void {
-		$this->assertSame(
-			'Bundled now.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )->get_conflict_notice_message()
-		);
-		$this->assertSame(
-			'Deferred.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Deferred.' ] )->get_conflict_notice_message()
-		);
-	}
-
-	public function test_the_dependency_notice_message_falls_back_to_a_default(): void {
-		$this->assertSame(
-			'give-recurring could not be loaded because its requirements are not met.',
-			$this->make_sub_plugin()->get_dependency_notice_message()
-		);
-	}
-
-	public function test_it_resolves_dependency_notice_messages_from_strings_and_callables(): void {
-		$this->assertSame(
-			'Needs WooCommerce.',
-			$this->make_sub_plugin( [ 'dependency_notice_message' => 'Needs WooCommerce.' ] )->get_dependency_notice_message()
-		);
-		$this->assertSame(
-			'Needs Give.',
-			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Needs Give.' ] )->get_dependency_notice_message()
-		);
-	}
-
-	public function test_the_activation_callback_is_null_by_default(): void {
-		$this->assertNull( $this->make_sub_plugin()->get_activation_callback() );
-	}
-
-	public function test_it_returns_the_activation_callback(): void {
-		$callback = static function () {};
-
-		$this->assertSame( $callback, $this->make_sub_plugin( [ 'activation_callback' => $callback ] )->get_activation_callback() );
-	}
-}
-```
-
-- [ ] **Step 4: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Sub_Plugin" not found`.
-
-- [ ] **Step 5: Write `src/Sub_Plugin.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-
-/**
- * One registered sub-plugin: its configuration and every decision about it.
- *
- * @since 1.0.0
- */
-class Sub_Plugin {
-	/**
-	 * @var array<string,mixed>
-	 */
-	private $config;
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param array<string,mixed> $config Sub-plugin configuration.
-	 *
-	 * @throws Config_Exception When a required key is missing or empty.
-	 */
-	public function __construct( array $config ) {
-		foreach ( [ 'slug', 'bundled_plugin_file', 'plugin_loaded_constant' ] as $required ) {
-			if ( empty( $config[ $required ] ) ) {
-				throw new Config_Exception( "Sub-plugin config is missing required key: {$required}" );
-			}
-		}
-
-		$this->config = $config;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_slug(): string {
-		return (string) $this->config['slug'];
-	}
-
-	/**
-	 * Absolute path to the bundled plugin's main file — the file we require_once.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_bundled_plugin_file(): string {
-		return (string) $this->config['bundled_plugin_file'];
-	}
-
-	/**
-	 * Constant both the bundled copy and the standalone define when they load.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_plugin_loaded_constant(): string {
-		return (string) $this->config['plugin_loaded_constant'];
-	}
-
-	/**
-	 * Resolve the policy from a string or callable, then let the filter override it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_conflict_policy(): string {
-		$policy = $this->config['conflict_policy'] ?? Conflict_Policy::DEACTIVATE;
-
-		if ( is_callable( $policy ) ) {
-			$policy = $policy( $this );
-		}
-
-		return (string) apply_filters(
-			Config::get_hook_name( 'conflict_policy' ),
-			$policy,
-			$this
-		);
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_enabled(): bool {
-		$enabled = $this->config['enabled'] ?? true;
-
-		return (bool) ( is_callable( $enabled ) ? $enabled() : $enabled );
-	}
-
-	/**
-	 * True when the plugin's code is already present, from either copy. The fatal guard.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_already_loaded(): bool {
-		return defined( $this->get_plugin_loaded_constant() );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function has_standalone_plugin(): bool {
-		return ! empty( $this->config['standalone_plugin_basename'] );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_standalone_plugin_basename(): string {
-		return (string) ( $this->config['standalone_plugin_basename'] ?? '' );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_standalone_plugin_active(): bool {
-		if ( ! $this->has_standalone_plugin() ) {
-			return false;
-		}
-
-		$this->load_plugin_functions();
-
-		return is_plugin_active( $this->get_standalone_plugin_basename() )
-			|| is_plugin_active_for_network( $this->get_standalone_plugin_basename() );
-	}
-
-	/**
-	 * Whether the standalone is network-activated.
-	 *
-	 * Deactivating it requires passing $network_wide to deactivate_plugins(); without that the
-	 * call silently no-ops and the resolver redirects forever.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function is_standalone_plugin_network_active(): bool {
-		if ( ! $this->has_standalone_plugin() ) {
-			return false;
-		}
-
-		$this->load_plugin_functions();
-
-		return is_plugin_active_for_network( $this->get_standalone_plugin_basename() );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public function are_dependencies_met(): bool {
-		$check = $this->config['dependency_check'] ?? null;
-
-		return is_callable( $check ) ? (bool) $check() : true;
-	}
-
-	/**
-	 * Shown when the standalone is auto-deactivated, and when the user tries to re-activate it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_conflict_notice_message(): string {
-		return $this->resolve_message( $this->config['conflict_notice_message'] ?? '' );
-	}
-
-	/**
-	 * Shown when a dependency_check fails. Falls back to a generic, untranslated sentence —
-	 * pass a callable returning __() to localise it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public function get_dependency_notice_message(): string {
-		$message = $this->resolve_message( $this->config['dependency_notice_message'] ?? '' );
-
-		if ( $message !== '' ) {
-			return $message;
-		}
-
-		return sprintf(
-			'%s could not be loaded because its requirements are not met.',
-			$this->get_slug()
-		);
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return callable|null
-	 */
-	public function get_activation_callback(): ?callable {
-		$callback = $this->config['activation_callback'] ?? null;
-
-		return is_callable( $callback ) ? $callback : null;
-	}
-
-	/**
-	 * Resolve a string-or-callable message.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param mixed $message Configured message.
-	 *
-	 * @return string
-	 */
-	private function resolve_message( $message ): string {
-		return (string) ( is_callable( $message ) ? $message() : $message );
-	}
-
-	/**
-	 * WordPress only loads these in the admin, and we run at plugins_loaded on every request.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	private function load_plugin_functions(): void {
-		if ( ! function_exists( 'is_plugin_active' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		}
-	}
-}
-```
-
-- [ ] **Step 6: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 26 tests.
-
-- [ ] **Step 7: Confirm static analysis is still clean**
-
-Run: `composer test:analysis`
-Expected: `[OK] No errors`.
-
-- [ ] **Step 8: Append the config table to the README**
-
-```markdown
-### Sub-plugin configuration
-
-| Key | Type | Required | Meaning |
-|---|---|:--:|---|
-| `slug` | `string` | ✔ | Unique id — registry key, notice id, activation-tracking key. |
-| `bundled_plugin_file` | `string` | ✔ | Absolute path to the **bundled** plugin's main file. This is what gets `require_once`d. |
-| `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads. Both copies must define the *same* name. `defined()` ⇒ skip, which is what prevents re-declaration fatals. **Load guard only.** |
-| `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename. Used for `is_plugin_active()` and `deactivate_plugins()`. Omit when there is no standalone. **Detection only.** |
-| `enabled` | `bool\|callable` | | `true` by default. A callable is re-evaluated on every load. |
-| `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. A `callable( Sub_Plugin ): string` decides at runtime. |
-| `conflict_notice_message` | `string\|callable` | | Shown on auto-deactivation and on a re-activation attempt. Use a callable to defer `__()` past `init`. |
-| `dependency_notice_message` | `string\|callable` | | Shown when `dependency_check` fails. Defaults to a generic English sentence. |
-| `activation_callback` | `callable` | | Runs **exactly once, ever**, per slug. |
-| `dependency_check` | `callable` | | Returns `bool`. Skips the load and queues a notice when false. |
-
-The load guard and the standalone basename are deliberately **two separate keys**. No constant does
-double duty as both a guard and a path resolver.
-```
-
-- [ ] **Step 9: Commit, push, open the PR**
-
-```bash
-git add src/Sub_Plugin.php tests/_support/Traits/WithSubPlugins.php tests/unit/SubPluginTest.php README.md
-git commit -m "Add Sub_Plugin value object and its predicates"
-git push -u origin 07-sub-plugin
-gh pr create --base 06-conflict-policy --title "Sub_Plugin value object" --body 'What: the per-sub-plugin value object and every predicate the loader and resolver ask it.
-
-Usage:
-
-    $sub_plugin = new Sub_Plugin( [
-        "slug"                       => "give-recurring",
-        "bundled_plugin_file"        => GIVE_PLUGIN_DIR . "subs/give-recurring/give-recurring.php",
-        "plugin_loaded_constant"     => "GIVE_RECURRING_VERSION",
-        "standalone_plugin_basename" => "give-recurring/give-recurring.php",
-        "enabled"                    => static fn() => give_is_gateway_enabled( "recurring" ),
-        "conflict_policy"            => Conflict_Policy::DEACTIVATE,
-    ] );
-
-    $sub_plugin->is_already_loaded();               // defined( GIVE_RECURRING_VERSION )
-    $sub_plugin->is_standalone_plugin_active();     // is_plugin_active() || ..._for_network()
-
-Why this way: every predicate lives here rather than in the collaborators, so the collaborators stay
-thin and each decision is testable without wiring a hook. `is_standalone_plugin_network_active()` is
-an addition to the engineering plan — the plan detects network activation but then calls
-`deactivate_plugins()` without `$network_wide`, which silently no-ops on multisite and makes the
-resolver redirect forever. PR 12 consumes this.
-
-`dependency_notice_message` is the other addition: the plan defines `queue_dependency_notice()` but
-no message for it to render, so as written it could only ever queue an empty notice. Default is
-untranslated English by design — the library ships no text domain, so localisation is the host is
-job via a callable.
-
-Verify: `slic run unit` — 26 tests, including the policy resolution order (config -> callable ->
-filter, last wins) and both network-activation branches.'
-```
-
----
-
-## Task 8: `Registrar`
-
-**PR 8** · branch `08-registrar` from `07-sub-plugin` · 3 source files
-
-**Files:**
-- Create: `src/Contracts/Registrar_Interface.php`, `src/Registrar.php`, `tests/unit/RegistrarTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: `Sub_Plugin` (Task 7), and the `WithSubPlugins` trait (Task 7) for its fixtures — the test builds no sub-plugin of its own.
-- Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void` and `all(): array` returning `array<string,Sub_Plugin>` keyed by slug. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
-
-> The contract is those two methods and nothing else. A registry that can be emptied is only ever
-> wanted by the suite, and a method on the contract is a promise to every host that implements it.
-> The tests here need no such method — each one builds its own `Registrar`, so nothing leaks
-> between them. Emptying an already-populated registrar first becomes necessary in Task 9, where a
-> container-bound singleton survives a `Loader` reset, and that task adds
-> `Tests\Support\Registrar_State::reset()` to do it by reflection. See the Global Constraint on
-> test-only seams.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 07-sub-plugin && git checkout -b 08-registrar
-```
-
-- [ ] **Step 2: Write the failing test**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Registrar;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
-
-/**
- * @since 1.0.0
- */
-class RegistrarTest extends WPTestCase {
-	use WithSubPlugins;
-
-	public function test_it_starts_empty(): void {
-		$this->assertSame( [], ( new Registrar() )->all() );
-	}
-
-	public function test_it_keys_registrations_by_slug(): void {
-		$registrar  = new Registrar();
-		$sub_plugin = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
-
-		$registrar->register( $sub_plugin );
-
-		$this->assertSame( [ 'give-recurring' => $sub_plugin ], $registrar->all() );
-	}
-
-	public function test_it_keeps_multiple_registrations(): void {
-		$registrar = new Registrar();
-
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
-
-		$this->assertCount( 2, $registrar->all() );
-		$this->assertArrayHasKey( 'give-recurring', $registrar->all() );
-		$this->assertArrayHasKey( 'give-fee-recovery', $registrar->all() );
-	}
-
-	public function test_registering_the_same_slug_twice_lets_the_last_one_win(): void {
-		$registrar = new Registrar();
-		$first     = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
-		$second    = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
-
-		$registrar->register( $first );
-		$registrar->register( $second );
-
-		$this->assertCount( 1, $registrar->all() );
-		$this->assertSame( $second, $registrar->all()['give-recurring'] );
-	}
-
-	/**
-	 * A host registers every bundled sub-plugin up front, then re-registers one with a narrower
-	 * config once something it could not know at registration time resolves — a licence check, a
-	 * site option, a settings save — so the same routine runs twice for one slug. The second call
-	 * must update in place rather than move that slug behind the ones registered after it: for an
-	 * add-on that extends another sub-plugin's class, that ordering is the difference between
-	 * loading and a fatal.
-	 */
-	public function test_re_registering_keeps_the_original_position(): void {
-		$registrar = new Registrar();
-
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$this->assertSame(
-			[ 'give-recurring', 'give-fee-recovery' ],
-			array_keys( $registrar->all() )
-		);
-	}
-}
-```
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Registrar" not found`.
-
-- [ ] **Step 4: Write `src/Contracts/Registrar_Interface.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Contracts;
-
-use Nexcess\PluginAbsorber\Sub_Plugin;
-
-/**
- * Holds the registered sub-plugins. Bind a replacement to change registration behavior globally.
- *
- * @since 1.0.0
- */
-interface Registrar_Interface {
-	/**
-	 * Register a sub-plugin. Registering an existing slug replaces it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin to register.
-	 *
-	 * @return void
-	 */
-	public function register( Sub_Plugin $sub_plugin ): void;
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return array<string,Sub_Plugin> Keyed by slug.
-	 */
-	public function all(): array;
-}
-```
-
-- [ ] **Step 5: Write `src/Registrar.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
-
-/**
- * Default registry: a plain slug => Sub_Plugin map.
- *
- * @since 1.0.0
- */
-class Registrar implements Registrar_Interface {
-	/**
-	 * @var array<string,Sub_Plugin>
-	 */
-	private $sub_plugins = [];
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin to register.
-	 *
-	 * @return void
-	 */
-	public function register( Sub_Plugin $sub_plugin ): void {
-		$this->sub_plugins[ $sub_plugin->get_slug() ] = $sub_plugin;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return array<string,Sub_Plugin>
-	 */
-	public function all(): array {
-		return $this->sub_plugins;
-	}
-}
-```
-
-- [ ] **Step 6: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 5 tests.
-
-- [ ] **Step 7: Commit, push, open the PR**
-
-```bash
-git add src/Contracts/Registrar_Interface.php src/Registrar.php tests/unit/RegistrarTest.php README.md
-git commit -m "Add Registrar and its interface"
-git push -u origin 08-registrar
-gh pr create --base 07-sub-plugin --title "Registrar" --body 'What: the sub-plugin registry and its contract.
-
-Usage:
-
-    $registrar = new Registrar();
-    $registrar->register( $sub_plugin );
-    $registrar->all();   // [ "give-recurring" => Sub_Plugin ]
-
-Why this way: keyed by slug so re-registering the same slug replaces rather than duplicates — a host
-that conditionally registers in two code paths gets one entry, not two loads. The interface ships in
-this PR rather than in a contracts-only PR so it arrives with an implementation and tests. It
-carries no way to empty the registry: that is wanted only by the suite, which clears the map by
-reflection from `tests/_support/` rather than making every host implementation carry the method.
-
-Verify: `slic run unit` — 5 tests.'
-```
-
----
-
 ## Task 9: `Loader` resolution and registration
 
-**PR 9** · branch `09-loader-resolve` from `08-registrar` · 2 source files
+**PR 9** · branch `09-loader-resolve` from `08-registrar` · 1 source file
 
 **Files:**
-- Create: `src/Loader.php`, `tests/_support/Registrar_State.php`, `tests/_support/Loader_State.php`, `tests/unit/LoaderResolveTest.php`
-- Modify: `README.md`
+- Create: `src/Loader.php`, `tests/_support/Loader_State.php`, `tests/_support/Spy_Registrar.php`, `tests/unit/LoaderResolveTest.php`
+- Modify: `docs/configuration.md`
 
 **Interfaces:**
 - Consumes: `Config::get_container()` (Task 4), `Registrar_Interface`/`Registrar` (Task 8), `Sub_Plugin` (Task 7).
 - Produces:
   - `Loader::resolve( string $interface, string $default_class ): object` — private; container-or-`new`, memoized
   - `Loader::registrar(): Registrar_Interface`
-  - `Loader::register( array $config ): void`
-  - `Loader::all(): array`
-  - `Tests\Support\Loader_State::reset(): void` — clears the memo **and** the registry, for the suite only
-  - `Tests\Support\Registrar_State::reset( Registrar $registrar ): void`
+  - `Loader::register( array $config ): void` — validates, then buffers
+  - `Loader::all(): array` — drains the buffer, then reads the registrar
+  - `Loader::flush(): void` — private; hands the buffer to the registrar
+  - `Tests\Support\Loader_State::reset(): void` — clears the memo and the buffer, for the suite only
+  - `Tests\Support\Spy_Registrar` — a `Registrar_Interface` that records what it was handed
 
   Tasks 10, 12 and 13 each add one accessor alongside their own interface.
+
+**Registration is deferred.** `register()` resolves nothing: it builds a `Sub_Plugin` — which is what
+validates the configuration — and buffers it in a private static `$pending`. The buffer drains into
+the registrar on the first read, through a private `flush()` that `all()` calls before it asks the
+registrar for anything.
+
+The reason is ordering. Resolution reads the container, and a host that registers its sub-plugins
+before it calls `Config::set_container()` would pin the default registrar for the whole request and
+silently ignore the binding. With registration buffered, the container is a configuration call like
+every other one: it may arrive at any point before boot, rather than carrying an unwritten "before
+your first `register()`" rule that fails quietly when it is broken.
+
+What this costs: a duplicate slug is now reported at the first read — boot — instead of at the second
+`register()` call. Invalid configuration still throws from `register()`, at the call the host can see
+in its own stack trace, because building the `Sub_Plugin` is what rejects it. The registrar remains
+the single source of truth for duplicate-slug detection and for ordering; the buffer is a pre-store
+that restates neither rule in a second dialect.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -1117,17 +132,18 @@ Verify: `slic run unit` — 5 tests.'
 git checkout 08-registrar && git checkout -b 09-loader-resolve
 ```
 
-- [ ] **Step 2: Write `tests/_support/Registrar_State.php` and `tests/_support/Loader_State.php`**
+- [ ] **Step 2: Write `tests/_support/Spy_Registrar.php` and `tests/_support/Loader_State.php`**
 
 `Loader` is the second static facade in the library, and like `Config` it needs clearing between
-tests without carrying a public `reset()` for the suite's benefit. Both helpers land here, in the
-task that first needs them, modelled on `Config_State`: the properties are walked by reflection and
-an unknown one is a `LogicException` rather than a silent leak, so state added to `Loader` later
-fails loudly instead of surviving into the next test.
+tests without carrying a public `reset()` for the suite's benefit. `Loader_State` lands here, in the
+task that first needs it, modelled on `Config_State`: the properties are walked by reflection and an
+unknown one is a `LogicException` rather than a silent leak, so state added to `Loader` later fails
+loudly instead of surviving into the next test.
 
-`Registrar_State` is separate because emptying the registry is a different job from resetting the
-facade — it acts on an instance, not on static state — and because the `Loader` reset needs it
-before it drops the memo.
+`Spy_Registrar` is a named class rather than an anonymous one repeated per test: a test that reads
+`$spy->register_calls` off a value typed as `Registrar_Interface` is reading a property the interface
+does not declare, and PHPStan at level 9 rightly rejects it. The call counter is what catches a
+buffer that forgets to empty itself — the slug map alone cannot see the same slug registered twice.
 
 ```php
 <?php
@@ -1137,29 +153,40 @@ before it drops the memo.
 
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
-use Nexcess\PluginAbsorber\Registrar;
-use ReflectionProperty;
+use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
- * Empties a `Registrar` between tests.
+ * A registrar that records what was done to it, for tests about who the Loader talks to.
  *
- * `Registrar_Interface` carries no way to do this deliberately: it would be a method every host
- * implementation then has to provide, for no reason but this suite. Reflection keeps that seam on
- * this side of the fence.
+ * @since 1.0.0
  */
-class Registrar_State {
+class Spy_Registrar implements Registrar_Interface {
 	/**
-	 * Discard every registration the given registrar holds.
+	 * Everything handed to register(), keyed by slug.
 	 *
-	 * @param Registrar $registrar Registrar to empty.
-	 *
-	 * @return void
+	 * @var array<string,Sub_Plugin>
 	 */
-	public static function reset( Registrar $registrar ): void {
-		$property = new ReflectionProperty( Registrar::class, 'sub_plugins' );
+	public $sub_plugins = [];
 
-		$property->setAccessible( true );
-		$property->setValue( $registrar, [] );
+	/**
+	 * How many times register() was called.
+	 *
+	 * @var int
+	 */
+	public $register_calls = 0;
+
+	public function register( Sub_Plugin $sub_plugin ): void {
+		++$this->register_calls;
+
+		$this->sub_plugins[ $sub_plugin->get_slug() ] = $sub_plugin;
+	}
+
+	/**
+	 * @return array<string,Sub_Plugin>
+	 */
+	public function all(): array {
+		return $this->sub_plugins;
 	}
 }
 ```
@@ -1173,18 +200,21 @@ class Registrar_State {
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
 use LogicException;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Registrar;
 use ReflectionClass;
 use ReflectionProperty;
 
 /**
  * Restores `Loader`'s static state between tests.
  *
- * `Loader` memoizes what it resolves, and that memo outlives a single test. Clearing it is the
- * suite's business rather than the library's, so the seam lives here instead of in a public method
- * the library would then owe its hosts forever.
+ * `Loader` has no public way to clear itself, and deliberately so: a reset method would be API the
+ * library then has to support forever for the sake of its own test suite, and a host that reached
+ * for it mid-request would discard the registrations the load loop is about to read. Reflection
+ * keeps that seam on this side of the fence.
+ *
+ * Dropping the memo is enough for the default collaborators, which are built per resolve. A
+ * collaborator bound into a container as a singleton comes back populated on the next resolve, so
+ * a test that binds one must build a fresh instance rather than expect this to empty it.
  */
 class Loader_State {
 	/**
@@ -1198,15 +228,11 @@ class Loader_State {
 	 */
 	protected const DEFAULTS = [
 		'resolved' => [],
+		'pending'  => [],
 	];
 
 	/**
-	 * Empty the registry, then return every static property of `Loader` to its default.
-	 *
-	 * The registrar is emptied before the memo is dropped, and not the other way round: when the
-	 * registrar came from a container binding as a singleton, the container hands back the same
-	 * populated instance on the next resolve, so discarding the memo alone leaves every
-	 * registration in place.
+	 * Return every static property of `Loader` to its default.
 	 *
 	 * @throws LogicException When `Loader` has grown a static property this helper does not know
 	 *                        about, rather than leaving it to leak between tests.
@@ -1214,8 +240,6 @@ class Loader_State {
 	 * @return void
 	 */
 	public static function reset(): void {
-		self::empty_registrar();
-
 		$reflection = new ReflectionClass( Loader::class );
 
 		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
@@ -1231,155 +255,104 @@ class Loader_State {
 			$property->setValue( null, self::DEFAULTS[ $name ] );
 		}
 	}
-
-	/**
-	 * Empty the memoized registrar, when one was resolved and it is the shipped `Registrar`.
-	 *
-	 * A test that binds a registrar of its own owns that instance: it should build a fresh one per
-	 * test, or give it its own way to clear itself.
-	 *
-	 * @return void
-	 */
-	private static function empty_registrar(): void {
-		$resolved = new ReflectionProperty( Loader::class, 'resolved' );
-
-		$resolved->setAccessible( true );
-
-		/** @var array<string,object> $memo */
-		$memo      = $resolved->getValue();
-		$registrar = $memo[ Registrar_Interface::class ] ?? null;
-
-		if ( $registrar instanceof Registrar ) {
-			Registrar_State::reset( $registrar );
-		}
-	}
 }
 ```
 
+There is no `Registrar_State` helper. Emptying a registrar by reflection would only ever serve the
+memoized default instance, and `Registrar_Interface` declares `register()` and `all()` and nothing
+else — a container-bound singleton registrar cannot be emptied at all. A test that binds one builds
+a fresh instance instead, which is the honest shape: the fake belongs to the test that made it.
+
 - [ ] **Step 3: Write the failing test**
 
+`tests/unit/LoaderResolveTest.php`, a `WPTestCase` that calls `Loader_State::reset()` and
+`Config_State::reset()` in both `setUp()` and `tearDown()` — a memo stranded by a failed assertion
+would otherwise be read by the next test as a real resolve. Container tests use
+`Tests\Support\Test_Container`, never `lucatume\DI52\Container`, which implements PSR-11's
+`ContainerInterface` rather than StellarWP's. A private `sub_plugin_config( string $slug )` builds the
+raw array a host writes — the shared `WithSubPlugins` trait builds `Sub_Plugin` objects, and building
+that object is the part of registration under test here — with a `_FIXTURE`-suffixed guard constant
+nothing ever defines, since a `define()` lasts for the whole PHP process.
+
+Resolution:
+
+- `test_it_falls_back_to_the_default_registrar_without_a_container`
+- `test_it_memoizes_the_resolved_collaborator`
+- `test_it_resolves_a_bound_registrar_from_the_container` — data provider `container_binding_methods`
+  (`singleton`, `bind`); the memo is what makes even a `bind()`, which the container rebuilds per
+  call, resolve exactly once
+- `test_it_ignores_a_container_with_no_binding` — asserts `has()` is false first, since DI52 reports
+  true for any existing *class* name and this binding must stay an interface
+- `test_it_rejects_a_binding_that_does_not_implement_the_interface` — data provider
+  `unusable_bindings` (wrong class, the class name instead of an instance, `null`); the message names
+  what came back, and the bad instance must not have been memoized
+- `test_it_reports_a_container_that_throws_as_a_configuration_error` — the original stays reachable
+  through the previous chain, walked rather than read one level deep because a container is entitled
+  to wrap what a factory threw
+- `test_a_container_set_after_the_first_resolve_does_not_change_the_memo`
+
+Registration:
+
+- `test_register_builds_a_sub_plugin_and_stores_it`
+- `test_register_rejects_an_invalid_config`
+- `test_register_resolves_nothing_until_the_first_read`
+- `test_a_container_set_after_register_takes_effect`
+- `test_register_delegates_to_a_bound_registrar`
+- `test_reading_twice_does_not_register_twice`
+- `test_a_duplicate_slug_is_refused_at_the_first_read`
+- `test_registrations_survive_a_container_that_throws`
+- `test_all_is_empty_before_anything_is_registered`
+- `test_the_state_helper_clears_buffered_registrations`
+
+The two that pin the deferral down:
+
 ```php
-<?php
 /**
- * @package Nexcess\PluginAbsorber
+ * Registering must not resolve anything, or the first register() call would pin the default
+ * registrar for the whole request.
  */
+public function test_register_resolves_nothing_until_the_first_read(): void {
+	$builds    = 0;
+	$container = new Test_Container();
+	$container->singleton(
+		Registrar_Interface::class,
+		static function () use ( &$builds ): Registrar_Interface {
+			++$builds;
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+			return new Spy_Registrar();
+		}
+	);
+	Config::set_container( $container );
 
-use Codeception\TestCase\WPTestCase;
-use lucatume\DI52\Container;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
-use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Registrar;
-use Nexcess\PluginAbsorber\Sub_Plugin;
-use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
+	Loader::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+	$this->assertSame( 0, $builds, 'register() must not reach the container.' );
+
+	Loader::all();
+
+	$this->assertSame( 1, $builds, 'The first read is what resolves the registrar.' );
+}
 
 /**
- * @since 1.0.0
+ * Deferring registration moves the duplicate-slug report from the second register() call to the
+ * first read. It still names both bundled files, which is what the host needs to find them.
  */
-class LoaderResolveTest extends WPTestCase {
-	public function setUp(): void {
-		parent::setUp();
+public function test_a_duplicate_slug_is_refused_at_the_first_read(): void {
+	Loader::register( $this->sub_plugin_config( 'give-recurring' ) );
+	Loader::register(
+		[
+			'slug'                   => 'give-recurring',
+			'bundled_plugin_file'    => '/tmp/other/other.php',
+			'plugin_loaded_constant' => 'OTHER_VERSION_FIXTURE',
+		]
+	);
 
-		Config::set_hook_prefix( 'give' );
-	}
-
-	public function tearDown(): void {
-		Loader_State::reset();
-		Config::reset();
-		parent::tearDown();
-	}
-
-	/**
-	 * @param string $slug Sub-plugin slug.
-	 *
-	 * @return array<string,mixed>
-	 */
-	private function config( string $slug ): array {
-		return [
-			'slug'                   => $slug,
-			'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
-			'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION',
-		];
-	}
-
-	public function test_it_falls_back_to_the_default_registrar_without_a_container(): void {
-		$this->assertInstanceOf( Registrar::class, Loader::registrar() );
-	}
-
-	public function test_it_memoizes_the_resolved_collaborator(): void {
-		$this->assertSame( Loader::registrar(), Loader::registrar() );
-	}
-
-	public function test_it_resolves_a_bound_registrar_from_the_container(): void {
-		$bound = new class() implements Registrar_Interface {
-			/** @var array<string,Sub_Plugin> */
-			public $sub_plugins = [];
-
-			public function register( Sub_Plugin $sub_plugin ): void {
-				$this->sub_plugins[ $sub_plugin->get_slug() ] = $sub_plugin;
-			}
-
-			public function all(): array {
-				return $this->sub_plugins;
-			}
-		};
-
-		$container = new Container();
-		$container->singleton( Registrar_Interface::class, static fn() => $bound );
-		Config::set_container( $container );
-
-		$this->assertSame( $bound, Loader::registrar() );
-	}
-
-	public function test_it_ignores_a_container_with_no_binding(): void {
-		Config::set_container( new Container() );
-
-		$this->assertInstanceOf( Registrar::class, Loader::registrar() );
-	}
-
-	public function test_register_builds_a_sub_plugin_and_stores_it(): void {
-		Loader::register( $this->config( 'give-recurring' ) );
-
-		$all = Loader::all();
-
-		$this->assertCount( 1, $all );
-		$this->assertInstanceOf( Sub_Plugin::class, $all['give-recurring'] );
-		$this->assertSame( 'give-recurring', $all['give-recurring']->get_slug() );
-	}
-
-	public function test_register_delegates_to_a_bound_registrar(): void {
-		$bound = new class() implements Registrar_Interface {
-			/** @var array<string,Sub_Plugin> */
-			public $sub_plugins = [];
-
-			public function register( Sub_Plugin $sub_plugin ): void {
-				$this->sub_plugins[ $sub_plugin->get_slug() ] = $sub_plugin;
-			}
-
-			public function all(): array {
-				return $this->sub_plugins;
-			}
-		};
-
-		$container = new Container();
-		$container->singleton( Registrar_Interface::class, static fn() => $bound );
-		Config::set_container( $container );
-
-		Loader::register( $this->config( 'give-recurring' ) );
-
-		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
-	}
-
-	public function test_the_state_helper_clears_both_the_memo_and_the_registry(): void {
-		Loader::register( $this->config( 'give-recurring' ) );
-		$first = Loader::registrar();
-
-		Loader_State::reset();
-
-		$this->assertSame( [], Loader::all(), 'The registry must be empty after reset.' );
-		$this->assertNotSame( $first, Loader::registrar(), 'The memo must be discarded after reset.' );
+	try {
+		Loader::all();
+		$this->fail( 'Expected a Config_Exception.' );
+	} catch ( Config_Exception $exception ) {
+		$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
+		$this->assertStringContainsString( '/tmp/other/other.php', $exception->getMessage() );
 	}
 }
 ```
@@ -1402,6 +375,8 @@ Only resolution and registration in this PR. `boot()` and the load loop land in 
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Throwable;
 
 /**
  * Static facade: collaborator resolution, registration, hook wiring, and the load loop.
@@ -1417,97 +392,211 @@ class Loader {
 	private static $resolved = [];
 
 	/**
-	 * Resolve an interface from the container when bound, else construct the default.
+	 * Sub-plugins registered but not yet handed to the registrar.
 	 *
-	 * The container is never required — with none set, every collaborator is a plain `new`.
+	 * @var Sub_Plugin[]
+	 */
+	private static $pending = [];
+
+	/**
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When the container cannot produce a usable instance.
+	 *
+	 * @return Registrar_Interface
+	 */
+	public static function registrar(): Registrar_Interface {
+		return self::resolve( Registrar_Interface::class, Registrar::class );
+	}
+
+	/**
+	 * Register one bundled sub-plugin. Call once per sub-plugin, before boot().
+	 *
+	 * The sub-plugin is buffered rather than handed straight to the registrar, so that registering
+	 * resolves nothing. Resolution needs the container, and a host that registers before it calls
+	 * Config::set_container() would otherwise pin the default registrar and silently ignore the
+	 * binding. Buffering is what lets the container arrive at any point before boot, like every
+	 * other configuration call.
+	 *
+	 * The configuration is still validated here: building the Sub_Plugin is what rejects it, and
+	 * that happens at the call the host can see in its own stack trace.
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param string $interface     Interface to resolve.
-	 * @param string $default_class Concrete class to build when nothing is bound.
+	 * @param array<string,mixed> $config Sub-plugin configuration.
 	 *
-	 * @return object
+	 * @throws Config_Exception When the configuration is unusable.
+	 *
+	 * @return void
+	 */
+	public static function register( array $config ): void {
+		self::$pending[] = new Sub_Plugin( $config );
+	}
+
+	/**
+	 * Every registered sub-plugin, keyed by slug, in registration order.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When the container cannot produce a usable registrar, or two
+	 *                          sub-plugins were registered under one slug.
+	 *
+	 * @return array<string,Sub_Plugin>
+	 */
+	public static function all(): array {
+		self::flush();
+
+		return self::registrar()->all();
+	}
+
+	/**
+	 * Hand every buffered registration to the registrar.
+	 *
+	 * The registrar stays the single source of truth: the buffer is a pre-store that needs no
+	 * container, and duplicate-slug detection and ordering remain the registrar's alone rather
+	 * than being restated here in a second dialect.
+	 *
+	 * The buffer is emptied before the loop, so a second read cannot re-register what the
+	 * registrar already holds and trip its duplicate-slug guard. It is emptied *after* the
+	 * registrar resolves, so a container binding that throws leaves the registrations buffered
+	 * for the next read rather than dropping them on the floor.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When the container cannot produce a usable registrar, or two
+	 *                          sub-plugins were registered under one slug.
+	 *
+	 * @return void
+	 */
+	private static function flush(): void {
+		if ( self::$pending === [] ) {
+			return;
+		}
+
+		$registrar = self::registrar();
+		$pending   = self::$pending;
+
+		self::$pending = [];
+
+		foreach ( $pending as $sub_plugin ) {
+			$registrar->register( $sub_plugin );
+		}
+	}
+
+	/**
+	 * Resolve an interface from the container when bound, else construct the default.
+	 *
+	 * The container is never required — with none set, every collaborator is a plain `new`, so
+	 * every default class must be constructible with no arguments. Resolution is memoized, and
+	 * nothing resolves until the first read, which is boot: that is what lets a host set its
+	 * container at any point beforehand. Swapping a collaborator after that would be the worse
+	 * behaviour, since anything already holding the old instance would keep it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @template T of object
+	 *
+	 * @param class-string<T> $interface     Interface to resolve.
+	 * @param class-string<T> $default_class Concrete class to build when nothing is bound.
+	 *
+	 * @throws Config_Exception When the container throws while building the binding, or returns
+	 *                          something that does not implement the interface it was asked for.
+	 *
+	 * @return T
 	 */
 	private static function resolve( string $interface, string $default_class ): object {
 		if ( isset( self::$resolved[ $interface ] ) ) {
-			return self::$resolved[ $interface ];
+			/** @var T $memoized */
+			$memoized = self::$resolved[ $interface ];
+
+			return $memoized;
 		}
 
 		$container = Config::get_container();
 
 		if ( $container !== null && $container->has( $interface ) ) {
-			self::$resolved[ $interface ] = $container->get( $interface );
+			// has() true only promises the binding exists, not that it can be built: a host factory
+			// closure is free to throw, and a container asked for a class with an unsatisfiable
+			// dependency throws its own exception type. Uncaught, either one leaves the host's
+			// plugins_loaded with a fatal from a vendor namespace that names neither this library
+			// nor the binding at fault.
+			try {
+				$instance = $container->get( $interface );
+			} catch ( Throwable $thrown ) {
+				throw new Config_Exception(
+					sprintf(
+						'The container failed to build the binding for %s: %s',
+						$interface,
+						$thrown->getMessage()
+					),
+					0,
+					$thrown
+				);
+			}
 
-			return self::$resolved[ $interface ];
+			// Checked before it is memoized. Without this the bad instance is cached, and every
+			// accessor throws a TypeError blaming this library rather than the binding.
+			if ( ! $instance instanceof $interface ) {
+				throw new Config_Exception(
+					sprintf(
+						'The container binding for %s must implement it. Got %s.',
+						$interface,
+						is_object( $instance ) ? get_class( $instance ) : gettype( $instance )
+					)
+				);
+			}
+
+			self::$resolved[ $interface ] = $instance;
+
+			return $instance;
 		}
 
 		self::$resolved[ $interface ] = new $default_class();
 
 		return self::$resolved[ $interface ];
 	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return Registrar_Interface
-	 */
-	public static function registrar(): Registrar_Interface {
-		/** @var Registrar_Interface $registrar */
-		$registrar = self::resolve( Registrar_Interface::class, Registrar::class );
-
-		return $registrar;
-	}
-
-	/**
-	 * Register one bundled sub-plugin. Call once per sub-plugin, before boot().
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param array<string,mixed> $config Sub-plugin configuration.
-	 *
-	 * @return void
-	 */
-	public static function register( array $config ): void {
-		self::registrar()->register( new Sub_Plugin( $config ) );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return array<string,Sub_Plugin>
-	 */
-	public static function all(): array {
-		return self::registrar()->all();
-	}
 }
 ```
 
-> The facade has no `reset()`. Nothing in production ever needs to un-resolve a collaborator — the
-> memo is built once per request and dies with it — so the only caller would be the suite, and a
-> public static method is a promise to every host that reads the class. `Loader_State::reset()`
-> does the job from `tests/_support/` instead, emptying the registrar through `Registrar_State`
-> before it discards the memo: dropping the memo alone is not enough, because when the registrar
-> came from a container binding as a singleton the container hands back the same populated instance
-> on the next resolve.
+> **Design notes.**
 >
-> That reflection reaches into the shipped `Registrar` only. A test that binds a registrar of its
-> own — the two below do — owns that fake, and should build a fresh one per test or give it its own
-> way to clear itself. That is test-side code, which is exactly where this seam belongs.
+> *Registration is deferred on purpose.* Handing the `Sub_Plugin` straight to
+> `self::registrar()->register()` is shorter and was the first sketch, but it makes the first
+> `register()` call the moment the container is read, and a host that sets its container one line
+> later gets the default registrar with no error to explain why its binding did nothing. The buffer
+> is what makes `Config::set_container()` order-independent, at the price of moving the duplicate-slug
+> report to the first read. That is the right trade: a duplicate slug is a mistake caught the first
+> time the code runs either way, and it is reported with both bundled file paths wherever it fires,
+> while a silently ignored container binding is a mistake that looks like it worked.
+>
+> *The facade has no `reset()`.* Nothing in production ever needs to un-resolve a collaborator or
+> discard a registration — the memo is built once per request and dies with it — so the only caller
+> would be the suite, and a public static method is a promise to every host that reads the class.
+> `Tests\Support\Loader_State::reset()` does the job by reflection from `tests/_support/`, clearing
+> the memo and the buffer together.
+>
+> *Nothing reaches into a registrar to empty it.* `Registrar_Interface` declares `register()` and
+> `all()` only, so a container-bound singleton registrar has no way to be emptied and reflection into
+> the shipped `Registrar` would not touch it. A test that binds a registrar of its own owns that
+> fake and builds a fresh one per test — test-side code, which is exactly where this seam belongs.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
-Expected: PASS — 7 tests.
+Expected: PASS — 17 test methods, 20 cases with the two data providers expanded.
 
 - [ ] **Step 7: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 Expected: `[OK] No errors`.
 
-- [ ] **Step 8: Append to the README**
+- [ ] **Step 8: Append to `docs/configuration.md`**
+
+The container documentation goes in `docs/configuration.md`, not the README: the human docs are split
+out of the README and it is not to grow back.
 
 ```markdown
-### Rebinding a collaborator
+## Rebinding a collaborator
 
 Every collaborator is interface-backed. With a container set, bind any of them to override the
 library globally; with no container, the defaults are used and nothing is required.
@@ -1524,6 +613,11 @@ Config::set_container( $container );
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
 | `Contracts\Activation_Interface` | `Activation` | Run-once activation tracking. |
 
+`Config::set_container()` may be called at any point before `Loader::boot()` — before or after your
+`Loader::register()` calls. Nothing is resolved until the first read, so a registration made before
+the container was set still reaches the bound registrar. After boot, a collaborator is fixed for the
+request: swapping one then would strand whatever already holds the old instance.
+
 The container is **not** used to wire hooks — those stay plain static callbacks, so the container
 stays genuinely optional.
 ```
@@ -1531,7 +625,7 @@ stays genuinely optional.
 - [ ] **Step 9: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/_support/Registrar_State.php tests/_support/Loader_State.php tests/unit/LoaderResolveTest.php README.md
+git add src/Loader.php tests/_support/Loader_State.php tests/_support/Spy_Registrar.php tests/unit/LoaderResolveTest.php docs/configuration.md
 git commit -m "Add Loader resolution and registration"
 git push -u origin 09-loader-resolve
 gh pr create --base 08-registrar --title "Loader resolution and registration" --body 'What: `Loader::resolve()`, the `registrar()` accessor, `register()`, and `all()`.
@@ -1541,581 +635,24 @@ Usage:
     Loader::register( [ "slug" => "give-recurring", ... ] );
     Loader::all();   // [ "give-recurring" => Sub_Plugin ]
 
-    // Optional: override globally.
+    // Optional, and in any order relative to register().
     $container->singleton( Registrar_Interface::class, My_Registrar::class );
     Config::set_container( $container );
 
-Why this way: one generic `resolve( $interface, $default_class )` rather than four bespoke
-accessors with their own fallback logic, so adding a collaborator is one line. The container is
-checked with `has()` before `get()`, which is what keeps it optional — a host with no container, or
-with one that binds nothing, gets plain `new` instances.
+Why this way: one generic `resolve( $interface, $default_class )` rather than four bespoke accessors
+with their own fallback logic, so adding a collaborator is one line. `register()` validates the
+config by building the `Sub_Plugin` and then buffers it, so registration resolves nothing: the
+container may be set at any point before boot instead of before the first `register()`. The cost is
+that a duplicate slug is reported at the first read rather than at the second `register()` — against
+a container binding that would otherwise be ignored with no error at all.
 
 The facade carries no `reset()`: nothing in production un-resolves a collaborator, so it would be a
-public promise made for the test suite alone. The suite clears the state by reflection from
-`tests/_support/` instead, and `Loader_State::reset()` empties the registrar before dropping the
-memo — discarding the memo alone is not enough, since a container-bound singleton hands back the
-same populated instance on the next resolve and the registry would survive the reset.
-
-Verify: `slic run unit` — 7 tests, covering both the bound and unbound paths with a real di52
-container.'
-```
-
----
-
-## Task 10: `Notices` queue
-
-**PR 10** · branch `10-notices-queue` from `09-loader-resolve` · 4 source files
-
-Lands before the load path and the resolver because both call into it.
-
-**Files:**
-- Create: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Notices/Store.php`, `src/Notices/Renderer.php`, `tests/unit/Notices/QueueTest.php`, `tests/unit/Notices/StoreTest.php`, `tests/unit/Notices/RendererTest.php`
-- Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
-
-**Interfaces:**
-- Consumes: `Config::get_option_name()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
-- Produces:
-  - `Notices\Contracts\Queue_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
-  - `Loader::notices(): Notices\Contracts\Queue_Interface`
-
-  Task 11 calls `queue_dependency_notice()`; Task 12 calls `queue_merge_notice()` and `queue_conflict_notice()`; Task 14 extends this interface.
-
-**Design notes:**
-- Option `"{$option_prefix}_plugin_absorber_notices"`, built by `Config::get_option_name( 'notices' )`, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
-
-> **Deviations, deliberate (added 2026-08-03, from the PR 10 review):**
->
-> 1. **An option, not a transient.** Verified in core: `set_transient()` short-circuits to
->    `wp_cache_set()` and never writes the database when an external object cache is present. On a
->    Redis or Memcached site the queue would exist only in the cache, and `wp_cache_flush()` — run
->    by deploy scripts and every "purge cache" button — destroys it. The merge notice is raised
->    once and never re-queued, so losing it means the site owner is never told. This queue is not
->    a cache. See the amended Global Constraint.
-> 2. **Network options on multisite.** The resolver passes `$network_wide` to
->    `deactivate_plugins()`, which removes the plugin from every site in the network. A per-site
->    option would have parked the explanation in whichever site's options table happened to serve
->    the request that triggered it — invisible to the superadmin, on one of fifty sites.
-> 3. **`render()` checks `activate_plugins` first.** Rendering *consumes* the queue, so without a
->    gate any logged-in user loading `profile.php` would silently swallow the one warning an
->    administrator was going to get. On multisite this correctly resolves to superadmins, since
->    `activate_plugins` maps through `manage_network_plugins` there.
-> 4. **`all_admin_notices`, not `admin_notices`** (see Task 11). The three notice hooks are
->    mutually exclusive branches in `admin-header.php`, and `admin_notices` does not fire in the
->    network admin — exactly where a network-wide deactivation would be noticed.
-> 5. **`get_conflict_notice_message( $default )` replaces the planned private `message_or_default()`
->    helper**, using the parameter added to `Sub_Plugin` in PR 7. Identical semantics, one less
->    duplicated method.
-> 6. **`get_queue()` drops non-string entries** rather than printing them, and writes the cleaned
->    array back, so a corrupted queue heals on the next write. This moved to `Notices\Store::all()`
->    in deviation 7.
-> 7. **`Notices` is split into three, renamed, and grouped into `src/Notices/`** (added
->    2026-08-11). `Notices\Store` owns the option, `Notices\Renderer` owns the markup and the
->    severity map, and `Notices\Queue` keeps the interface, the message defaults and the capability
->    gate. One class had four reasons to change — storage, wording, severity, markup — and Task 14
->    adds a fifth by hanging the activation-error rewrite off the same class. Splitting now means a
->    host that wants only different markup replaces `Notices\Renderer` instead of reimplementing
->    the queue.
->
->    `Notices` was a plural bag noun naming the subject rather than the job, which read worst of
->    the three once the split landed. The folder carries the subject and the class carries the job,
->    following `Conflict\Resolver`. The rename is free now and a breaking change after 1.0.
->
->    The interface follows the folder: `Notices\Contracts\Queue_Interface` in
->    `src/Notices/Contracts/Queue_Interface.php`. A folder-scoped concern owns its own contract, so
->    the top-level `src/Contracts/` is left holding only the interfaces whose implementations sit at
->    the `src/` root — `Registrar_Interface`, `Plugin_State_Interface`, `Activation_Interface`.
->    Task 12 does the same for `Conflict\Contracts\Resolver_Interface`.
->
->    Both collaborators are constructor arguments defaulting to the standard implementations, so
->    `new Queue()` — what `Loader::resolve()` builds when the container holds no binding — behaves
->    exactly as `new Notices()` did, and the interface's method set is unchanged. Tasks 11, 12 and
->    14 need no rework beyond the new type name and import.
->
->    The capability check stays in `Notices\Queue::render()` rather than moving into the renderer,
->    because it guards clearing the queue as much as drawing it: split apart, a user who may not
->    see the queue could still consume it.
->
->    Not done, and deliberately: the interface still mixes queueing with rendering, so a host
->    replacing one inherits the other, and a fourth notice type is still a breaking interface
->    change. Both need a spec amendment and rework in Tasks 11, 12 and 14, and fixing them here
->    would put this PR over the four-source-file cap. The same cap is why `Notices\Store` and
->    `Notices\Renderer` are concrete rather than interface-backed.
->
-> 8. **`Notices\Store` builds its key with `Config::get_option_name( 'notices' )`** (added
->    2026-08-11), not by concatenating `Config::get_hook_prefix()`. The prefix validator admits
->    `A-Z` and `-`, so `Give-Core` would otherwise put a capitalised, hyphenated segment straight
->    into a storage key. `get_option_name()` lowercases and folds hyphens to underscores;
->    `get_hook_name()` deliberately does not, because normalising there would silently rename the
->    host's own filters. Nothing outside `Config` assembles either kind of name.
-> 9. **`Notices\Renderer` prints through `wp_kses_post()`, not `esc_html()`** (added 2026-08-11).
->    A message reaches the renderer only from the host's own `conflict_notice_message` /
->    `dependency_notice_message` config or from its filter — never from user input — and the
->    commonest thing a host wants in a merge notice is a link to its own knowledge-base article.
->    `wp_kses_post()` still strips scripts and event handlers, so the XSS surface is unchanged.
->    Task 14's activation-error rewrite takes the same message from the same source onto the same
->    screen, so the two must not diverge.
->
->    The Step 4/5 code listings below still show the pre-split, pre-rename shape, exactly as they
->    still show the transient that deviation 1 replaced and the hand-built option key that
->    deviation 8 replaced. The deviations are the record of what shipped.
-- Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
-- Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 09-loader-resolve && git checkout -b 10-notices-queue
-```
-
-- [ ] **Step 2: Write the failing test**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Notices;
-use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
-
-/**
- * @since 1.0.0
- */
-class NoticesTest extends WPTestCase {
-	use WithSubPlugins;
-
-	private const TRANSIENT = 'give_plugin_absorber_notices';
-
-	public function setUp(): void {
-		parent::setUp();
-
-		Config::set_hook_prefix( 'give' );
-		delete_transient( self::TRANSIENT );
-	}
-
-	public function tearDown(): void {
-		delete_transient( self::TRANSIENT );
-		Loader_State::reset();
-		Config::reset();
-		parent::tearDown();
-	}
-
-	private function render_to_string( Notices $notices ): string {
-		ob_start();
-		$notices->render();
-
-		return (string) ob_get_clean();
-	}
-
-	public function test_the_loader_resolves_the_default_notices(): void {
-		$this->assertInstanceOf( Notices::class, Loader::notices() );
-	}
-
-	public function test_it_queues_a_merge_notice_into_the_transient(): void {
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
-
-		$queue = get_transient( self::TRANSIENT );
-
-		$this->assertIsArray( $queue );
-		$this->assertArrayHasKey( 'give-recurring:merge', $queue );
-		$this->assertSame( 'Bundled now.', $queue['give-recurring:merge'] );
-	}
-
-	public function test_the_merge_notice_falls_back_to_a_default_message(): void {
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
-
-		$queue = get_transient( self::TRANSIENT );
-
-		$this->assertStringContainsString( 'give-recurring', $queue['give-recurring:merge'] );
-		$this->assertNotSame( '', $queue['give-recurring:merge'] );
-	}
-
-	public function test_it_queues_a_conflict_notice(): void {
-		( new Notices() )->queue_conflict_notice( $this->make_sub_plugin() );
-
-		$this->assertArrayHasKey( 'give-recurring:conflict', get_transient( self::TRANSIENT ) );
-	}
-
-	public function test_it_queues_a_dependency_notice_using_the_sub_plugin_message(): void {
-		( new Notices() )->queue_dependency_notice( $this->make_sub_plugin( [ 'dependency_notice_message' => 'Needs Give.' ] ) );
-
-		$this->assertSame( 'Needs Give.', get_transient( self::TRANSIENT )['give-recurring:dependency'] );
-	}
-
-	public function test_the_dependency_notice_falls_back_to_the_sub_plugin_default(): void {
-		( new Notices() )->queue_dependency_notice( $this->make_sub_plugin() );
-
-		$this->assertSame(
-			'give-recurring could not be loaded because its requirements are not met.',
-			get_transient( self::TRANSIENT )['give-recurring:dependency']
-		);
-	}
-
-	public function test_queueing_the_same_slug_and_type_twice_does_not_duplicate(): void {
-		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin() );
-		$notices->queue_merge_notice( $this->make_sub_plugin() );
-
-		$this->assertCount( 1, get_transient( self::TRANSIENT ) );
-	}
-
-	public function test_one_slug_can_hold_notices_of_different_types(): void {
-		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin() );
-		$notices->queue_dependency_notice( $this->make_sub_plugin() );
-
-		$this->assertCount( 2, get_transient( self::TRANSIENT ) );
-	}
-
-	public function test_render_outputs_dismissible_warning_markup(): void {
-		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
-
-		$output = $this->render_to_string( $notices );
-
-		$this->assertStringContainsString( 'notice notice-warning is-dismissible', $output );
-		$this->assertStringContainsString( 'Bundled now.', $output );
-	}
-
-	public function test_render_strips_unsafe_markup_but_keeps_a_link(): void {
-		$notices = new Notices();
-		$notices->queue_merge_notice(
-			$this->make_sub_plugin(
-				[ 'conflict_notice_message' => '<script>alert(1)</script><a href="https://example.com/kb">Read more</a>' ]
-			)
-		);
-
-		$output = $this->render_to_string( $notices );
-
-		$this->assertStringNotContainsString( '<script>', $output );
-
-		// wp_kses_post() is the point: a host's knowledge-base link has to survive, and
-		// esc_html() would have turned it into visible angle brackets.
-		$this->assertStringContainsString( '<a href="https://example.com/kb">Read more</a>', $output );
-	}
-
-	public function test_render_clears_the_queue(): void {
-		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin() );
-
-		$this->render_to_string( $notices );
-
-		$this->assertFalse( get_transient( self::TRANSIENT ) );
-		$this->assertSame( '', $this->render_to_string( $notices ), 'A second render must output nothing.' );
-	}
-
-	public function test_render_outputs_nothing_when_the_queue_is_empty(): void {
-		$this->assertSame( '', $this->render_to_string( new Notices() ) );
-	}
-
-	public function test_the_queue_survives_a_simulated_redirect(): void {
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
-
-		// A redirect ends the request; the next one builds a fresh object against the same store.
-		$output = $this->render_to_string( new Notices() );
-
-		$this->assertStringContainsString( 'Bundled now.', $output );
-	}
-}
-```
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Notices" not found`.
-
-- [ ] **Step 4: Write `src/Contracts/Notices_Interface.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Contracts;
-
-use Nexcess\PluginAbsorber\Sub_Plugin;
-
-/**
- * Admin notices raised by the absorber. Bind a replacement to render them your own way.
- *
- * @since 1.0.0
- */
-interface Notices_Interface {
-	/**
-	 * Queue the "we deactivated the standalone for you" notice.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_merge_notice( Sub_Plugin $sub_plugin ): void;
-
-	/**
-	 * Queue the "please deactivate the standalone yourself" notice.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_conflict_notice( Sub_Plugin $sub_plugin ): void;
-
-	/**
-	 * Queue the "requirements not met" notice.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void;
-
-	/**
-	 * Render every queued notice, then clear the queue.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function render(): void;
-}
-```
-
-- [ ] **Step 5: Write `src/Notices.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-use Nexcess\PluginAbsorber\Contracts\Notices_Interface;
-
-/**
- * Default notices: a transient-backed queue that survives the resolver's redirect.
- *
- * Deliberately minimal markup so the library stays dependency-free. A host already using
- * stellarwp/admin-notices can bind its own implementation and render from the same store.
- *
- * @since 1.0.0
- */
-class Notices implements Notices_Interface {
-	/**
-	 * @var string
-	 */
-	private const TYPE_MERGE = 'merge';
-
-	/**
-	 * @var string
-	 */
-	private const TYPE_CONFLICT = 'conflict';
-
-	/**
-	 * @var string
-	 */
-	private const TYPE_DEPENDENCY = 'dependency';
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_merge_notice( Sub_Plugin $sub_plugin ): void {
-		$this->queue(
-			$sub_plugin,
-			self::TYPE_MERGE,
-			$this->message_or_default(
-				$sub_plugin->get_conflict_notice_message(),
-				sprintf(
-					'%s has been deactivated because it is now bundled and loaded automatically.',
-					$sub_plugin->get_slug()
-				)
-			)
-		);
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_conflict_notice( Sub_Plugin $sub_plugin ): void {
-		$this->queue(
-			$sub_plugin,
-			self::TYPE_CONFLICT,
-			$this->message_or_default(
-				$sub_plugin->get_conflict_notice_message(),
-				sprintf(
-					'%s is now bundled and loaded automatically. You can safely deactivate the standalone plugin.',
-					$sub_plugin->get_slug()
-				)
-			)
-		);
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 *
-	 * @return void
-	 */
-	public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void {
-		$this->queue( $sub_plugin, self::TYPE_DEPENDENCY, $sub_plugin->get_dependency_notice_message() );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function render(): void {
-		$queue = $this->get_queue();
-
-		if ( $queue === [] ) {
-			return;
-		}
-
-		delete_transient( $this->transient_name() );
-
-		foreach ( $queue as $message ) {
-			if ( $message === '' ) {
-				continue;
-			}
-
-			printf(
-				'<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-				wp_kses_post( $message )
-			);
-		}
-	}
-
-	/**
-	 * Store one notice, keyed by slug and type so different types can coexist.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
-	 * @param string     $type       Notice type.
-	 * @param string     $message    Resolved message.
-	 *
-	 * @return void
-	 */
-	private function queue( Sub_Plugin $sub_plugin, string $type, string $message ): void {
-		$queue = $this->get_queue();
-
-		$queue[ $sub_plugin->get_slug() . ':' . $type ] = $message;
-
-		set_transient( $this->transient_name(), $queue, 0 );
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return array<string,string>
-	 */
-	private function get_queue(): array {
-		$queue = get_transient( $this->transient_name() );
-
-		return is_array( $queue ) ? $queue : [];
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param string $message Configured message.
-	 * @param string $default Fallback used when nothing was configured.
-	 *
-	 * @return string
-	 */
-	private function message_or_default( string $message, string $default ): string {
-		return $message !== '' ? $message : $default;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	private function transient_name(): string {
-		return Config::get_hook_prefix() . '_plugin_absorber_notices';
-	}
-}
-```
-
-- [ ] **Step 6: Add the `notices()` accessor to `src/Loader.php`**
-
-Insert after `registrar()`, and add `use Nexcess\PluginAbsorber\Contracts\Notices_Interface;` to the imports.
-
-```php
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return Notices_Interface
-	 */
-	public static function notices(): Notices_Interface {
-		/** @var Notices_Interface $notices */
-		$notices = self::resolve( Notices_Interface::class, Notices::class );
-
-		return $notices;
-	}
-```
-
-- [ ] **Step 7: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 13 tests.
-
-- [ ] **Step 8: Confirm static analysis is still clean**
-
-Run: `composer test:analysis`
-
-- [ ] **Step 9: Commit, push, open the PR**
-
-```bash
-git add src/Contracts/Notices_Interface.php src/Notices.php src/Loader.php tests/unit/NoticesTest.php README.md
-git commit -m "Add transient-backed notice queue"
-git push -u origin 10-notices-queue
-gh pr create --base 09-loader-resolve --title "Notice queue" --body 'What: the transient-backed notice queue, its contract, and the `Loader::notices()` accessor.
-
-Usage:
-
-    Loader::notices()->queue_merge_notice( $sub_plugin );
-    Loader::notices()->render();   // hooked to all_admin_notices by boot()
-
-    // Or supply your own copy:
-    "conflict_notice_message" => static fn() => __( "Now bundled with Give.", "give" ),
-
-Why this way: a transient rather than a static property, because the resolver deactivates the
-standalone and then redirects — a static queue would not survive the request boundary and the user
-would never see why their plugin turned off.
-
-Entries are keyed `slug:type`, not by slug. A sub-plugin can earn a merge notice at plugins_loaded
-@1 and a dependency notice at @2 in the same request; keying by slug alone silently drops one.
-
-Default messages live here rather than in `Sub_Plugin`, which returns "" when unconfigured. That
-way auto-deactivating a plugin can never leave the user with a blank explanation, while a host that
-does configure a message still gets exactly its own text.
-
-Verify: `slic run unit` — 13 tests, including `wp_kses_post()` sanitising, queue-clearing on render,
-and a simulated redirect (queue with one instance, render with another).'
+public promise made for the test suite alone. `Tests\Support\Loader_State` clears the memo and the
+buffer by reflection instead.
+
+Verify: `slic run unit` — 17 test methods covering both the bound and unbound paths, a container
+that throws, a binding of the wrong type, and the registration order cases. Not covered here:
+`boot()` and the load loop, which land in the next PR.'
 ```
 
 ---
