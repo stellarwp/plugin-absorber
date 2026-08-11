@@ -320,6 +320,11 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
+	 * The last case is the one a host is most likely to reach for: its own zero-argument
+	 * `..._message()` helper, named under a message key in the hope of being called. It comes back
+	 * as the raw name like every other string. `__return_empty_string` stands in for one because
+	 * calling it is harmless and unmistakable -- an invoked case would return '', not the name.
+	 *
 	 * @return Generator<string,array{0:string}>
 	 */
 	public static function configured_strings(): Generator {
@@ -328,6 +333,7 @@ class SubPluginTest extends WPTestCase {
 		yield 'php function name'       => [ 'date' ];
 		yield 'wordpress function name' => [ 'flush' ];
 		yield 'array pointer function'  => [ 'key' ];
+		yield 'host helper name'        => [ '__return_empty_string' ];
 	}
 
 	public function test_the_filter_overrides_the_resolved_policy(): void {

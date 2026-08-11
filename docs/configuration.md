@@ -40,8 +40,27 @@ function name is indistinguishable from a string value, and honouring both would
 depend on whatever else the site has loaded. A non-string under one of them throws
 `Config_Exception` when the sub-plugin is registered.
 
+So a function name under one of them is stored and returned as text. It is never called, however
+real the function is:
+
+```php
+// Returns the literal string 'give_recurring_conflict_message'. It is not invoked.
+'conflict_notice_message' => 'give_recurring_conflict_message',
+```
+
 To decide a policy or a message at runtime — or to defer `__()` until after the textdomain
-loads — use the [filters](filters.md).
+loads — use the [filters](filters.md):
+
+```php
+add_filter(
+    'give/plugin_absorber/conflict_notice_message',
+    static function ( string $message, Sub_Plugin $sub_plugin ): string {
+        return give_recurring_conflict_message( $sub_plugin );
+    },
+    10,
+    2
+);
+```
 
 `dependency_check`, `activation_callback`, and `enabled` have nothing a string could collide with,
 so they accept every callable form, a plain function name included. A key in that group that holds
