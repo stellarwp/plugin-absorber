@@ -10,6 +10,8 @@ use Generator;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Contracts\Notices_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Notice_Renderer;
+use Nexcess\PluginAbsorber\Notice_Store;
 use Nexcess\PluginAbsorber\Notices;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
@@ -286,6 +288,105 @@ class NoticesTest extends WPTestCase {
 
 	public function test_render_outputs_nothing_when_the_queue_is_empty(): void {
 		$this->assertSame( '', $this->render_to_string( new Notices() ) );
+	}
+
+	/**
+	 * Where notices are kept is a constructor argument, so a host can move the queue somewhere else
+	 * without also taking on how notices are worded or drawn. Both arguments default, so
+	 * `new Notices()` — which is what Loader::resolve() builds — is unaffected.
+	 */
+	public function test_a_replacement_store_is_used_instead_of_the_option(): void {
+		$store = new class() extends Notice_Store {
+			/**
+			 * @var array<string,string>
+			 */
+			public $written = [];
+
+			/**
+			 * @return array<string,string>
+			 */
+			public function all(): array {
+				return $this->written;
+			}
+
+			/**
+			 * @param string $key     Queue key.
+			 * @param string $message Resolved message.
+			 *
+			 * @return void
+			 */
+			public function put( string $key, string $message ): void {
+				$this->written[ $key ] = $message;
+			}
+
+			/**
+			 * @return void
+			 */
+			public function clear(): void {
+				$this->written = [];
+			}
+		};
+
+		( new Notices( $store ) )->queue_merge_notice(
+			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )
+		);
+
+		$this->assertSame( [ 'give-recurring:merge' => 'Bundled now.' ], $store->written );
+		$this->assertFalse( $this->queue_exists(), 'The default option must not have been written to.' );
+	}
+
+	/**
+	 * The other half of the same seam: different markup, same queue and same consumption rules.
+	 */
+	public function test_a_replacement_renderer_draws_the_queue(): void {
+		$renderer = new class() extends Notice_Renderer {
+			/**
+			 * @param array<string,string> $queue Queue to draw.
+			 *
+			 * @return void
+			 */
+			public function render( array $queue ): void {
+				echo '<p class="mine">' . count( $queue ) . '</p>';
+			}
+		};
+
+		$notices = new Notices( null, $renderer );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
+
+		$this->assertSame( '<p class="mine">1</p>', $this->render_to_string( $notices ) );
+		$this->assertFalse( $this->queue_exists(), 'A replacement renderer still consumes the queue.' );
+	}
+
+	/**
+	 * The capability gate guards the clearing as much as the drawing, so it has to sit in front of
+	 * the renderer rather than inside it: a user who may not see the queue must not destroy it.
+	 */
+	public function test_a_replacement_renderer_is_never_reached_without_the_capability(): void {
+		$renderer = new class() extends Notice_Renderer {
+			/**
+			 * @var bool
+			 */
+			public $called = false;
+
+			/**
+			 * @param array<string,string> $queue Queue to draw.
+			 *
+			 * @return void
+			 */
+			public function render( array $queue ): void {
+				$this->called = true;
+			}
+		};
+
+		$notices = new Notices( null, $renderer );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
+
+		wp_set_current_user( $this->create_user( 'subscriber' ) );
+
+		$this->render_to_string( $notices );
+
+		$this->assertFalse( $renderer->called );
+		$this->assertTrue( $this->queue_exists() );
 	}
 
 	/**

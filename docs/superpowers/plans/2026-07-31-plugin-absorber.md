@@ -2899,7 +2899,7 @@ container.'
 Lands before the load path and the resolver because both call into it.
 
 **Files:**
-- Create: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `tests/unit/NoticesTest.php`
+- Create: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `src/Notice_Store.php`, `src/Notice_Renderer.php`, `tests/unit/NoticesTest.php`, `tests/unit/NoticeStoreTest.php`, `tests/unit/NoticeRendererTest.php`
 - Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
 
 **Interfaces:**
@@ -2936,7 +2936,28 @@ Lands before the load path and the resolver because both call into it.
 >    helper**, using the parameter added to `Sub_Plugin` in PR 7. Identical semantics, one less
 >    duplicated method.
 > 6. **`get_queue()` drops non-string entries** rather than printing them, and writes the cleaned
->    array back, so a corrupted queue heals on the next write.
+>    array back, so a corrupted queue heals on the next write. This moved to `Notice_Store::all()`
+>    in deviation 7.
+> 7. **`Notices` is split into three** (added 2026-08-11): `Notice_Store` owns the option,
+>    `Notice_Renderer` owns the markup and the severity map, and `Notices` keeps the interface, the
+>    message defaults and the capability gate. One class had four reasons to change — storage,
+>    wording, severity, markup — and Task 14 adds a fifth by hanging the activation-error rewrite
+>    off the same class. Splitting now means a host that wants only different markup replaces
+>    `Notice_Renderer` instead of reimplementing the queue.
+>
+>    Both are constructor arguments defaulting to the standard implementations, so `new Notices()`
+>    — what `Loader::resolve()` builds when the container holds no binding — is unchanged, and so
+>    is `Notices_Interface`. Tasks 11, 12 and 14 are unaffected.
+>
+>    The capability check stays in `Notices::render()` rather than moving into the renderer,
+>    because it guards clearing the queue as much as drawing it: split apart, a user who may not
+>    see the queue could still consume it.
+>
+>    Not done, and deliberately: `Notices_Interface` still mixes queueing with rendering, so a host
+>    replacing one inherits the other, and a fourth notice type is still a breaking interface
+>    change. Both need a spec amendment and rework in Tasks 11, 12 and 14, and fixing them here
+>    would put this PR over the four-source-file cap. The same cap is why `Notice_Store` and
+>    `Notice_Renderer` are concrete rather than interface-backed.
 - Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
 - Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
 

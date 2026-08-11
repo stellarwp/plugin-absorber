@@ -107,6 +107,10 @@ The value is an `array<string,string>` keyed `slug:type` — for example `give-r
 the messages are plain text; the default rendering escapes them with `esc_html()`, so a link in a
 message comes out as literal angle brackets.
 
+If you want the queue but not the markup, hand `Notices` your own renderer — `new Notices( null,
+$renderer )` — and bind that. Pass a `Notice_Store` in the first argument to keep the queue
+somewhere other than the option. Replacing either one leaves the other alone.
+
 ### Filters
 
 | Filter | Arguments | Purpose |
