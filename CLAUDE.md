@@ -101,7 +101,7 @@ config predicates there is what lets collaborators stay thin and lets them be te
 ```
 Config::set_hook_prefix( 'give' );
 Config::set_container( $container );          // optional
-Loader::register( [ …config… ] );             // once per sub-plugin; last-wins dedupe by slug
+Loader::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
 Loader::boot();                               // idempotent
 
 plugins_loaded @1      → Conflict\Resolver::resolve_all()

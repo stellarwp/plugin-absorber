@@ -264,7 +264,8 @@ message. This is documented in `tests/README.md`.
   callable; `get_conflict_policy()` for string, for callable, and with the
   `…/conflict_policy` filter overriding both; both message getters over every callable form, and
   rejecting a string of any kind.
-- **8 — `Registrar`.** register; `all()`; last-wins dedupe by slug; `reset()`.
+- **8 — `Registrar`.** register; `all()`; a duplicate slug throws `Config_Exception` naming both
+  bundled files and leaves the registry untouched; `reset()` clears the guard with the registry.
 - **9 — `Loader::resolve()`.** No container → default instance; di52 container binding a custom
   `Registrar_Interface` → bound instance returned; memoized (identical instance twice);
   `Loader::reset()` clears both the memo and the registry.

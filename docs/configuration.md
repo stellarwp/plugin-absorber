@@ -33,6 +33,17 @@ a host can rebind them.
 The load guard and the standalone basename are deliberately two separate keys. No constant does
 double duty as both a guard and a path resolver.
 
+## Registration
+
+Sub-plugins load in **registration order**, so register a dependency before anything that extends it
+at include time.
+
+Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
+activation record, so a second registration under the same slug is refused with a
+`Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
+load. Register unconditionally and put anything you cannot decide up front — a licence that may not
+be active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+
 ## Messages are callables, never strings
 
 Your config array is built at plugin load — before `init`, and before your textdomain. Calling
