@@ -19,21 +19,26 @@ plugins shipping different versions of this library will collide otherwise. See
 
 ```php
 use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Loader;
 
-Config::set_hook_prefix( 'give' );          // required — keys the hooks and options
-Config::set_container( give()->container ); // optional — lets you rebind collaborators
+add_action( 'plugins_loaded', function () {
+    Config::set_hook_prefix( 'give' );          // required — keys the hooks and options
+    Config::set_container( give()->container ); // optional — lets you rebind collaborators
+
+    Loader::register( [
+        'slug'                       => 'give-stripe',
+        'bundled_plugin_file'        => __DIR__ . '/sub-plugins/give-stripe/give-stripe.php',
+        'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
+        'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
+    ] );
+
+    Loader::boot();
+}, 0 );
 ```
 
-Each sub-plugin is then described by a config array:
-
-```php
-[
-    'slug'                       => 'give-stripe',
-    'bundled_plugin_file'        => __DIR__ . '/sub-plugins/give-stripe/give-stripe.php',
-    'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
-    'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
-]
-```
+Keep the `, 0`: `boot()` wires the load at `plugins_loaded` priority 2, and WordPress silently
+ignores a callback added at or past the priority it is already dispatching. Booting later is
+reported through `_doing_it_wrong()` and loaded inline, but the ordering guarantees are weaker.
 
 ## Docs
 

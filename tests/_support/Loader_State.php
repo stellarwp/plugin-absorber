@@ -35,10 +35,15 @@ class Loader_State {
 	protected const DEFAULTS = [
 		'resolved' => [],
 		'pending'  => [],
+		'booted'   => false,
 	];
 
 	/**
-	 * Return every static property of `Loader` to its default.
+	 * Return every static property of `Loader` to its default, and unwire the hooks it added.
+	 *
+	 * Clearing the boot flag without unwiring would leave a `Loader` that reports itself unbooted
+	 * while its callbacks are still attached: the next `boot()` would wire nothing, and still look
+	 * like it had worked.
 	 *
 	 * @throws LogicException When `Loader` has grown a static property this helper does not know
 	 *                        about, rather than leaving it to leak between tests.
@@ -47,6 +52,23 @@ class Loader_State {
 	 */
 	public static function reset(): void {
 		$reflection = new ReflectionClass( Loader::class );
+
+		// Read rather than restated, so the helper cannot go on removing a hook from a priority
+		// the Loader no longer wires -- which would leave the real callback attached and every
+		// later test loading sub-plugins it never registered.
+		$load_priority = $reflection->getConstant( 'LOAD_PRIORITY' );
+
+		// Refused rather than coerced. A default priority here would take the load hook off some
+		// other number, leave the real callback attached, and load sub-plugins into every later
+		// test in the process.
+		if ( ! is_int( $load_priority ) ) {
+			throw new LogicException(
+				sprintf( 'Loader::LOAD_PRIORITY must be an int for %s to unwire the load hook.', self::class )
+			);
+		}
+
+		remove_action( 'plugins_loaded', [ Loader::class, 'load_all' ], $load_priority );
+		remove_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] );
 
 		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
 			$name = $property->getName();

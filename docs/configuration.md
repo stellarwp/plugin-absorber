@@ -32,6 +32,7 @@ Config::set_container( $container );
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
 
 `set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter: it may
 come before or after your `Loader::register()` calls, so long as it comes before boot. Registering
@@ -74,6 +75,23 @@ load. Because registrations are buffered until boot, that collision is reported 
 at the second `register()` call; a config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+
+## The bundled file is included from a function, not from global scope
+
+WordPress includes plugins from `wp-settings.php` at global scope; this library includes them from
+inside a method. Variables assigned at the top level of the bundled file are therefore function-local
+and do not become globals:
+
+```php
+// In the bundled plugin's main file.
+$my_plugin = new My_Plugin();             // Not a global. `global $my_plugin;` elsewhere sees null.
+$GLOBALS['my_plugin'] = new My_Plugin();  // Works.
+```
+
+Everything else — function and class declarations, `define()`, hook registration, `__FILE__` — is
+unaffected. Bundle a plugin that publishes its instance through `$GLOBALS`, a singleton or a
+container, which is what plugins written in the last decade do anyway. No amount of wrapping on this
+side can hand a required file the global scope it would have had.
 
 ## Messages are callables, never strings
 
