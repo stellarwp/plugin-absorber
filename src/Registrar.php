@@ -65,13 +65,4 @@ class Registrar implements Registrar_Interface {
 	public function all(): array {
 		return $this->sub_plugins;
 	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void {
-		$this->sub_plugins = [];
-	}
 }

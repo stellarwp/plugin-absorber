@@ -90,6 +90,21 @@ class ConfigTest extends WPTestCase {
 		$this->fail( 'set_hook_prefix() accepted an invalid prefix instead of throwing.' );
 	}
 
+	public function test_it_builds_a_hook_name_in_the_library_namespace(): void {
+		Config::set_hook_prefix( 'give' );
+
+		$this->assertSame(
+			'give/plugin_absorber/conflict_policy',
+			Config::get_hook_name( 'conflict_policy' )
+		);
+	}
+
+	public function test_a_hook_name_needs_a_prefix(): void {
+		$this->expectException( Config_Exception::class );
+
+		Config::get_hook_name( 'conflict_policy' );
+	}
+
 	public function test_it_reports_no_container_by_default(): void {
 		$this->assertFalse( Config::has_container() );
 		$this->assertNull( Config::get_container() );

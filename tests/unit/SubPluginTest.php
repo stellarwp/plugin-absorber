@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
+use Generator;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
@@ -31,7 +32,17 @@ class SubPluginTest extends WPTestCase {
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 	}
 
+	/**
+	 * UopzFunctions restores nothing of its own accord, and a define() outlives the test that made
+	 * it for the rest of the process. Undoing it here rather than at the end of the test body means
+	 * a failed assertion cannot strand a constant that later tests would then read as a real load.
+	 * Both calls are no-ops when the test never set anything.
+	 */
 	public function tearDown(): void {
+		$this->unsetConstant( 'ABSORBER_TEST_LOADED_CONSTANT' );
+		$this->unsetFunctionHook( 'is_plugin_active' );
+		$this->unsetFunctionHook( 'is_plugin_active_for_network' );
+
 		Config_State::reset();
 		parent::tearDown();
 	}
@@ -56,14 +67,12 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return Generator<string,array{0:string}>
 	 */
-	public function required_keys(): array {
-		return [
-			'slug'                   => [ 'slug' ],
-			'bundled_plugin_file'    => [ 'bundled_plugin_file' ],
-			'plugin_loaded_constant' => [ 'plugin_loaded_constant' ],
-		];
+	public static function required_keys(): Generator {
+		yield 'slug'                   => [ 'slug' ];
+		yield 'bundled_plugin_file'    => [ 'bundled_plugin_file' ];
+		yield 'plugin_loaded_constant' => [ 'plugin_loaded_constant' ];
 	}
 
 	/**
@@ -82,16 +91,14 @@ class SubPluginTest extends WPTestCase {
 	 * An array is the one that matters: it survives a truthiness check and then casts to the
 	 * string "Array", which every sub-plugin making the same mistake would collide on.
 	 *
-	 * @return array<string,array{0:mixed}>
+	 * @return Generator<string,array{0:mixed}>
 	 */
-	public function unusable_required_values(): array {
-		return [
-			'empty string' => [ '' ],
-			'array'        => [ [ 'give', 'recurring' ] ],
-			'null'         => [ null ],
-			'integer'      => [ 42 ],
-			'object'       => [ new \stdClass() ],
-		];
+	public static function unusable_required_values(): Generator {
+		yield 'empty string' => [ '' ];
+		yield 'array'        => [ [ 'give', 'recurring' ] ];
+		yield 'null'         => [ null ];
+		yield 'integer'      => [ 42 ];
+		yield 'object'       => [ new \stdClass() ];
 	}
 
 	/**
@@ -107,13 +114,37 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return Generator<string,array{0:string}>
 	 */
-	public function callable_only_keys(): array {
-		return [
-			'dependency_check'    => [ 'dependency_check' ],
-			'activation_callback' => [ 'activation_callback' ],
-		];
+	public static function callable_only_keys(): Generator {
+		yield 'dependency_check'    => [ 'dependency_check' ];
+		yield 'activation_callback' => [ 'activation_callback' ];
+	}
+
+	/**
+	 * A closure under one of these is the mistake worth catching: it would render as the string
+	 * "Closure" much later, in a notice, with nothing pointing back at the registration that
+	 * caused it. The filters are how these keys are decided at runtime.
+	 *
+	 * @dataProvider string_only_keys
+	 *
+	 * @param string $key Key that only ever holds a string.
+	 */
+	public function test_it_rejects_a_string_only_key_that_is_not_a_string( string $key ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( $key );
+
+		$this->make_sub_plugin( [ $key => static fn() => 'nope' ] );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function string_only_keys(): Generator {
+		yield 'standalone_plugin_basename' => [ 'standalone_plugin_basename' ];
+		yield 'conflict_policy'            => [ 'conflict_policy' ];
+		yield 'conflict_notice_message'    => [ 'conflict_notice_message' ];
+		yield 'dependency_notice_message'  => [ 'dependency_notice_message' ];
 	}
 
 	public function test_it_exposes_the_required_values(): void {
@@ -149,12 +180,21 @@ class SubPluginTest extends WPTestCase {
 		$this->assertTrue( $sub_plugin->is_enabled(), 'The callable must be re-evaluated on each call.' );
 	}
 
+	/**
+	 * No string is a valid boolean, so nothing on this key has to guess whether a string means
+	 * itself or means a function to call. Every callable form works, a function name included.
+	 */
+	public function test_it_accepts_a_function_name_as_the_enabled_flag(): void {
+		$this->assertFalse( $this->make_sub_plugin( [ 'enabled' => '__return_false' ] )->is_enabled() );
+		$this->assertTrue( $this->make_sub_plugin( [ 'enabled' => '__return_true' ] )->is_enabled() );
+	}
+
 	public function test_it_reports_not_loaded_when_the_constant_is_undefined(): void {
 		$this->assertFalse( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_NEVER_DEFINED' ] )->is_already_loaded() );
 	}
 
 	public function test_it_reports_loaded_once_the_constant_is_defined(): void {
-		define( 'ABSORBER_TEST_LOADED_CONSTANT', '1.0.0' );
+		$this->setConstant( 'ABSORBER_TEST_LOADED_CONSTANT', '1.0.0' );
 
 		$this->assertTrue( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONSTANT' ] )->is_already_loaded() );
 	}
@@ -168,13 +208,37 @@ class SubPluginTest extends WPTestCase {
 
 	/**
 	 * Whether the standalone is active is a question about the site, and this object answers only
-	 * from its own configuration. Stubbing WordPress into saying yes must change nothing here.
+	 * from its own configuration. Asserting the answer is not enough on its own -- it would pass
+	 * for an object that asked WordPress and happened to agree -- so this records the calls and
+	 * asserts none were made.
 	 */
 	public function test_it_asks_wordpress_nothing_about_the_standalone(): void {
-		$this->setFunctionReturn( 'is_plugin_active', true );
-		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
+		$calls = [];
 
-		$this->assertFalse( $this->make_sub_plugin()->has_standalone_plugin() );
+		foreach ( [ 'is_plugin_active', 'is_plugin_active_for_network' ] as $function ) {
+			$this->setFunctionHook(
+				$function,
+				static function () use ( &$calls, $function ): void {
+					$calls[] = $function;
+				}
+			);
+		}
+
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+
+		$this->assertTrue( $sub_plugin->has_standalone_plugin() );
+		$this->assertSame( 'give-recurring/give-recurring.php', $sub_plugin->get_standalone_plugin_basename() );
+		$this->assertSame( [], $calls, 'Sub_Plugin must answer from its configuration alone.' );
+
+		// The assertion above is only worth anything if the recorder records. A hook that failed to
+		// install would leave $calls empty however much Sub_Plugin asked WordPress.
+		//
+		// Asserted with assertContains rather than against a list: is_plugin_active() delegates to
+		// is_plugin_active_for_network() internally, and how many functions core reaches on the way
+		// is not this test's business.
+		is_plugin_active( 'give-recurring/give-recurring.php' );
+
+		$this->assertContains( 'is_plugin_active', $calls, 'The recorder itself must work.' );
 	}
 
 	public function test_it_reports_a_configured_standalone(): void {
@@ -198,6 +262,15 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	/**
+	 * Nothing a string could collide with on a callable-only key, so a plain function name is
+	 * called rather than treated as a value.
+	 */
+	public function test_it_accepts_a_function_name_as_the_dependency_check(): void {
+		$this->assertFalse( $this->make_sub_plugin( [ 'dependency_check' => '__return_false' ] )->are_dependencies_met() );
+		$this->assertTrue( $this->make_sub_plugin( [ 'dependency_check' => '__return_true' ] )->are_dependencies_met() );
+	}
+
+	/**
 	 * Asserted against Conflict_Policy::default() rather than a named policy: which policy is the
 	 * default is that class's to state, and this only proves an unconfigured sub-plugin asks it.
 	 */
@@ -205,27 +278,62 @@ class SubPluginTest extends WPTestCase {
 		$this->assertSame( Conflict_Policy::default(), $this->make_sub_plugin()->get_conflict_policy() );
 	}
 
-	public function test_it_resolves_a_string_conflict_policy(): void {
+	/**
+	 * The function-name cases are the ones that matter. is_callable() is true for any string
+	 * naming an existing function, and a policy read from an option can easily be one, so a
+	 * configured value that merely looks callable must still come back as the raw text. Invoking
+	 * date() with no arguments would be a fatal on PHP 8.
+	 *
+	 * @dataProvider configured_strings
+	 *
+	 * @param string $policy Configured policy.
+	 */
+	public function test_it_returns_a_configured_conflict_policy( string $policy ): void {
 		$this->assertSame(
-			Conflict_Policy::DEFER,
-			$this->make_sub_plugin( [ 'conflict_policy' => Conflict_Policy::DEFER ] )->get_conflict_policy()
+			$policy,
+			$this->make_sub_plugin( [ 'conflict_policy' => $policy ] )->get_conflict_policy()
 		);
 	}
 
-	public function test_it_resolves_a_callable_conflict_policy_and_passes_itself(): void {
-		$received   = null;
-		$sub_plugin = $this->make_sub_plugin(
-			[
-				'conflict_policy' => static function ( Sub_Plugin $passed ) use ( &$received ) {
-					$received = $passed;
-
-					return Conflict_Policy::NOTICE_ONLY;
-				},
-			]
+	/**
+	 * @dataProvider configured_strings
+	 *
+	 * @param string $message Configured message.
+	 */
+	public function test_it_returns_a_configured_conflict_notice_message( string $message ): void {
+		$this->assertSame(
+			$message,
+			$this->make_sub_plugin( [ 'conflict_notice_message' => $message ] )->get_conflict_notice_message()
 		);
+	}
 
-		$this->assertSame( Conflict_Policy::NOTICE_ONLY, $sub_plugin->get_conflict_policy() );
-		$this->assertSame( $sub_plugin, $received );
+	/**
+	 * @dataProvider configured_strings
+	 *
+	 * @param string $message Configured message.
+	 */
+	public function test_it_returns_a_configured_dependency_notice_message( string $message ): void {
+		$this->assertSame(
+			$message,
+			$this->make_sub_plugin( [ 'dependency_notice_message' => $message ] )->get_dependency_notice_message()
+		);
+	}
+
+	/**
+	 * The last case is the one a host is most likely to reach for: its own zero-argument
+	 * `..._message()` helper, named under a message key in the hope of being called. It comes back
+	 * as the raw name like every other string. `__return_empty_string` stands in for one because
+	 * calling it is harmless and unmistakable -- an invoked case would return '', not the name.
+	 *
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function configured_strings(): Generator {
+		yield 'ordinary text'           => [ 'Bundled now.' ];
+		yield 'named policy'            => [ Conflict_Policy::DEFER ];
+		yield 'php function name'       => [ 'date' ];
+		yield 'wordpress function name' => [ 'flush' ];
+		yield 'array pointer function'  => [ 'key' ];
+		yield 'host helper name'        => [ '__return_empty_string' ];
 	}
 
 	public function test_the_filter_overrides_the_resolved_policy(): void {
@@ -241,104 +349,116 @@ class SubPluginTest extends WPTestCase {
 		$this->assertSame(
 			Conflict_Policy::DEFER,
 			$sub_plugin->get_conflict_policy(),
-			'The filter runs after the config value and the callable, and wins.'
+			'The filter runs after the configured value, and wins.'
 		);
 	}
 
-	public function test_the_filter_receives_the_sub_plugin(): void {
+	public function test_the_filter_overrides_the_conflict_notice_message(): void {
+		add_filter(
+			'give/plugin_absorber/conflict_notice_message',
+			static function () {
+				return 'Filtered.';
+			}
+		);
+
+		$this->assertSame(
+			'Filtered.',
+			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Configured.' ] )->get_conflict_notice_message()
+		);
+	}
+
+	public function test_the_filter_overrides_the_dependency_notice_message(): void {
+		add_filter(
+			'give/plugin_absorber/dependency_notice_message',
+			static function () {
+				return 'Filtered.';
+			}
+		);
+
+		$this->assertSame(
+			'Filtered.',
+			$this->make_sub_plugin( [ 'dependency_notice_message' => 'Configured.' ] )->get_dependency_notice_message()
+		);
+	}
+
+	/**
+	 * Filtering last is what makes deferred translation possible, so the filter has to see the
+	 * fallback text too -- not just a configured value it can only replace when one exists.
+	 *
+	 * @dataProvider unconfigured_messages
+	 *
+	 * @param string $hook     Message hook, less the prefix.
+	 * @param string $expected Text the filter is expected to receive.
+	 * @param string $getter   Method under test.
+	 */
+	public function test_the_message_filters_see_the_fallback( string $hook, string $expected, string $getter ): void {
 		$received = null;
 
 		add_filter(
-			'give/plugin_absorber/conflict_policy',
-			static function ( $policy, $passed ) use ( &$received ) {
+			"give/plugin_absorber/{$hook}",
+			static function ( $message ) use ( &$received ) {
+				$received = $message;
+
+				return $message;
+			}
+		);
+
+		$this->make_sub_plugin()->{$getter}( 'Bundled now.' );
+
+		$this->assertSame( $expected, $received );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string,1:string,2:string}>
+	 */
+	public static function unconfigured_messages(): Generator {
+		yield 'the caller default' => [
+			'conflict_notice_message',
+			'Bundled now.',
+			'get_conflict_notice_message',
+		];
+		yield 'the generic sentence' => [
+			'dependency_notice_message',
+			'give-recurring could not be loaded because its requirements are not met.',
+			'get_dependency_notice_message',
+		];
+	}
+
+	/**
+	 * @dataProvider filtered_strings
+	 *
+	 * @param string $hook   Hook, less the prefix.
+	 * @param string $getter Method under test.
+	 */
+	public function test_the_filters_receive_the_sub_plugin( string $hook, string $getter ): void {
+		$received = null;
+
+		add_filter(
+			"give/plugin_absorber/{$hook}",
+			static function ( $value, $passed ) use ( &$received ) {
 				$received = $passed;
 
-				return $policy;
+				return $value;
 			},
 			10,
 			2
 		);
 
 		$sub_plugin = $this->make_sub_plugin();
-		$sub_plugin->get_conflict_policy();
+		$sub_plugin->{$getter}();
 
 		$this->assertSame( $sub_plugin, $received );
 	}
 
-	public function test_the_conflict_notice_message_defaults_to_empty(): void {
-		$this->assertSame( '', $this->make_sub_plugin()->get_conflict_notice_message() );
-	}
-
-	public function test_it_resolves_conflict_notice_messages_from_strings_and_callables(): void {
-		$this->assertSame(
-			'Bundled now.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )->get_conflict_notice_message()
-		);
-		$this->assertSame(
-			'Deferred.',
-			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Deferred.' ] )->get_conflict_notice_message()
-		);
-	}
-
-	public function test_the_dependency_notice_message_falls_back_to_a_default(): void {
-		$this->assertSame(
-			'give-recurring could not be loaded because its requirements are not met.',
-			$this->make_sub_plugin()->get_dependency_notice_message()
-		);
-	}
-
-	public function test_it_resolves_dependency_notice_messages_from_strings_and_callables(): void {
-		$this->assertSame(
-			'Needs WooCommerce.',
-			$this->make_sub_plugin( [ 'dependency_notice_message' => 'Needs WooCommerce.' ] )->get_dependency_notice_message()
-		);
-		$this->assertSame(
-			'Needs Give.',
-			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Needs Give.' ] )->get_dependency_notice_message()
-		);
-	}
-
 	/**
-	 * is_callable() is true for any string naming an existing function, and a policy read from
-	 * an option can easily be one. Invoking date() here would be a fatal on PHP 8.
+	 * @dataProvider filtered_strings
 	 *
-	 * @dataProvider function_names
-	 *
-	 * @param string $name Name of a real PHP function.
+	 * @param string $hook   Hook, less the prefix.
+	 * @param string $getter Method under test.
 	 */
-	public function test_a_policy_string_is_never_invoked_as_a_function( string $name ): void {
-		$this->assertSame(
-			$name,
-			$this->make_sub_plugin( [ 'conflict_policy' => $name ] )->get_conflict_policy()
-		);
-	}
-
-	/**
-	 * @dataProvider function_names
-	 *
-	 * @param string $name Name of a real PHP function.
-	 */
-	public function test_a_message_string_is_never_invoked_as_a_function( string $name ): void {
-		$this->assertSame(
-			$name,
-			$this->make_sub_plugin( [ 'conflict_notice_message' => $name ] )->get_conflict_notice_message()
-		);
-	}
-
-	/**
-	 * @return array<string,array{0:string}>
-	 */
-	public function function_names(): array {
-		return [
-			'date'  => [ 'date' ],
-			'flush' => [ 'flush' ],
-			'key'   => [ 'key' ],
-		];
-	}
-
-	public function test_a_non_scalar_filter_return_yields_no_policy(): void {
+	public function test_a_non_scalar_filter_return_yields_nothing( string $hook, string $getter ): void {
 		add_filter(
-			'give/plugin_absorber/conflict_policy',
+			"give/plugin_absorber/{$hook}",
 			static function () {
 				return new \WP_Error( 'nope', 'Nope.' );
 			}
@@ -346,17 +466,43 @@ class SubPluginTest extends WPTestCase {
 
 		$this->assertSame(
 			'',
-			$this->make_sub_plugin()->get_conflict_policy(),
-			'Casting an object would be a fatal; an empty string is simply not a valid policy.'
+			$this->make_sub_plugin()->{$getter}(),
+			'Casting an object would be a fatal; an empty string is simply not a valid value.'
 		);
 	}
 
-	public function test_the_conflict_policy_needs_a_hook_prefix(): void {
+	/**
+	 * @dataProvider filtered_strings
+	 *
+	 * @param string $hook   Hook, less the prefix.
+	 * @param string $getter Method under test.
+	 */
+	public function test_the_filtered_values_need_a_hook_prefix( string $hook, string $getter ): void {
 		Config_State::reset();
 
 		$this->expectException( Config_Exception::class );
 
-		$this->make_sub_plugin()->get_conflict_policy();
+		$this->make_sub_plugin()->{$getter}();
+	}
+
+	/**
+	 * @return Generator<string,array{0:string,1:string}>
+	 */
+	public static function filtered_strings(): Generator {
+		yield 'conflict_policy'           => [ 'conflict_policy', 'get_conflict_policy' ];
+		yield 'conflict_notice_message'   => [ 'conflict_notice_message', 'get_conflict_notice_message' ];
+		yield 'dependency_notice_message' => [ 'dependency_notice_message', 'get_dependency_notice_message' ];
+	}
+
+	public function test_the_conflict_notice_message_defaults_to_empty(): void {
+		$this->assertSame( '', $this->make_sub_plugin()->get_conflict_notice_message() );
+	}
+
+	public function test_the_dependency_notice_message_falls_back_to_a_default(): void {
+		$this->assertSame(
+			'give-recurring could not be loaded because its requirements are not met.',
+			$this->make_sub_plugin()->get_dependency_notice_message()
+		);
 	}
 
 	public function test_the_enabled_callable_receives_the_sub_plugin(): void {

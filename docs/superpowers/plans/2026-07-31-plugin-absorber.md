@@ -33,7 +33,9 @@ Every task's requirements implicitly include this section.
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
-- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** The same applies to `Registrar` and `Loader` when tasks 8 and 9 land.
+- **Container tests use the test-support adapter, never di52 directly** (verified 2026-07-31 against `vendor/`). `lucatume\DI52\Container` implements `ArrayAccess` and **PSR's** `Psr\Container\ContainerInterface` — not `StellarWP\ContainerContract\ContainerInterface`; `stellarwp/container-contract` ships an adapter example at `examples/di52/Container.php` precisely because DI52 must be wrapped. Passing `new Container()` to `Config::set_container()` is a `TypeError`. Tests use `Nexcess\PluginAbsorber\Tests\Support\Test_Container`, which wraps a di52 container and implements the contract's four methods (`bind`, `get`, `has`, `singleton`); **every `use lucatume\DI52\Container;` in the task blocks below means `Test_Container`.** `Config::set_container()`'s signature is unchanged — the StellarWP contract stays the public API, per the production-dependency constraint above.
+- **`Config` carries no version handling** (ruled 2026-08-11, PR 4 review). `set_version()`/`get_version()` and the `$version` property were removed: nothing in the library reads a host version, and the one scenario that would want it — telling a bundled copy apart from a standalone at a specific release — is the host's problem. This closes spec known-issue F by deletion rather than by use.
+- **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** `Registrar` is served by `Tests\Support\Registrar_State::reset( Registrar $registrar )` and `Loader` by `Tests\Support\Loader_State::reset()`, which empties the memoized registrar through `Registrar_State` before discarding the memo; both are spelled out in full in the task blocks below.
 
 ## File Structure
 
@@ -46,7 +48,6 @@ plugin-absorber/
 │   ├── Conflict_Policy.php               # three policy string constants
 │   ├── Registrar.php                     # default slug => Sub_Plugin map
 │   ├── Activation.php                    # default run-once activation tracking
-│   ├── Notices.php                       # default notice queue + activation-error rewrite
 │   ├── Conflict/
 │   │   ├── Resolver.php                  # default standalone detection/deactivation/redirect
 │   │   └── Resolver_Interface.php
@@ -77,1461 +78,9 @@ One responsibility per file. `Sub_Plugin` holds every predicate so the collabora
 
 ---
 
-## Task 1: Repo bootstrap
-
-**PR 1** · branch `01-repo-bootstrap` from `main` · 6 source files
-
-**Files:**
-- Create: `composer.json`, `LICENSE`, `.gitignore`, `.gitattributes`, `.editorconfig`, `README.md`, `cspell.json`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: the `Nexcess\PluginAbsorber\` PSR-4 autoload root that every later task relies on, and the `composer test:analysis` script Task 5 wires into CI.
-
-- [ ] **Step 1: Rename the working directory to match the remote**
-
-```bash
-cd /Users/owl/www/wp-plugins
-mv sub-plugin-loader plugin-absorber
-cd plugin-absorber
-git remote -v   # expect: origin  https://github.com/stellarwp/plugin-absorber.git
-```
-
-- [ ] **Step 2: Cut the branch**
-
-```bash
-git checkout -b 01-repo-bootstrap
-```
-
-- [ ] **Step 3: Write `composer.json`**
-
-```json
-{
-    "name": "stellarwp/plugin-absorber",
-    "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
-    "type": "library",
-    "license": "GPL-2.0-or-later",
-    "minimum-stability": "stable",
-    "authors": [
-        {
-            "name": "StellarWP",
-            "email": "eric_defore@vendor.stellarwp.com"
-        }
-    ],
-    "require": {
-        "php": ">=7.4",
-        "stellarwp/container-contract": "^1.0"
-    },
-    "require-dev": {
-        "codeception/module-asserts": "^1.0",
-        "codeception/util-universalframework": "^1.0",
-        "lucatume/di52": "^3.0",
-        "lucatume/wp-browser": "^3.6.5",
-        "php-stubs/wordpress-stubs": "^6.4",
-        "phpunit/phpunit": "^9.5",
-        "szepeviktor/phpstan-wordpress": "^1.3"
-    },
-    "autoload": {
-        "psr-4": {
-            "Nexcess\\PluginAbsorber\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Nexcess\\PluginAbsorber\\Tests\\": "tests/",
-            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support"
-        }
-    },
-    "scripts": {
-        "test:analysis": [
-            "phpstan analyse -c phpstan.neon.dist --memory-limit=512M"
-        ],
-        "test:unit": [
-            "slic run unit"
-        ]
-    },
-    "config": {
-        "optimize-autoloader": true,
-        "preferred-install": "dist",
-        "platform": {
-            "php": "7.4"
-        },
-        "allow-plugins": {
-            "phpstan/extension-installer": true
-        }
-    }
-}
-```
-
-- [ ] **Step 4: Write `.gitignore`**
-
-```gitignore
-/vendor/
-/composer.lock
-/tests/_output/*
-!/tests/_output/.gitkeep
-/phpstan-cache/
-/codeception.yml
-/.env.testing.local
-.DS_Store
-.idea/
-.vscode/
-```
-
-- [ ] **Step 5: Write `.gitattributes`**
-
-Keeps development files out of consumer installs.
-
-```gitattributes
-/.github            export-ignore
-/docs               export-ignore
-/tests              export-ignore
-/.editorconfig      export-ignore
-/.env.testing       export-ignore
-/.env.testing.slic  export-ignore
-/.gitattributes     export-ignore
-/.gitignore         export-ignore
-/codeception.dist.yml   export-ignore
-/codeception.slic.yml   export-ignore
-/cspell.json        export-ignore
-/engineering-plan.md    export-ignore
-/phpstan.neon.dist  export-ignore
-```
-
-- [ ] **Step 6: Write `.editorconfig`**
-
-```editorconfig
-root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-trim_trailing_whitespace = true
-indent_style = tab
-
-[*.{yml,yaml,json,md}]
-indent_style = space
-indent_size = 4
-
-[*.md]
-trim_trailing_whitespace = false
-```
-
-- [ ] **Step 7: Write `cspell.json`**
-
-The spec review flagged that domain vocabulary trips the editor spell-checker. Fix the dictionary, not the prose.
-
-```json
-{
-    "version": "0.2",
-    "language": "en",
-    "words": [
-        "absorber",
-        "Codeception",
-        "codeception",
-        "fatals",
-        "Kadence",
-        "learndash",
-        "multisite",
-        "Nexcess",
-        "nexcess",
-        "Packagist",
-        "phpstan",
-        "referer",
-        "slic",
-        "stellarwp",
-        "StellarWP",
-        "Strauss",
-        "unhookable",
-        "uopz",
-        "Uopz",
-        "wpunit"
-    ],
-    "ignorePaths": [
-        "vendor/**",
-        "tests/_output/**",
-        "composer.lock"
-    ]
-}
-```
-
-- [ ] **Step 8: Add the GPL-2.0-or-later `LICENSE`**
-
-```bash
-curl -sL https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt -o LICENSE
-head -3 LICENSE   # expect: GNU GENERAL PUBLIC LICENSE / Version 2, June 1991
-```
-
-- [ ] **Step 9: Write the README skeleton**
-
-Every later PR appends its own section here, so the README is never out of sync with what has shipped. Keep it dense — no prose introduction, no FAQ.
-
-```markdown
-# Plugin Absorber
-
-Safely load bundled WordPress plugins inside a host plugin — togglable or always-on — without
-re-declaration fatal errors.
-
-## Install
-
-```bash
-composer require stellarwp/plugin-absorber
-```
-
-**Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
-Two or more plugins shipping different versions of this library will collide otherwise.
-
-> **Do not let `extra.strauss.constant_prefix` rewrite a sub-plugin's `plugin_loaded_constant`.**
-> Those are real, shared runtime constants — the whole safety mechanism depends on the bundled
-> copy and the standalone defining the *same* name. Add them to `exclude_from_copy`.
-
-Requires PHP 7.4+ and WordPress 6.4+.
-
-## Usage
-
-_Added as each piece lands._
-```
-
-- [ ] **Step 10: Verify Composer accepts the manifest**
-
-Run: `composer validate --no-check-lock`
-Expected: `./composer.json is valid`
-
-- [ ] **Step 11: Commit**
-
-```bash
-git add composer.json LICENSE .gitignore .gitattributes .editorconfig cspell.json README.md
-git commit -m "Add repo skeleton: composer manifest, license, dotfiles, README stub"
-```
-
-- [ ] **Step 12: Push and open the PR**
-
-```bash
-git push -u origin 01-repo-bootstrap
-gh pr create --base main --title "Repo bootstrap" --body 'What: composer manifest, GPL-2.0 license, dotfiles, cspell dictionary, README skeleton.
-
-Usage:
-
-    composer require stellarwp/plugin-absorber
-
-Why this way: `stellarwp/plugin-absorber` over `sub-plugin-loader` — Packagist returns 21 hits for
-`plugin-loader` and the top five are WordPress mu-plugin autoloaders, so the term is taken and
-misleading; `plugin-absorber` returns zero. Dropping `-loader` also kills the `PluginAbsorber\Loader`
-stutter. `stellarwp/container-contract` is the only production dependency, matching uplink.
-
-Verify: `composer validate --no-check-lock`. No tests — nothing here has behavior. The test harness
-lands in the next PR and CI goes green in the one after.'
-```
-
----
-
-## Task 2: Codeception harness
-
-**PR 2** · branch `02-codeception-harness` from `01-repo-bootstrap` · 0 source files
-
-Configuration modelled on `stellarwp/harbor`, the closest sibling library. The `singlesite`/`multisite` envs matter — Task 12 needs multisite to test network-aware deactivation.
-
-**Files:**
-- Create: `codeception.dist.yml`, `codeception.slic.yml`, `tests/unit.suite.yml`, `tests/_bootstrap.php`, `tests/_support/UnitTester.php`, `tests/_support/Helper/Unit.php`, `.env.testing`, `.env.testing.slic`, `tests/_output/.gitkeep`
-
-**Interfaces:**
-- Consumes: the `Nexcess\PluginAbsorber\Tests\` autoload-dev root from Task 1.
-- Produces: a `unit` suite runnable as `slic run unit`, with `--env singlesite` and `--env multisite`. Every later test class extends `\Codeception\TestCase\WPTestCase` and lives in `tests/unit/`.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 01-repo-bootstrap && git checkout -b 02-codeception-harness
-```
-
-- [ ] **Step 2: Write `codeception.dist.yml`**
-
-```yaml
-actor: Tester
-bootstrap: _bootstrap.php
-paths:
-    tests: tests
-    output: tests/_output
-    data: tests/_data
-    support: tests/_support
-    envs: tests/_envs
-actor_suffix: Tester
-settings:
-    colors: true
-    memory_limit: 1024M
-    error_level: E_ALL
-params:
-    - .env.testing
-extensions:
-    enabled:
-        - Codeception\Extension\RunFailed
-```
-
-- [ ] **Step 3: Write `codeception.slic.yml`**
-
-slic overlays this file to swap in the containerised database host.
-
-```yaml
-params:
-    - .env.testing.slic
-```
-
-- [ ] **Step 4: Write `tests/unit.suite.yml`**
-
-`multisite: false` is the default; the `multisite` env flips it. Note this suite loads WordPress — it is a "unit" suite by name only, matching the `admin-notices` convention.
-
-```yaml
-# Codeception Test Suite Configuration
-# Loads a real WordPress via WPLoader. uopz stubs the functions WP cannot hook.
-actor: UnitTester
-bootstrap: _bootstrap.php
-modules:
-    enabled:
-        - WPLoader
-        - Asserts
-        - "Nexcess\\PluginAbsorber\\Tests\\Support\\Helper\\Unit"
-    config:
-        WPLoader:
-            wpRootFolder: "%WP_ROOT_FOLDER%"
-            dbName: "%WP_TEST_DB_NAME%"
-            dbHost: "%WP_TEST_DB_HOST%"
-            dbUser: "%WP_TEST_DB_USER%"
-            dbPassword: "%WP_TEST_DB_PASSWORD%"
-            tablePrefix: test_
-            domain: "%WP_DOMAIN%"
-            adminEmail: admin@plugin-absorber.test
-            title: "Plugin Absorber Tests"
-            theme: twentytwentythree
-            multisite: false
-
-env:
-    singlesite:
-    multisite:
-        modules:
-            config:
-                WPLoader:
-                    multisite: true
-```
-
-- [ ] **Step 5: Write `tests/_bootstrap.php`**
-
-```php
-<?php
-/**
- * Codeception bootstrap.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-require_once dirname( __DIR__ ) . '/vendor/autoload.php';
-```
-
-- [ ] **Step 6: Write `tests/_support/UnitTester.php`**
-
-```php
-<?php
-/**
- * Unit suite actor.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support;
-
-/**
- * Inherited methods are provided by Codeception at build time.
- *
- * @since 1.0.0
- */
-class UnitTester extends \Codeception\Actor {
-	use _generated\UnitTesterActions;
-}
-```
-
-- [ ] **Step 7: Write `tests/_support/Helper/Unit.php`**
-
-```php
-<?php
-/**
- * Unit suite helper.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support\Helper;
-
-use Codeception\Module;
-
-/**
- * Suite-level helper. Intentionally empty — per-test seams live in traits.
- *
- * @since 1.0.0
- */
-class Unit extends Module {
-}
-```
-
-- [ ] **Step 8: Write `.env.testing`**
-
-```dotenv
-WP_ROOT_FOLDER=/var/www/html
-WP_DOMAIN=plugin-absorber.test
-WP_URL=http://plugin-absorber.test
-WP_ADMIN_USERNAME=admin
-WP_ADMIN_PASSWORD=password
-WP_TABLE_PREFIX=wp_
-WP_DB_HOST=db
-WP_DB_NAME=test
-WP_DB_USER=root
-WP_DB_PASSWORD=password
-WP_TEST_DB_HOST=db
-WP_TEST_DB_NAME=test
-WP_TEST_DB_USER=root
-WP_TEST_DB_PASSWORD=password
-```
-
-- [ ] **Step 9: Write `.env.testing.slic`**
-
-```dotenv
-# Consumed by both CI and local slic runs.
-WP_VERSION=latest
-WP_ROOT_FOLDER=/var/www/html
-WP_URL=http://plugin-absorber.test
-WP_DOMAIN=plugin-absorber.test
-WP_ADMIN_USERNAME=admin
-WP_ADMIN_PASSWORD=password
-WP_TABLE_PREFIX=wp_
-WP_DB_PORT=3306
-WP_DB_HOST=db
-WP_DB_NAME=test
-WP_DB_USER=root
-WP_DB_PASSWORD=password
-WP_TEST_DB_HOST=db
-WP_TEST_DB_NAME=test
-WP_TEST_DB_USER=root
-WP_TEST_DB_PASSWORD=password
-USING_CONTAINERS=1
-```
-
-- [ ] **Step 10: Create the output directory placeholder**
-
-```bash
-mkdir -p tests/_output tests/_data tests/unit && touch tests/_output/.gitkeep
-```
-
-- [ ] **Step 11: Verify Codeception builds the actor**
-
-```bash
-slic here
-slic use plugin-absorber
-slic composer install
-slic cc build
-```
-Expected: `tests/_support/_generated/UnitTesterActions.php` is generated, no errors.
-
-- [ ] **Step 12: Commit**
-
-```bash
-git add codeception.dist.yml codeception.slic.yml tests/ .env.testing .env.testing.slic
-git commit -m "Add Codeception harness with singlesite and multisite envs"
-```
-
-- [ ] **Step 13: Push and open the PR**
-
-```bash
-git push -u origin 02-codeception-harness
-gh pr create --base 01-repo-bootstrap --title "Codeception harness" --body 'What: Codeception + wp-browser config for a WPLoader-backed `unit` suite, with `singlesite` and `multisite` envs.
-
-Usage:
-
-    slic run unit
-    slic run unit --env multisite
-
-Why this way: modelled on `stellarwp/harbor`, the closest sibling library, rather than invented.
-The suite is named `unit` but loads real WordPress — that is the `admin-notices` convention, and it
-lets the Notices and Activation tests exercise real transients and options instead of mocks. The
-`multisite` env exists because network-aware deactivation cannot be tested any other way.
-
-Verify: `slic cc build` generates the actor. No test assertions yet — the first green run is the
-next PR, which adds the smoke test and the CI workflow together.'
-```
-
----
-
-## Task 3: First green CI
-
-**PR 3** · branch `03-ci-tests` from `02-codeception-harness` · 1 source file
-
-**Files:**
-- Create: `.github/workflows/tests-php.yml`, `tests/unit/SmokeTest.php`, `tests/_support/TestException.php`, `tests/README.md`
-
-**Interfaces:**
-- Consumes: the `unit` suite from Task 2.
-- Produces: no local uopz trait. Every later test that stubs a WordPress function uses `lucatume\WPBrowser\Traits\UopzFunctions` from wp-browser — `setFunctionReturn( string $function, $value, bool $execute = false )`, with automatic teardown via the trait's own `@after resetUopzAlterations()`. Also produces `Nexcess\PluginAbsorber\Tests\Support\TestException`, thrown from a stubbed function to halt a code path in place of `exit`.
-
-**Why not a local trait:** a hand-rolled `WithUopz` is duplicated across every StellarWP plugin repo and drifts. `UopzFunctions` is maintained by wp-browser's author, is already in the dependency tree, and exists as far back as the `^3.6.5` floor this library pins. Nothing to keep in sync.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 02-codeception-harness && git checkout -b 03-ci-tests
-```
-
-- [ ] **Step 2: Write the failing smoke test**
-
-```php
-<?php
-/**
- * Verifies the harness itself before any library code depends on it.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use lucatume\WPBrowser\Traits\UopzFunctions;
-
-/**
- * @since 1.0.0
- */
-class SmokeTest extends WPTestCase {
-	use UopzFunctions;
-
-	public function test_wordpress_is_loaded(): void {
-		$this->assertTrue( function_exists( 'add_action' ) );
-		$this->assertTrue( defined( 'ABSPATH' ) );
-	}
-
-	public function test_uopz_is_available(): void {
-		$this->assertTrue( extension_loaded( 'uopz' ), 'uopz is required to stub WordPress functions.' );
-		$this->assertTrue( function_exists( 'uopz_set_return' ) );
-	}
-
-	public function test_uopz_can_stub_a_function(): void {
-		$this->setFunctionReturn( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
-
-		$this->assertSame( 'https://example.test/wp-admin/plugins.php', wp_get_referer() );
-	}
-}
-```
-
-There is deliberately no test that `exit` can be neutralised. See Step 4.
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `wp_get_referer()` returns the real value, so `test_uopz_can_stub_a_function` fails on the `assertSame`, until `use UopzFunctions` is in place.
-
-- [ ] **Step 4: Add `TestException` and the tests README**
-
-There is no local uopz trait to write. `use lucatume\WPBrowser\Traits\UopzFunctions;` in the smoke test is the entire change on the stubbing side: it ships with wp-browser, undoes every override via its own `@after resetUopzAlterations()`, and takes an explicit `$execute` flag instead of guessing whether a value is callable.
-
-`UopzFunctions::preventExit()` exists, but this library does not use it. Neutralising `exit` lets a test keep running past the point where production would have stopped, so a test that should fail can report as passing and CI will not say otherwise. Tasks 8 and 13 instead stub the call immediately before `exit` and throw from it, which stops execution at a point the test controls.
-
-```php
-<?php
-/**
- * Exception used to halt execution in place of exit().
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support;
-
-use Exception;
-
-/**
- * Thrown from a stubbed function to stop a code path right before it calls exit().
- *
- * Mocking exit() itself lets a test keep running past the point production would
- * have halted, which can report a failing test as passing. Throwing instead stops
- * execution at a point the test controls. See tests/README.md.
- *
- * @since 1.0.0
- */
-class TestException extends Exception {
-}
-```
-
-Also write `tests/README.md`, documenting how to run the suites, the `setFunctionReturn()` pattern, and the no-mocking-`exit` rule with a worked example. Tasks 8 and 13 follow it rather than rediscovering it.
-
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 3 tests, 5 assertions.
-
-- [ ] **Step 6: Write the tests CI workflow**
-
-Adapted from `stellarwp/harbor`'s `tests-php.yml`, running the ends of the supported PHP range against WordPress `latest` and `nightly` — four legs, with the `nightly` ones non-blocking. Testing only 7.4 and 8.5 is deliberate: a deprecation introduced at any PHP version fires on every later one, so 8.5 catches whatever 8.0–8.4 would, and `config.platform.php` pins dependency resolution to 7.4 on every leg regardless of runtime, so there is no per-version dependency drift to catch either.
-
-```yaml
-# cspell:ignore DotReporter
-name: PHP Tests
-
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-
-# This workflow only reads the repository. Narrow the token accordingly.
-permissions:
-  contents: read
-
-# A superseded PR run is a result nobody is waiting on any more. Pushes to a
-# long-lived branch are left alone so their history stays complete.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    # A broken WordPress nightly is upstream's problem, not this library's, so
-    # those legs report without blocking the PR.
-    continue-on-error: ${{ matrix.wp == 'nightly' }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        # The ends of the supported range only. A deprecation introduced at any
-        # PHP version fires on every later one, so 8.5 catches what 8.0-8.4
-        # would, and every leg resolves identical dependencies because
-        # config.platform.php pins resolution to 7.4 regardless of runtime.
-        php:
-          - "7.4"
-          - "8.5"
-        # The nightly column is early warning for core regressions; when a
-        # nightly leg is red, its latest counterpart on the same PHP tells you
-        # whether WordPress or PHP is at fault.
-        wp:
-          - "latest"
-          - "nightly"
-
-    name: "Tests: PHP ${{ matrix.php }} / WP ${{ matrix.wp }}"
-
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Checkout slic
-        uses: actions/checkout@v6
-        with:
-          repository: stellarwp/slic
-          ref: main
-          path: slic
-          fetch-depth: 1
-
-      # Codeception refuses to start unless register_argc_argv is On. slic's
-      # php.ini does not set it, so the base image default applies, and that
-      # differs between PHP versions -- 7.4 is On, 8.5 is Off. This file is
-      # bind-mounted into the slic container as conf.d/zz-docker.ini, which
-      # loads after the main php.ini, so appending here wins.
-      - name: Enable register_argc_argv for Codeception
-        run: echo "register_argc_argv=On" >> ${GITHUB_WORKSPACE}/slic/containers/slic/php.ini
-
-      - name: Set up slic env vars
-        run: |
-          echo "SLIC_BIN=${GITHUB_WORKSPACE}/slic/slic" >> $GITHUB_ENV
-          echo "SLIC_WP_DIR=${GITHUB_WORKSPACE}/slic/_wordpress" >> $GITHUB_ENV
-          echo "SLIC_WORDPRESS_DOCKERFILE=Dockerfile.base" >> $GITHUB_ENV
-
-      - name: Set run context for slic
-        run: echo "SLIC=1" >> $GITHUB_ENV && echo "CI=1" >> $GITHUB_ENV
-
-      - name: Start ssh-agent
-        run: |
-          eval `ssh-agent -s`
-          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
-
-      - name: Set up slic for CI
-        run: |
-          cd ${GITHUB_WORKSPACE}/..
-          ${SLIC_BIN} here
-          ${SLIC_BIN} interactive off
-          ${SLIC_BIN} build-prompt off
-          ${SLIC_BIN} build-subdir off
-          ${SLIC_BIN} xdebug off
-          ${SLIC_BIN} debug on
-          ${SLIC_BIN} php-version set ${{ matrix.php }} --skip-rebuild
-
-      - name: Set up the library
-        run: |
-          ${SLIC_BIN} use plugin-absorber
-          ${SLIC_BIN} composer set-version 2
-          ${SLIC_BIN} composer validate
-          ${SLIC_BIN} composer install
-
-      # The slic image ships a fixed WordPress that varies by PHP version, and
-      # WP_VERSION in .env.testing.slic does not change it. Without this step a
-      # leg named "WP latest" silently tests whatever core the image happened to
-      # bake in. WPLoader installs from this codebase, so pinning here is what
-      # actually puts the suite on the version the leg claims.
-      - name: Pin the WordPress version
-        run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
-
-      - name: Build codeception
-        run: ${SLIC_BIN} cc build
-
-      - name: Run unit tests (singlesite)
-        run: ${SLIC_BIN} run unit --env singlesite --ext DotReporter
-
-      # Run even when singlesite failed: one run should report both envs rather
-      # than making you fix one and rediscover the other.
-      - name: Run unit tests (multisite)
-        if: ${{ !cancelled() }}
-        run: ${SLIC_BIN} run unit --env multisite --ext DotReporter
-
-      - name: Upload test output
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: "test-output-php${{ matrix.php }}-wp${{ matrix.wp }}"
-          path: tests/_output
-          if-no-files-found: ignore
-          retention-days: 7
-```
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add tests/unit/SmokeTest.php tests/_support/TestException.php tests/README.md .github/workflows/tests-php.yml
-git commit -m "Add harness smoke test, exit policy, and PHP tests workflow"
-```
-
-- [ ] **Step 8: Push and confirm CI is actually green**
-
-```bash
-git push -u origin 03-ci-tests
-gh pr create --base 02-codeception-harness --title "First green CI" --body 'What: a smoke test that proves the harness, the `TestException` and README that set the stubbing rules, and the PHP tests workflow.
-
-Usage:
-
-    class SomeTest extends WPTestCase {
-        use UopzFunctions; // from wp-browser, not a local trait.
-
-        public function test_something(): void {
-            $this->setFunctionReturn( "is_plugin_active", true );
-        }
-    }
-
-Why this way: the smoke test asserts WordPress is loaded, uopz is present, and a function can
-actually be stubbed — the assumptions every later test rests on. Proving them here means a later
-failure is a real bug rather than a harness problem.
-
-No local `WithUopz`: `lucatume\WPBrowser\Traits\UopzFunctions` ships with wp-browser, is maintained
-by its author, undoes overrides through its own `@after`, and exists as far back as the `^3.6.5`
-floor this library pins. One less copy to drift across repos.
-
-`exit` is never mocked. Neutralising it lets a test keep running past the point production would
-have stopped, so a test that should fail can report as passing. Redirect branches are tested by
-stubbing the call immediately before `exit` and throwing `TestException` from it — worked example
-in tests/README.md.
-
-Verify: `slic run unit` — 3 tests. CI runs both envs across PHP 7.4 through 8.5 against WordPress
-latest and nightly — four legs, with the nightly ones non-blocking. Static analysis is not
-wired yet; it lands after the first src/ file, because PHPStan errors on an empty directory.'
-
-gh run watch
-```
-Expected: all matrix legs green. **Do not proceed until they are** — every later task assumes this harness works.
-
----
-
-## Task 4: `Config`
-
-**PR 4** · branch `04-config` from `03-ci-tests` · 3 source files
-
-**Files:**
-- Create: `src/Config.php`, `src/Exceptions/Config_Exception.php`, `tests/unit/ConfigTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces:
-  - `Config_Exception extends \RuntimeException`
-  - `Config::set_hook_prefix( string ): void` — throws `Config_Exception` on characters outside `[a-zA-Z0-9_-]`
-  - `Config::get_hook_prefix(): string` — throws `Config_Exception` when unset
-  - `Config::set_container( ContainerInterface ): void` / `get_container(): ?ContainerInterface` / `has_container(): bool`
-
-  Every later task calls `Config::set_hook_prefix()` in `setUp()` and `Config_State::reset()` in `tearDown()`.
-
-> **Deviation from the engineering plan, deliberate:** the plan's sketch throws bare
-> `RuntimeException`. This throws `Config_Exception`, which extends `RuntimeException`, so the
-> documented contract still holds while callers get one catchable type across the whole library.
-
-> **Second deviation, deliberate (added 2026-08-03):** `set_hook_prefix()` also rejects the empty
-> string. The character-class check alone would accept `''` — it contains no invalid character —
-> and the failure would resurface at `get_hook_prefix()` as the misleading "You must call
-> `Config::set_hook_prefix()`" long after the real mistake.
-
-> **Third deviation, from the PR 4 review (2026-08-11) — two removals. The code blocks below still
-> show both; they are wrong and were left for the record.**
->
-> 1. **`set_version()` / `get_version()` are gone**, along with the `$version` property, its two
->    tests, and the README line. Nothing in the library reads a host version, and the one scenario
->    that would want it — telling a bundled copy apart from a standalone at a specific release, à la
->    ProPanel v3.0 — is the host's problem, not this library's. This closes spec known-issue F by
->    deletion rather than by use.
-> 2. **`Config::reset()` is gone.** It existed only so the suite could clear static state, and a
->    public method is a promise to everyone, not just to tests. The suite now uses
->    `Tests\Support\Config_State::reset()`, which walks `Config`'s declared static defaults by
->    reflection — so state added to `Config` later is cleared with no change to the helper. See the
->    Global Constraint on test-only seams.
->
-> The `ConfigTest` block below is also superseded on two points the review raised: the prefix tests
-> are driven by `public static` `Generator` data providers (valid and invalid, the empty string
-> among the invalid), and the `RuntimeException` test now catches as `RuntimeException` and asserts
-> `instanceof Config_Exception` — proving both halves of the contract instead of passing merely
-> because one extends the other.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 03-ci-tests && git checkout -b 04-config
-```
-
-- [ ] **Step 2: Write the failing test**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use lucatume\DI52\Container;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-
-/**
- * @since 1.0.0
- */
-class ConfigTest extends WPTestCase {
-	public function tearDown(): void {
-		Config::reset();
-		parent::tearDown();
-	}
-
-	public function test_it_stores_and_returns_the_hook_prefix(): void {
-		Config::set_hook_prefix( 'give' );
-
-		$this->assertSame( 'give', Config::get_hook_prefix() );
-	}
-
-	public function test_it_accepts_letters_numbers_hyphens_and_underscores(): void {
-		Config::set_hook_prefix( 'give-recurring_2' );
-
-		$this->assertSame( 'give-recurring_2', Config::get_hook_prefix() );
-	}
-
-	/**
-	 * @dataProvider invalid_hook_prefixes
-	 *
-	 * @param string $prefix Prefix under test.
-	 */
-	public function test_it_rejects_invalid_hook_prefixes( string $prefix ): void {
-		$this->expectException( Config_Exception::class );
-
-		Config::set_hook_prefix( $prefix );
-	}
-
-	/**
-	 * @return array<string,array{0:string}>
-	 */
-	public function invalid_hook_prefixes(): array {
-		return [
-			'slash'     => [ 'give/recurring' ],
-			'space'     => [ 'give recurring' ],
-			'dot'       => [ 'give.recurring' ],
-			'backslash' => [ 'give\\recurring' ],
-		];
-	}
-
-	public function test_it_throws_when_the_hook_prefix_was_never_set(): void {
-		$this->expectException( Config_Exception::class );
-
-		Config::get_hook_prefix();
-	}
-
-	public function test_it_stores_and_returns_the_version(): void {
-		Config::set_version( '3.0.0' );
-
-		$this->assertSame( '3.0.0', Config::get_version() );
-	}
-
-	public function test_the_version_defaults_to_an_empty_string(): void {
-		$this->assertSame( '', Config::get_version() );
-	}
-
-	public function test_it_reports_no_container_by_default(): void {
-		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
-	}
-
-	public function test_it_stores_and_returns_a_container(): void {
-		$container = new Container();
-
-		Config::set_container( $container );
-
-		$this->assertTrue( Config::has_container() );
-		$this->assertSame( $container, Config::get_container() );
-	}
-
-	public function test_reset_clears_every_value(): void {
-		Config::set_hook_prefix( 'give' );
-		Config::set_version( '3.0.0' );
-		Config::set_container( new Container() );
-
-		Config::reset();
-
-		$this->assertSame( '', Config::get_version() );
-		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
-
-		$this->expectException( Config_Exception::class );
-		Config::get_hook_prefix();
-	}
-}
-```
-
-> **CORRECTION (2026-07-31, verified against vendor/):** `lucatume\DI52\Container` does **not**
-> implement `StellarWP\ContainerContract\ContainerInterface`. It implements `ArrayAccess` and
-> **PSR's** `Psr\Container\ContainerInterface`. `stellarwp/container-contract` ships an adapter
-> example at `examples/di52/Container.php` precisely because DI52 must be wrapped.
-> `new Container()` therefore cannot be passed to `Config::set_container()` — it is a `TypeError`.
->
-> Tests must use the test-support adapter `Nexcess\PluginAbsorber\Tests\Support\Test_Container`
-> (wraps a DI52 container, implements the StellarWP contract's four methods: `bind`, `get`,
-> `has`, `singleton`). This affects **Task 4 and Task 10** — both of their test blocks below still
-> show the incorrect `use lucatume\DI52\Container;`. `Config::set_container()`'s signature is
-> unchanged: the StellarWP contract stays the public API, per the Global Constraint that
-> `stellarwp/container-contract` is the only production dependency.
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Config" not found`.
-
-- [ ] **Step 4: Write `src/Exceptions/Config_Exception.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Exceptions;
-
-use RuntimeException;
-
-/**
- * Thrown when the library is configured incorrectly.
- *
- * Extends RuntimeException so callers may catch either type.
- *
- * @since 1.0.0
- */
-class Config_Exception extends RuntimeException {
-}
-```
-
-- [ ] **Step 5: Write `src/Config.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use StellarWP\ContainerContract\ContainerInterface;
-
-/**
- * Static configuration facade.
- *
- * @since 1.0.0
- */
-class Config {
-	/**
-	 * @var string
-	 */
-	protected static $hook_prefix = '';
-
-	/**
-	 * @var string
-	 */
-	protected static $version = '';
-
-	/**
-	 * @var ContainerInterface|null
-	 */
-	protected static $container = null;
-
-	/**
-	 * Set the unique per-host slug that keys hooks, transients, and the activation option.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param string $prefix Host slug.
-	 *
-	 * @throws Config_Exception When the prefix contains unsupported characters.
-	 *
-	 * @return void
-	 */
-	public static function set_hook_prefix( string $prefix ): void {
-		if ( preg_match( '/[^a-zA-Z0-9_-]/', $prefix ) ) {
-			throw new Config_Exception(
-				'Hook prefix must only contain letters, numbers, hyphens, and underscores.'
-			);
-		}
-
-		self::$hook_prefix = $prefix;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When no prefix has been set.
-	 *
-	 * @return string
-	 */
-	public static function get_hook_prefix(): string {
-		if ( self::$hook_prefix === '' ) {
-			throw new Config_Exception(
-				'You must call Config::set_hook_prefix() before booting the Plugin Absorber.'
-			);
-		}
-
-		return self::$hook_prefix;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param string $version Host plugin version.
-	 *
-	 * @return void
-	 */
-	public static function set_version( string $version ): void {
-		self::$version = $version;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public static function get_version(): string {
-		return self::$version;
-	}
-
-	/**
-	 * Share the host's container so collaborators become bindable.
-	 *
-	 * Entirely optional — with no container the library instantiates its own defaults.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param ContainerInterface $container Host container.
-	 *
-	 * @return void
-	 */
-	public static function set_container( ContainerInterface $container ): void {
-		self::$container = $container;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return ContainerInterface|null
-	 */
-	public static function get_container(): ?ContainerInterface {
-		return self::$container;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public static function has_container(): bool {
-		return self::$container !== null;
-	}
-
-	/**
-	 * Reset all static state. Test seam.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public static function reset(): void {
-		self::$hook_prefix = '';
-		self::$version     = '';
-		self::$container   = null;
-	}
-}
-```
-
-- [ ] **Step 6: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 13 tests (4 from the data provider).
-
-- [ ] **Step 7: Append to the README**
-
-Replace the `_Added as each piece lands._` placeholder with:
-
-```markdown
-### Configure
-
-```php
-use Nexcess\PluginAbsorber\Config;
-
-Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
-Config::set_version( GIVE_VERSION );        // optional
-Config::set_container( give()->container ); // optional — see Rebinding below
-```
-
-The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
-`Config_Exception`, as does reading it before it is set.
-```
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add src/Config.php src/Exceptions/Config_Exception.php tests/unit/ConfigTest.php README.md
-git commit -m "Add Config facade and Config_Exception"
-```
-
-- [ ] **Step 9: Push and open the PR**
-
-```bash
-git push -u origin 04-config
-gh pr create --base 03-ci-tests --title "Config facade" --body 'What: `Config` static facade — hook prefix, version, optional container — plus `Config_Exception`.
-
-Usage:
-
-    Config::set_hook_prefix( "give" );
-    Config::set_container( give()->container ); // optional
-
-Why this way: the plan sketched bare `RuntimeException`; this throws `Config_Exception extends
-RuntimeException`, so the documented contract still holds and callers get one catchable type across
-the library. `set_hook_prefix()` validates eagerly rather than at use, because a bad prefix
-otherwise surfaces as a silently-never-firing filter much later.
-
-Verify: `slic run unit` — the validation regex over valid and invalid prefixes, the unset-prefix
-throw, the `RuntimeException` catchability contract, and container storage. Version handling is not
-covered because it no longer exists; see the third deviation above.'
-```
-
----
-
-## Task 5: Static analysis in CI
-
-**PR 5** · branch `05-ci-static-analysis` from `04-config` · 2 source files
-
-Lands here rather than in Task 1 because PHPStan errors on an empty `src/`.
-
-**Files:**
-- Create: `phpstan.neon.dist`, `.github/workflows/static-analysis.yml`
-
-**Interfaces:**
-- Consumes: `src/Config.php` from Task 4 — the first file to analyse.
-- Produces: a green `composer test:analysis`. Every later task must keep it green.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 04-config && git checkout -b 05-ci-static-analysis
-```
-
-- [ ] **Step 2: Write `phpstan.neon.dist`**
-
-Level 5 per the engineering plan. `szepeviktor/phpstan-wordpress` supplies WordPress function signatures.
-
-```neon
-includes:
-	- vendor/szepeviktor/phpstan-wordpress/extension.neon
-
-parameters:
-	phpVersion: 70400
-	level: 5
-	tmpDir: phpstan-cache
-	treatPhpDocTypesAsCertain: false
-	reportUnmatchedIgnoredErrors: false
-
-	paths:
-		- src
-
-	scanDirectories:
-		- vendor/stellarwp/container-contract/src
-```
-
-- [ ] **Step 3: Run it and confirm it is clean**
-
-Run: `composer test:analysis`
-Expected: `[OK] No errors`.
-
-If `Config::$container` reports an unknown `ContainerInterface`, confirm
-`stellarwp/container-contract` installed and that `scanDirectories` points at its real `src` path.
-
-- [ ] **Step 4: Write the static analysis workflow**
-
-Adapted from `stellarwp/harbor`'s `static-analysis.yml`.
-
-```yaml
-# cspell:ignore shivammathur ramsey reqs
-name: PHPStan
-
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-
-jobs:
-  phpstan:
-    name: phpstan
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Configure PHP environment
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.0"
-          extensions: mbstring, intl
-          coverage: none
-
-      - uses: ramsey/composer-install@v3
-        with:
-          composer-options: "--ignore-platform-reqs --optimize-autoloader"
-          dependency-versions: highest
-
-      - name: Restore PHPStan cache
-        uses: actions/cache/restore@v4
-        with:
-          path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-
-            v1-phpstan-${{ runner.os }}-
-            v1-phpstan-
-
-      - name: Run PHPStan static analysis
-        run: composer test:analysis
-
-      - name: Save PHPStan cache
-        uses: actions/cache/save@v4
-        if: ${{ !cancelled() }}
-        with:
-          path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add phpstan.neon.dist .github/workflows/static-analysis.yml
-git commit -m "Add PHPStan level 5 and the static analysis workflow"
-```
-
-- [ ] **Step 6: Push, open the PR, confirm green**
-
-```bash
-git push -u origin 05-ci-static-analysis
-gh pr create --base 04-config --title "Static analysis" --body 'What: PHPStan level 5 with `szepeviktor/phpstan-wordpress`, plus its CI workflow.
-
-Usage:
-
-    composer test:analysis
-
-Why this way: level 5 per the engineering plan rather than harbor is level max — this library has
-almost no generics or array shapes to model, so max would mostly generate baseline noise. It lands
-now rather than in the bootstrap PR because PHPStan errors on an empty `src/`, so it needed a real
-file to analyse.
-
-Verify: `composer test:analysis` is clean. From this PR on, both workflows gate every merge.'
-
-gh run watch
-```
-
----
-
-## Task 6: `Conflict_Policy`
-
-**PR 6** · branch `06-conflict-policy` from `05-ci-static-analysis` · 2 source files
-
-Split from `Sub_Plugin` so that PR 7 is purely predicate logic.
-
-**Files:**
-- Create: `src/Conflict_Policy.php`, `tests/unit/ConflictPolicyTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: `Conflict_Policy::DEACTIVATE` (`'deactivate'`), `Conflict_Policy::DEFER` (`'defer'`), `Conflict_Policy::NOTICE_ONLY` (`'notice_only'`). Tasks 7 and 12 both depend on these exact string values.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 05-ci-static-analysis && git checkout -b 06-conflict-policy
-```
-
-- [ ] **Step 2: Write the failing test**
-
-The values are asserted literally because they are a public contract — a host may store one in an option, and changing a value later would silently break it.
-
-> **Deviation, deliberate (added 2026-08-03, from PR 6 review):** the class also ships
-> `is_valid( string ): bool`, over a private `all(): string[]`. Without it nothing rejects an unknown policy:
-> `Sub_Plugin::get_conflict_policy()` returns whatever the config or the filter hands back, and
-> `Conflict\Resolver::resolve()` switches on it with `default:` falling into `deactivate()`. A typo
-> like `'defered'`, or a stale filter return, would therefore deactivate a plugin the site owner
-> deliberately turned on — the most surprising and least recoverable of the three outcomes, reached
-> by accident. Task 12 must call `is_valid()` and treat an unknown policy as its own case rather
-> than relying on the fallthrough. The reflection test pins the constant set so a fourth policy
-> cannot be added without that switch being revisited, and the valid-policy provider reads the
-> constants too, so a policy declared but never taught to `is_valid()` fails as well.
->
-> `all()` is private: nothing in this plan reads the set, only `is_valid()` does. Widen it if a
-> host ever needs to enumerate the policies.
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Conflict_Policy;
-
-/**
- * @since 1.0.0
- */
-class ConflictPolicyTest extends WPTestCase {
-	public function test_the_policy_values_are_stable(): void {
-		$this->assertSame( 'deactivate', Conflict_Policy::DEACTIVATE );
-		$this->assertSame( 'defer', Conflict_Policy::DEFER );
-		$this->assertSame( 'notice_only', Conflict_Policy::NOTICE_ONLY );
-	}
-
-	public function test_the_policies_are_distinct(): void {
-		$policies = [
-			Conflict_Policy::DEACTIVATE,
-			Conflict_Policy::DEFER,
-			Conflict_Policy::NOTICE_ONLY,
-		];
-
-		$this->assertCount( 3, array_unique( $policies ) );
-	}
-}
-```
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict_Policy" not found`.
-
-- [ ] **Step 4: Write `src/Conflict_Policy.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-/**
- * What to do when a sub-plugin's standalone counterpart is still active.
- *
- * @since 1.0.0
- */
-final class Conflict_Policy {
-	/**
-	 * Deactivate the standalone, load the bundled copy, notify, redirect. The default.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const DEACTIVATE = 'deactivate';
-
-	/**
-	 * Leave the standalone alone and let it win. The load guard stands the bundled copy down.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const DEFER = 'defer';
-
-	/**
-	 * Leave the standalone active but ask the user to deactivate it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const NOTICE_ONLY = 'notice_only';
-}
-```
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 2 tests.
-
-- [ ] **Step 6: Append to the README**
-
-```markdown
-### Conflict policies
-
-When a sub-plugin's standalone counterpart is still active:
-
-| Policy | Behavior |
-|---|---|
-| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, load the bundled copy, notify, redirect. **Default.** |
-| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
-| `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
-```
-
-- [ ] **Step 7: Commit, push, open the PR**
-
-```bash
-git add src/Conflict_Policy.php tests/unit/ConflictPolicyTest.php README.md
-git commit -m "Add Conflict_Policy constants"
-git push -u origin 06-conflict-policy
-gh pr create --base 05-ci-static-analysis --title "Conflict policy constants" --body 'What: the three conflict-policy string constants.
-
-Usage:
-
-    "conflict_policy" => Conflict_Policy::DEACTIVATE,  // or DEFER, or NOTICE_ONLY
-
-Why this way: string constants rather than an enum because the PHP floor is 7.4, and rather than
-bare strings because a host may persist one in an option. The test asserts the literal values for
-that reason — they are a public contract, not an implementation detail.
-
-Verify: `slic run unit` — 2 tests. Split out from Sub_Plugin so that PR reviews as pure predicate
-logic.'
-```
+Tasks 1–6 (repo bootstrap, Codeception harness, first green CI, `Config`, static analysis in CI,
+`Conflict_Policy`) shipped in PRs #1–#6 and their sections have been removed. Git history has them if
+you need to read one back.
 
 ---
 
@@ -2325,7 +874,15 @@ filter, last wins) and both network-activation branches.'
 
 **Interfaces:**
 - Consumes: `Sub_Plugin` (Task 7), and the `WithSubPlugins` trait (Task 7) for its fixtures — the test builds no sub-plugin of its own.
-- Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void`, `all(): array` returning `array<string,Sub_Plugin>` keyed by slug, and `reset(): void`. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
+- Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void` and `all(): array` returning `array<string,Sub_Plugin>` keyed by slug. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
+
+> The contract is those two methods and nothing else. A registry that can be emptied is only ever
+> wanted by the suite, and a method on the contract is a promise to every host that implements it.
+> The tests here need no such method — each one builds its own `Registrar`, so nothing leaks
+> between them. Emptying an already-populated registrar first becomes necessary in Task 9, where a
+> container-bound singleton survives a `Loader` reset, and that task adds
+> `Tests\Support\Registrar_State::reset()` to do it by reflection. See the Global Constraint on
+> test-only seams.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -2409,15 +966,6 @@ class RegistrarTest extends WPTestCase {
 			array_keys( $registrar->all() )
 		);
 	}
-
-	public function test_reset_empties_the_registry(): void {
-		$registrar = new Registrar();
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$registrar->reset();
-
-		$this->assertSame( [], $registrar->all() );
-	}
 }
 ```
 
@@ -2461,13 +1009,6 @@ interface Registrar_Interface {
 	 * @return array<string,Sub_Plugin> Keyed by slug.
 	 */
 	public function all(): array;
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void;
 }
 ```
 
@@ -2513,22 +1054,13 @@ class Registrar implements Registrar_Interface {
 	public function all(): array {
 		return $this->sub_plugins;
 	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public function reset(): void {
-		$this->sub_plugins = [];
-	}
 }
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
-Expected: PASS — 6 tests.
+Expected: PASS — 5 tests.
 
 - [ ] **Step 7: Commit, push, open the PR**
 
@@ -2546,9 +1078,11 @@ Usage:
 
 Why this way: keyed by slug so re-registering the same slug replaces rather than duplicates — a host
 that conditionally registers in two code paths gets one entry, not two loads. The interface ships in
-this PR rather than in a contracts-only PR so it arrives with an implementation and tests.
+this PR rather than in a contracts-only PR so it arrives with an implementation and tests. It
+carries no way to empty the registry: that is wanted only by the suite, which clears the map by
+reflection from `tests/_support/` rather than making every host implementation carry the method.
 
-Verify: `slic run unit` — 6 tests.'
+Verify: `slic run unit` — 5 tests.'
 ```
 
 ---
@@ -2558,7 +1092,7 @@ Verify: `slic run unit` — 6 tests.'
 **PR 9** · branch `09-loader-resolve` from `08-registrar` · 2 source files
 
 **Files:**
-- Create: `src/Loader.php`, `tests/unit/LoaderResolveTest.php`
+- Create: `src/Loader.php`, `tests/_support/Registrar_State.php`, `tests/_support/Loader_State.php`, `tests/unit/LoaderResolveTest.php`
 - Modify: `README.md`
 
 **Interfaces:**
@@ -2568,7 +1102,8 @@ Verify: `slic run unit` — 6 tests.'
   - `Loader::registrar(): Registrar_Interface`
   - `Loader::register( array $config ): void`
   - `Loader::all(): array`
-  - `Loader::reset(): void` — clears the memo **and** the registry
+  - `Tests\Support\Loader_State::reset(): void` — clears the memo **and** the registry, for the suite only
+  - `Tests\Support\Registrar_State::reset( Registrar $registrar ): void`
 
   Tasks 10, 12 and 13 each add one accessor alongside their own interface.
 
@@ -2578,7 +1113,146 @@ Verify: `slic run unit` — 6 tests.'
 git checkout 08-registrar && git checkout -b 09-loader-resolve
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write `tests/_support/Registrar_State.php` and `tests/_support/Loader_State.php`**
+
+`Loader` is the second static facade in the library, and like `Config` it needs clearing between
+tests without carrying a public `reset()` for the suite's benefit. Both helpers land here, in the
+task that first needs them, modelled on `Config_State`: the properties are walked by reflection and
+an unknown one is a `LogicException` rather than a silent leak, so state added to `Loader` later
+fails loudly instead of surviving into the next test.
+
+`Registrar_State` is separate because emptying the registry is a different job from resetting the
+facade — it acts on an instance, not on static state — and because the `Loader` reset needs it
+before it drops the memo.
+
+```php
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Support;
+
+use Nexcess\PluginAbsorber\Registrar;
+use ReflectionProperty;
+
+/**
+ * Empties a `Registrar` between tests.
+ *
+ * `Registrar_Interface` carries no way to do this deliberately: it would be a method every host
+ * implementation then has to provide, for no reason but this suite. Reflection keeps that seam on
+ * this side of the fence.
+ */
+class Registrar_State {
+	/**
+	 * Discard every registration the given registrar holds.
+	 *
+	 * @param Registrar $registrar Registrar to empty.
+	 *
+	 * @return void
+	 */
+	public static function reset( Registrar $registrar ): void {
+		$property = new ReflectionProperty( Registrar::class, 'sub_plugins' );
+
+		$property->setAccessible( true );
+		$property->setValue( $registrar, [] );
+	}
+}
+```
+
+```php
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Support;
+
+use LogicException;
+use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Registrar;
+use ReflectionClass;
+use ReflectionProperty;
+
+/**
+ * Restores `Loader`'s static state between tests.
+ *
+ * `Loader` memoizes what it resolves, and that memo outlives a single test. Clearing it is the
+ * suite's business rather than the library's, so the seam lives here instead of in a public method
+ * the library would then owe its hosts forever.
+ */
+class Loader_State {
+	/**
+	 * The value each of `Loader`'s static properties starts life with.
+	 *
+	 * Spelled out rather than read from `ReflectionClass::getDefaultProperties()`, which reports a
+	 * static property's *current* value on PHP below 8.3 — a reset built on it is a silent no-op on
+	 * the 7.4 leg.
+	 *
+	 * @var array<string,mixed>
+	 */
+	protected const DEFAULTS = [
+		'resolved' => [],
+	];
+
+	/**
+	 * Empty the registry, then return every static property of `Loader` to its default.
+	 *
+	 * The registrar is emptied before the memo is dropped, and not the other way round: when the
+	 * registrar came from a container binding as a singleton, the container hands back the same
+	 * populated instance on the next resolve, so discarding the memo alone leaves every
+	 * registration in place.
+	 *
+	 * @throws LogicException When `Loader` has grown a static property this helper does not know
+	 *                        about, rather than leaving it to leak between tests.
+	 *
+	 * @return void
+	 */
+	public static function reset(): void {
+		self::empty_registrar();
+
+		$reflection = new ReflectionClass( Loader::class );
+
+		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
+			$name = $property->getName();
+
+			if ( ! array_key_exists( $name, self::DEFAULTS ) ) {
+				throw new LogicException(
+					sprintf( 'Loader::$%s has no default in %s. Add one.', $name, self::class )
+				);
+			}
+
+			$property->setAccessible( true );
+			$property->setValue( null, self::DEFAULTS[ $name ] );
+		}
+	}
+
+	/**
+	 * Empty the memoized registrar, when one was resolved and it is the shipped `Registrar`.
+	 *
+	 * A test that binds a registrar of its own owns that instance: it should build a fresh one per
+	 * test, or give it its own way to clear itself.
+	 *
+	 * @return void
+	 */
+	private static function empty_registrar(): void {
+		$resolved = new ReflectionProperty( Loader::class, 'resolved' );
+
+		$resolved->setAccessible( true );
+
+		/** @var array<string,object> $memo */
+		$memo      = $resolved->getValue();
+		$registrar = $memo[ Registrar_Interface::class ] ?? null;
+
+		if ( $registrar instanceof Registrar ) {
+			Registrar_State::reset( $registrar );
+		}
+	}
+}
+```
+
+- [ ] **Step 3: Write the failing test**
 
 ```php
 <?php
@@ -2595,6 +1269,7 @@ use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -2607,7 +1282,7 @@ class LoaderResolveTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -2644,10 +1319,6 @@ class LoaderResolveTest extends WPTestCase {
 
 			public function all(): array {
 				return $this->sub_plugins;
-			}
-
-			public function reset(): void {
-				$this->sub_plugins = [];
 			}
 		};
 
@@ -2686,10 +1357,6 @@ class LoaderResolveTest extends WPTestCase {
 			public function all(): array {
 				return $this->sub_plugins;
 			}
-
-			public function reset(): void {
-				$this->sub_plugins = [];
-			}
 		};
 
 		$container = new Container();
@@ -2701,11 +1368,11 @@ class LoaderResolveTest extends WPTestCase {
 		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
 	}
 
-	public function test_reset_clears_both_the_memo_and_the_registry(): void {
+	public function test_the_state_helper_clears_both_the_memo_and_the_registry(): void {
 		Loader::register( $this->config( 'give-recurring' ) );
 		$first = Loader::registrar();
 
-		Loader::reset();
+		Loader_State::reset();
 
 		$this->assertSame( [], Loader::all(), 'The registry must be empty after reset.' );
 		$this->assertNotSame( $first, Loader::registrar(), 'The memo must be discarded after reset.' );
@@ -2713,12 +1380,12 @@ class LoaderResolveTest extends WPTestCase {
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [ ] **Step 4: Run it to verify it fails**
 
 Run: `slic run unit`
 Expected: FAIL — `Class "Nexcess\PluginAbsorber\Loader" not found`.
 
-- [ ] **Step 4: Write `src/Loader.php`**
+- [ ] **Step 5: Write `src/Loader.php`**
 
 Only resolution and registration in this PR. `boot()` and the load loop land in Task 11.
 
@@ -2808,39 +1475,32 @@ class Loader {
 	public static function all(): array {
 		return self::registrar()->all();
 	}
-
-	/**
-	 * Discard every resolved collaborator and the registry. Test seam.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public static function reset(): void {
-		if ( isset( self::$resolved[ Registrar_Interface::class ] ) ) {
-			self::registrar()->reset();
-		}
-
-		self::$resolved = [];
-	}
 }
 ```
 
-> `reset()` empties the registrar before discarding the memo. Dropping the memo alone is not
-> enough: when the registrar came from a container binding as a singleton, the container hands back
-> the same populated instance on the next resolve.
+> The facade has no `reset()`. Nothing in production ever needs to un-resolve a collaborator — the
+> memo is built once per request and dies with it — so the only caller would be the suite, and a
+> public static method is a promise to every host that reads the class. `Loader_State::reset()`
+> does the job from `tests/_support/` instead, emptying the registrar through `Registrar_State`
+> before it discards the memo: dropping the memo alone is not enough, because when the registrar
+> came from a container binding as a singleton the container hands back the same populated instance
+> on the next resolve.
+>
+> That reflection reaches into the shipped `Registrar` only. A test that binds a registrar of its
+> own — the two below do — owns that fake, and should build a fresh one per test or give it its own
+> way to clear itself. That is test-side code, which is exactly where this seam belongs.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
 Expected: PASS — 7 tests.
 
-- [ ] **Step 6: Confirm static analysis is still clean**
+- [ ] **Step 7: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 Expected: `[OK] No errors`.
 
-- [ ] **Step 7: Append to the README**
+- [ ] **Step 8: Append to the README**
 
 ```markdown
 ### Rebinding a collaborator
@@ -2864,13 +1524,13 @@ The container is **not** used to wire hooks — those stay plain static callback
 stays genuinely optional.
 ```
 
-- [ ] **Step 8: Commit, push, open the PR**
+- [ ] **Step 9: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/unit/LoaderResolveTest.php README.md
+git add src/Loader.php tests/_support/Registrar_State.php tests/_support/Loader_State.php tests/unit/LoaderResolveTest.php README.md
 git commit -m "Add Loader resolution and registration"
 git push -u origin 09-loader-resolve
-gh pr create --base 08-registrar --title "Loader resolution and registration" --body 'What: `Loader::resolve()`, the `registrar()` accessor, `register()`, `all()`, and `reset()`.
+gh pr create --base 08-registrar --title "Loader resolution and registration" --body 'What: `Loader::resolve()`, the `registrar()` accessor, `register()`, and `all()`.
 
 Usage:
 
@@ -2886,9 +1546,11 @@ accessors with their own fallback logic, so adding a collaborator is one line. T
 checked with `has()` before `get()`, which is what keeps it optional — a host with no container, or
 with one that binds nothing, gets plain `new` instances.
 
-`reset()` empties the registrar before dropping the memo. Discarding the memo alone is not enough:
-a container-bound singleton hands back the same populated instance on the next resolve, so the
-registry would survive a reset and leak between tests.
+The facade carries no `reset()`: nothing in production un-resolves a collaborator, so it would be a
+public promise made for the test suite alone. The suite clears the state by reflection from
+`tests/_support/` instead, and `Loader_State::reset()` empties the registrar before dropping the
+memo — discarding the memo alone is not enough, since a container-bound singleton hands back the
+same populated instance on the next resolve and the registry would survive the reset.
 
 Verify: `slic run unit` — 7 tests, covering both the bound and unbound paths with a real di52
 container.'
@@ -2997,6 +1659,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -3016,7 +1679,7 @@ class NoticesTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_transient( self::TRANSIENT );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3433,7 +2096,7 @@ redirect (queue with one instance, render with another).'
 **PR 11** · branch `11-loader-load-path` from `10-notices-queue` · 2 source files
 
 **Files:**
-- Modify: `src/Loader.php`, `README.md`
+- Modify: `src/Loader.php`, `tests/_support/Loader_State.php` (the new `$booted` property needs a default), `README.md`
 - Create: `tests/unit/LoaderLoadTest.php`, `tests/unit/LoaderBootTest.php`
 
 **Interfaces:**
@@ -3470,6 +2133,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -3497,7 +2161,7 @@ class LoaderLoadTest extends WPTestCase {
 
 		unset( $GLOBALS['absorber_loads'] );
 		delete_transient( 'give_plugin_absorber_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3663,6 +2327,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -3677,7 +2342,7 @@ class LoaderBootTest extends WPTestCase {
 	public function tearDown(): void {
 		remove_all_actions( 'plugins_loaded' );
 		remove_all_actions( 'all_admin_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -3728,7 +2393,7 @@ Add the `$booted` property beside `$resolved`:
 	private static $booted = false;
 ```
 
-Append these methods, and extend `reset()` as shown at the end:
+Append these methods:
 
 ```php
 	/**
@@ -3831,29 +2496,30 @@ Append these methods, and extend `reset()` as shown at the end:
 	}
 ```
 
-Then extend `reset()` so the boot flag clears too:
+- [ ] **Step 6: Teach `tests/_support/Loader_State.php` about the boot flag**
+
+`Loader_State::reset()` walks `Loader`'s static properties and refuses one it has no default for,
+so until `$booted` is listed every test that resets throws a `LogicException` naming it. That is
+the helper doing its job: a boot flag left standing would wire the hooks once and then let every
+later test's `boot()` no-op.
 
 ```php
-	public static function reset(): void {
-		if ( isset( self::$resolved[ Registrar_Interface::class ] ) ) {
-			self::registrar()->reset();
-		}
-
-		self::$resolved = [];
-		self::$booted   = false;
-	}
+	protected const DEFAULTS = [
+		'resolved' => [],
+		'booted'   => false,
+	];
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `slic run unit`
 Expected: PASS — 9 load tests + 3 boot tests.
 
-- [ ] **Step 7: Confirm static analysis is still clean**
+- [ ] **Step 8: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 
-- [ ] **Step 8: Append to the README**
+- [ ] **Step 9: Append to the README**
 
 ```markdown
 ### Bootstrap
@@ -3897,10 +2563,10 @@ A sub-plugin is skipped when it is disabled, its dependencies are unmet, its gua
 already defined, its bundled file is missing, or this filter returns false.
 ```
 
-- [ ] **Step 9: Commit, push, open the PR**
+- [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md
+git add src/Loader.php tests/_support/Loader_State.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md
 git commit -m "Add Loader boot and the load path"
 git push -u origin 11-loader-load-path
 gh pr create --base 10-notices-queue --title "Loader boot and load path" --body 'What: `boot()`, `load_all()`, the five-gate load path, and the `should_load` filter.
@@ -3967,6 +2633,7 @@ use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 
@@ -4030,7 +2697,7 @@ class ResolverTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_transient( 'give_plugin_absorber_notices' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -4577,6 +3244,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Activation;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
@@ -4596,7 +3264,7 @@ class ActivationTest extends WPTestCase {
 
 	public function tearDown(): void {
 		delete_option( self::OPTION );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -4948,6 +3616,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 
 /**
  * @since 1.0.0
@@ -4980,7 +3649,7 @@ class NoticesActivationErrorTest extends WPTestCase {
 	public function tearDown(): void {
 		unset( $_GET['plugin'], $_GET['_error_nonce'] );
 		set_current_screen( 'front' );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -5457,6 +4126,7 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use lucatume\WPBrowser\Traits\UopzFunctions;
@@ -5498,7 +4168,7 @@ class EndToEndTest extends WPTestCase {
 		delete_option( self::OPTION );
 		update_option( 'active_plugins', [] );
 		unset( $GLOBALS['absorber_loads'] );
-		Loader::reset();
+		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -5874,7 +4544,7 @@ Recorded in the spec, deliberately not fixed in 1.0.0:
 - **E** — `Activation::maybe_run()` reads the option, runs the callback, then writes. Two
   simultaneous first requests can both run it. `add_option()` as an atomic claim would close it.
 - ~~**F** — `Config::get_version()` is stored but never read.~~ Closed 2026-08-11 by removing
-  version handling from `Config` outright; see Task 4's third deviation.
+  version handling from `Config` outright; see the Global Constraint on version handling.
 
 ## Self-review
 
@@ -5885,7 +4555,7 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   (`get_dependency_notice_message()`) + Task 10 (rendering). Deferred B/E/F are recorded above and
   in the PR bodies that touch them. Every spec test bullet has a corresponding test method.
 - **Interface consistency.** `Notices\Queue_Interface` grows one method in Task 14 — flagged in both the
-  task and the PR body rather than left implicit. `Loader::reset()` is written once in Task 9 and
+  task and the PR body rather than left implicit. `Loader_State::reset()` is written once in Task 9 and
   extended once in Task 11 (`$booted`), shown in full both times. `redirect_destination()` is
   `protected`, matching how the Task 12 tests subclass it.
 - **Placeholder scan.** No TBD, no "add error handling", no "similar to Task N". Every code step

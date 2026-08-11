@@ -48,14 +48,14 @@ class Plugin_State implements Plugin_State_Interface {
 		// hook has already been registered this request. Running it at plugins_loaded means a
 		// routine flush_rewrite_rules() in that callback regenerates the rules before init has
 		// registered a single post type, and every custom permalink on the site starts 404ing.
-		// Core makes the same call: its interactive paths are noisy, its automatic ones --
-		// validate_active_plugins(), the plugin upgrader -- are silent.
+		// WordPress core makes the same call: its interactive paths are noisy, its automatic ones
+		// -- validate_active_plugins(), the plugin upgrader -- are silent.
 		//
 		// The $network_wide default is null, not false, and null is the value that handles both
-		// scopes. Core enters the network branch on `false !== $network_wide` and the blog branch
-		// on `true !== $network_wide`, so null takes both. Passing a computed true would skip the
-		// blog branch, stranding an entry for a plugin that is active in both, which then takes a
-		// second request and a second deactivation hook to clear.
+		// scopes. WordPress core enters the network branch on `false !== $network_wide` and the
+		// blog branch on `true !== $network_wide`, so null takes both. A computed true would skip
+		// the blog branch, stranding an entry for a plugin that is active in both, which then takes
+		// a second request and a second deactivation hook to clear.
 		deactivate_plugins( $basename, true );
 	}
 
