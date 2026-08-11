@@ -3,7 +3,7 @@ includes:
 
 parameters:
 	phpVersion: 70400
-	level: 8
+	level: 9
 	tmpDir: phpstan-cache
 	# This library is called from untyped WordPress plugin code, so runtime type
 	# guards have to survive even where the PHPDoc says they cannot fail.

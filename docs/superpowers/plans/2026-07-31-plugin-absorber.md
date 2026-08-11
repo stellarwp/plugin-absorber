@@ -1538,7 +1538,7 @@ logic.'
 The largest genuine review surface in the project. Every per-sub-plugin decision lives here so the collaborators stay thin and every predicate is testable without hooks.
 
 **Files:**
-- Create: `src/Sub_Plugin.php`, `tests/unit/SubPluginTest.php`
+- Create: `src/Sub_Plugin.php`, `tests/_support/Traits/WithSubPlugins.php`, `tests/unit/SubPluginTest.php`
 - Modify: `README.md`
 
 **Interfaces:**
@@ -1552,6 +1552,9 @@ The largest genuine review surface in the project. Every per-sub-plugin decision
   - `are_dependencies_met(): bool`
   - `get_conflict_notice_message(): string`, `get_dependency_notice_message(): string`
   - `get_activation_callback(): ?callable`
+- Produces for the tests: `Tests\Support\Traits\WithSubPlugins` with
+  `make_sub_plugin( array $overrides = [] ): Sub_Plugin`. Tasks 8, 10 and 13 use it instead of each
+  declaring their own fixture helper.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -1559,9 +1562,148 @@ The largest genuine review surface in the project. Every per-sub-plugin decision
 git checkout 06-conflict-policy && git checkout -b 07-sub-plugin
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write `tests/_support/Traits/WithSubPlugins.php`**
+
+Every test from here on builds sub-plugins the same way, so the builder is a trait rather than a
+private method each class repeats. `tests/_support` is already PSR-4 mapped to
+`Nexcess\PluginAbsorber\Tests\Support\` (Task 1), so no composer change is needed.
+
+```php
+<?php
+/**
+ * Builds Sub_Plugin fixtures.
+ *
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
+
+use Nexcess\PluginAbsorber\Sub_Plugin;
+
+/**
+ * @since 1.0.0
+ */
+trait WithSubPlugins {
+	/**
+	 * Build a well-formed sub-plugin, overriding only what the test is about.
+	 *
+	 * The two remaining required keys are derived from the slug, so fixtures for different
+	 * sub-plugins never share a bundled file path or a guard constant. The constant carries a
+	 * `_FIXTURE` suffix that nothing ever defines: `define()` lasts for the whole PHP process, so
+	 * a default some other test defined would report `is_already_loaded()` true for the rest of
+	 * the suite. Tests that need a defined constant pass their own name for it.
+	 *
+	 * Overrides are merged last, so an invalid value can still be handed to the constructor to
+	 * assert that it is rejected; the derived defaults fall back to the default slug in that case.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param array<string,mixed> $overrides Config values to override.
+	 *
+	 * @return Sub_Plugin
+	 */
+	protected function make_sub_plugin( array $overrides = [] ): Sub_Plugin {
+		$slug = isset( $overrides['slug'] ) && is_string( $overrides['slug'] ) && '' !== $overrides['slug']
+			? $overrides['slug']
+			: 'give-recurring';
+
+		return new Sub_Plugin(
+			array_merge(
+				[
+					'slug'                   => $slug,
+					'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
+					'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION_FIXTURE',
+				],
+				$overrides
+			)
+		);
+	}
+}
+```
+
+- [ ] **Step 3: Write the failing test**
 
 `wp-admin/includes/plugin.php` is required in `setUp()` because uopz cannot stub a function that does not yet exist.
+
+> **Deviations, deliberate (added 2026-08-03, from the PR 7 review):**
+>
+> 1. **`is_callable()` is no longer the type discriminator.** It returns true for *any* string
+>    naming an existing function, and `conflict_policy` is explicitly designed to be readable from
+>    an option. A stored value of `date` or `flush` would have been invoked rather than used —
+>    a `TypeError` at `plugins_loaded` on PHP 8, a silent `''` on 7.4. Strings and bools are now
+>    always values; only real callables are called.
+> 2. **The constructor type-checks.** Required keys must be non-empty *strings*: an array survived
+>    the old `empty()` check and then cast to `"Array"`, which every misconfigured sub-plugin would
+>    have collided on as its registry key, activation key, and notice id. `dependency_check` and
+>    `activation_callback` must be callable when present — `is_callable()` at read time conflated
+>    "not configured" with "configured but uncallable", so a `dependency_check` pointing at a
+>    private method reported dependencies *met* and let the load proceed into the fatal it exists
+>    to prevent.
+> 3. **The active check no longer ORs in `is_plugin_active_for_network()`.** Verified against core:
+>    `is_plugin_active()` already does, so the OR was dead code costing a second
+>    `get_site_option()` per sub-plugin per request. The test that pinned it described a state
+>    WordPress cannot produce. *(The check has since moved off `Sub_Plugin` — see deviation 8.)*
+> 4. **`get_conflict_notice_message()` takes a `$default`.** Task 14 has no fallback of its own, so
+>    an unconfigured host would have been shown WordPress's raw fatal-error screen.
+> 5. **The filter result is `is_scalar()`-guarded.** A filter returning `WP_Error` would otherwise
+>    be a fatal on cast; `''` is simply not a valid policy and routes to the conservative branch.
+
+> **Deviations, deliberate (added 2026-08-07, from the PR 7 follow-up review):**
+>
+> 6. **`Conflict_Policy` owns the default policy.** `get_conflict_policy()` used to name
+>    `Conflict_Policy::DEACTIVATE` as its fallback, which put "which policy applies when none is
+>    configured" in the object that merely holds one sub-plugin's config. It asks
+>    `Conflict_Policy::default()` now. The value is unchanged, and the two fallbacks stay
+>    deliberately different: *unconfigured* means the sub-plugin accepted the default, whereas an
+>    *unrecognised* policy — the conservative `NOTICE_ONLY` branch a dispatching caller takes — is
+>    a value nobody chose, and reading a typo as consent to deactivate is the outcome worth
+>    refusing.
+> 7. **`Plugin_State_Interface` is the library's only route to WordPress's plugin functions.**
+>    `Sub_Plugin` was a config value object that also queried global plugin state and
+>    `require_once`'d `wp-admin/includes/plugin.php`. That is a second reason to change, and it is
+>    what forced this task's tests to stub WordPress functions to exercise plain config reads. The
+>    gateway owns the reads *and* the deactivation, so the include exists once, guarded on
+>    `deactivate_plugins` — a function the library actually calls, and still not `is_plugin_active`,
+>    whose third-party shims would short-circuit the require. This supersedes the guard named in
+>    deviation 4 of the original block.
+> 8. **`is_standalone_plugin_active()` is deleted, not delegated.** Delegating would have bought
+>    `Sub_Plugin` a collaborator to answer a question that was never about its configuration. It
+>    keeps `has_standalone_plugin()` and `get_standalone_plugin_basename()` — which name the plugin
+>    to ask about — and the consumer pairs them with the gateway. Wiring that up needs `Loader` and
+>    `Conflict\Resolver`, neither of which exists at this task, so it lands with Task 12.
+> 9. **`is_standalone_plugin_network_active()` is deleted outright.** No production caller ever
+>    appeared. Its stated reason for existing — that `deactivate_plugins()` needs a computed
+>    `$network_wide` — was disproved in Task 12: core's `null` default already covers both scopes,
+>    and passing a computed `true` *skips* the blog branch.
+>
+> `Sub_Plugin` now makes no global WordPress call beyond the `defined()` that is intrinsic to it,
+> and its tests no longer stub `is_plugin_active`.
+
+> **Deviation, deliberate (added 2026-08-11, from the PR 8 review):**
+>
+> 10. **The fixture helper is a shared trait, not a private method copied into each test class.**
+>     `make_sub_plugin()` moves to `tests/_support/Traits/WithSubPlugins.php`, keeping the
+>     `$overrides` signature this task already had. Tasks 8, 10 and 13 each declared their own
+>     helper, so the same scaffolding was about to be written a fourth time, and the reviewer asked
+>     for the `$overrides` shape to be the one every test gets rather than the one this class
+>     happened to have. The extraction lands here, at the bottom of the stack, so the later PRs
+>     consume it; done in PR 8 instead, it would have meant reaching back to edit a test file that
+>     its own base branch is still revising.
+>
+>     The trait derives the guard constant from the slug and suffixes it `_FIXTURE`, replacing the
+>     per-class `_TEST`, `_NOTICES` and `_ACTIVATION` names. Nothing anywhere defines the derived
+>     default, and that is the point: `define()` lasts for the whole PHP process, so a default that
+>     some test defined would make `is_already_loaded()` report true for every test that ran after
+>     it. Tests that need a defined constant pass their own name for it.
+
+> **CORRECTION (2026-08-03, hit while implementing):** the fixture helper was first named `make()`,
+> which collides with `Codeception\Test\Unit::make()` — a public method on `WPTestCase`'s ancestor.
+> Declaring it `private` is a fatal at class-compile time: *"Access level to
+> SubPluginTest::make() must be public"*. The suite does not fail, it fails to start. Renamed to
+> `make_sub_plugin()`, which is the name `WithSubPlugins` carries. The constraint outlives the
+> move: a trait method overrides the inherited one, so any fixture helper must still avoid
+> Codeception's own `Unit` API — `make`, `makeEmpty`, `construct`, and `constructEmpty` are all
+> taken.
 
 ```php
 <?php
@@ -1576,6 +1718,7 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
@@ -1583,6 +1726,7 @@ use lucatume\WPBrowser\Traits\UopzFunctions;
  */
 class SubPluginTest extends WPTestCase {
 	use UopzFunctions;
+	use WithSubPlugins;
 
 	public function setUp(): void {
 		parent::setUp();
@@ -1596,22 +1740,6 @@ class SubPluginTest extends WPTestCase {
 	public function tearDown(): void {
 		Config::reset();
 		parent::tearDown();
-	}
-
-	/**
-	 * @param array<string,mixed> $overrides Config overrides.
-	 */
-	private function make( array $overrides = [] ): Sub_Plugin {
-		return new Sub_Plugin(
-			array_merge(
-				[
-					'slug'                   => 'give-recurring',
-					'bundled_plugin_file'    => '/tmp/give-recurring/give-recurring.php',
-					'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION_TEST',
-				],
-				$overrides
-			)
-		);
 	}
 
 	/**
@@ -1645,24 +1773,24 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_exposes_the_required_values(): void {
-		$sub_plugin = $this->make();
+		$sub_plugin = $this->make_sub_plugin();
 
 		$this->assertSame( 'give-recurring', $sub_plugin->get_slug() );
 		$this->assertSame( '/tmp/give-recurring/give-recurring.php', $sub_plugin->get_bundled_plugin_file() );
-		$this->assertSame( 'GIVE_RECURRING_VERSION_TEST', $sub_plugin->get_plugin_loaded_constant() );
+		$this->assertSame( 'GIVE_RECURRING_VERSION_FIXTURE', $sub_plugin->get_plugin_loaded_constant() );
 	}
 
 	public function test_it_is_enabled_by_default(): void {
-		$this->assertTrue( $this->make()->is_enabled() );
+		$this->assertTrue( $this->make_sub_plugin()->is_enabled() );
 	}
 
 	public function test_it_honours_a_boolean_enabled_flag(): void {
-		$this->assertFalse( $this->make( [ 'enabled' => false ] )->is_enabled() );
+		$this->assertFalse( $this->make_sub_plugin( [ 'enabled' => false ] )->is_enabled() );
 	}
 
 	public function test_it_resolves_a_callable_enabled_flag_at_call_time(): void {
 		$switch     = false;
-		$sub_plugin = $this->make(
+		$sub_plugin = $this->make_sub_plugin(
 			[
 				'enabled' => static function () use ( &$switch ) {
 					return $switch;
@@ -1678,17 +1806,17 @@ class SubPluginTest extends WPTestCase {
 	}
 
 	public function test_it_reports_not_loaded_when_the_constant_is_undefined(): void {
-		$this->assertFalse( $this->make( [ 'plugin_loaded_constant' => 'ABSORBER_NEVER_DEFINED' ] )->is_already_loaded() );
+		$this->assertFalse( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_NEVER_DEFINED' ] )->is_already_loaded() );
 	}
 
 	public function test_it_reports_loaded_once_the_constant_is_defined(): void {
 		define( 'ABSORBER_TEST_LOADED_CONSTANT', '1.0.0' );
 
-		$this->assertTrue( $this->make( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONSTANT' ] )->is_already_loaded() );
+		$this->assertTrue( $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONSTANT' ] )->is_already_loaded() );
 	}
 
 	public function test_it_reports_no_standalone_when_the_basename_is_absent(): void {
-		$sub_plugin = $this->make();
+		$sub_plugin = $this->make_sub_plugin();
 
 		$this->assertFalse( $sub_plugin->has_standalone_plugin() );
 		$this->assertSame( '', $sub_plugin->get_standalone_plugin_basename() );
@@ -1701,7 +1829,7 @@ class SubPluginTest extends WPTestCase {
 		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
 		$this->assertFalse(
-			$this->make()->is_standalone_plugin_active(),
+			$this->make_sub_plugin()->is_standalone_plugin_active(),
 			'Absent a standalone basename the predicate must short-circuit.'
 		);
 	}
@@ -1710,7 +1838,7 @@ class SubPluginTest extends WPTestCase {
 		$this->setFunctionReturn( 'is_plugin_active', true );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
 
-		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
 		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
 		$this->assertFalse( $sub_plugin->is_standalone_plugin_network_active() );
@@ -1720,7 +1848,7 @@ class SubPluginTest extends WPTestCase {
 		$this->setFunctionReturn( 'is_plugin_active', false );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
 
-		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
 		$this->assertTrue( $sub_plugin->is_standalone_plugin_active() );
 		$this->assertTrue( $sub_plugin->is_standalone_plugin_network_active() );
@@ -1730,38 +1858,38 @@ class SubPluginTest extends WPTestCase {
 		$this->setFunctionReturn( 'is_plugin_active', false );
 		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
 
-		$sub_plugin = $this->make( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
+		$sub_plugin = $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] );
 
 		$this->assertFalse( $sub_plugin->is_standalone_plugin_active() );
 	}
 
 	public function test_dependencies_are_met_without_a_check(): void {
-		$this->assertTrue( $this->make()->are_dependencies_met() );
+		$this->assertTrue( $this->make_sub_plugin()->are_dependencies_met() );
 	}
 
 	public function test_it_honours_the_dependency_check(): void {
 		$this->assertFalse(
-			$this->make( [ 'dependency_check' => static fn() => false ] )->are_dependencies_met()
+			$this->make_sub_plugin( [ 'dependency_check' => static fn() => false ] )->are_dependencies_met()
 		);
 		$this->assertTrue(
-			$this->make( [ 'dependency_check' => static fn() => true ] )->are_dependencies_met()
+			$this->make_sub_plugin( [ 'dependency_check' => static fn() => true ] )->are_dependencies_met()
 		);
 	}
 
 	public function test_the_conflict_policy_defaults_to_deactivate(): void {
-		$this->assertSame( Conflict_Policy::DEACTIVATE, $this->make()->get_conflict_policy() );
+		$this->assertSame( Conflict_Policy::DEACTIVATE, $this->make_sub_plugin()->get_conflict_policy() );
 	}
 
 	public function test_it_resolves_a_string_conflict_policy(): void {
 		$this->assertSame(
 			Conflict_Policy::DEFER,
-			$this->make( [ 'conflict_policy' => Conflict_Policy::DEFER ] )->get_conflict_policy()
+			$this->make_sub_plugin( [ 'conflict_policy' => Conflict_Policy::DEFER ] )->get_conflict_policy()
 		);
 	}
 
 	public function test_it_resolves_a_callable_conflict_policy_and_passes_itself(): void {
 		$received   = null;
-		$sub_plugin = $this->make(
+		$sub_plugin = $this->make_sub_plugin(
 			[
 				'conflict_policy' => static function ( Sub_Plugin $passed ) use ( &$received ) {
 					$received = $passed;
@@ -1783,7 +1911,7 @@ class SubPluginTest extends WPTestCase {
 			}
 		);
 
-		$sub_plugin = $this->make( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
+		$sub_plugin = $this->make_sub_plugin( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
 
 		$this->assertSame(
 			Conflict_Policy::DEFER,
@@ -1806,63 +1934,63 @@ class SubPluginTest extends WPTestCase {
 			2
 		);
 
-		$sub_plugin = $this->make();
+		$sub_plugin = $this->make_sub_plugin();
 		$sub_plugin->get_conflict_policy();
 
 		$this->assertSame( $sub_plugin, $received );
 	}
 
 	public function test_the_conflict_notice_message_defaults_to_empty(): void {
-		$this->assertSame( '', $this->make()->get_conflict_notice_message() );
+		$this->assertSame( '', $this->make_sub_plugin()->get_conflict_notice_message() );
 	}
 
 	public function test_it_resolves_conflict_notice_messages_from_strings_and_callables(): void {
 		$this->assertSame(
 			'Bundled now.',
-			$this->make( [ 'conflict_notice_message' => 'Bundled now.' ] )->get_conflict_notice_message()
+			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )->get_conflict_notice_message()
 		);
 		$this->assertSame(
 			'Deferred.',
-			$this->make( [ 'conflict_notice_message' => static fn() => 'Deferred.' ] )->get_conflict_notice_message()
+			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Deferred.' ] )->get_conflict_notice_message()
 		);
 	}
 
 	public function test_the_dependency_notice_message_falls_back_to_a_default(): void {
 		$this->assertSame(
 			'give-recurring could not be loaded because its requirements are not met.',
-			$this->make()->get_dependency_notice_message()
+			$this->make_sub_plugin()->get_dependency_notice_message()
 		);
 	}
 
 	public function test_it_resolves_dependency_notice_messages_from_strings_and_callables(): void {
 		$this->assertSame(
 			'Needs WooCommerce.',
-			$this->make( [ 'dependency_notice_message' => 'Needs WooCommerce.' ] )->get_dependency_notice_message()
+			$this->make_sub_plugin( [ 'dependency_notice_message' => 'Needs WooCommerce.' ] )->get_dependency_notice_message()
 		);
 		$this->assertSame(
 			'Needs Give.',
-			$this->make( [ 'dependency_notice_message' => static fn() => 'Needs Give.' ] )->get_dependency_notice_message()
+			$this->make_sub_plugin( [ 'dependency_notice_message' => static fn() => 'Needs Give.' ] )->get_dependency_notice_message()
 		);
 	}
 
 	public function test_the_activation_callback_is_null_by_default(): void {
-		$this->assertNull( $this->make()->get_activation_callback() );
+		$this->assertNull( $this->make_sub_plugin()->get_activation_callback() );
 	}
 
 	public function test_it_returns_the_activation_callback(): void {
 		$callback = static function () {};
 
-		$this->assertSame( $callback, $this->make( [ 'activation_callback' => $callback ] )->get_activation_callback() );
+		$this->assertSame( $callback, $this->make_sub_plugin( [ 'activation_callback' => $callback ] )->get_activation_callback() );
 	}
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [ ] **Step 4: Run it to verify it fails**
 
 Run: `slic run unit`
 Expected: FAIL — `Class "Nexcess\PluginAbsorber\Sub_Plugin" not found`.
 
-- [ ] **Step 4: Write `src/Sub_Plugin.php`**
+- [ ] **Step 5: Write `src/Sub_Plugin.php`**
 
 ```php
 <?php
@@ -2112,17 +2240,17 @@ class Sub_Plugin {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
 Expected: PASS — 26 tests.
 
-- [ ] **Step 6: Confirm static analysis is still clean**
+- [ ] **Step 7: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
 Expected: `[OK] No errors`.
 
-- [ ] **Step 7: Append the config table to the README**
+- [ ] **Step 8: Append the config table to the README**
 
 ```markdown
 ### Sub-plugin configuration
@@ -2144,10 +2272,10 @@ The load guard and the standalone basename are deliberately **two separate keys*
 double duty as both a guard and a path resolver.
 ```
 
-- [ ] **Step 8: Commit, push, open the PR**
+- [ ] **Step 9: Commit, push, open the PR**
 
 ```bash
-git add src/Sub_Plugin.php tests/unit/SubPluginTest.php README.md
+git add src/Sub_Plugin.php tests/_support/Traits/WithSubPlugins.php tests/unit/SubPluginTest.php README.md
 git commit -m "Add Sub_Plugin value object and its predicates"
 git push -u origin 07-sub-plugin
 gh pr create --base 06-conflict-policy --title "Sub_Plugin value object" --body 'What: the per-sub-plugin value object and every predicate the loader and resolver ask it.
@@ -2192,7 +2320,7 @@ filter, last wins) and both network-activation branches.'
 - Modify: `README.md`
 
 **Interfaces:**
-- Consumes: `Sub_Plugin` (Task 7).
+- Consumes: `Sub_Plugin` (Task 7), and the `WithSubPlugins` trait (Task 7) for its fixtures — the test builds no sub-plugin of its own.
 - Produces: `Registrar_Interface` with `register( Sub_Plugin $sub_plugin ): void`, `all(): array` returning `array<string,Sub_Plugin>` keyed by slug, and `reset(): void`. Task 9 resolves this interface; Tasks 11 and 12 iterate `all()`.
 
 - [ ] **Step 1: Cut the branch**
@@ -2213,24 +2341,13 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Registrar;
-use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
  * @since 1.0.0
  */
 class RegistrarTest extends WPTestCase {
-	/**
-	 * @param string $slug Sub-plugin slug.
-	 */
-	private function make( string $slug ): Sub_Plugin {
-		return new Sub_Plugin(
-			[
-				'slug'                   => $slug,
-				'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
-				'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION',
-			]
-		);
-	}
+	use WithSubPlugins;
 
 	public function test_it_starts_empty(): void {
 		$this->assertSame( [], ( new Registrar() )->all() );
@@ -2238,7 +2355,7 @@ class RegistrarTest extends WPTestCase {
 
 	public function test_it_keys_registrations_by_slug(): void {
 		$registrar  = new Registrar();
-		$sub_plugin = $this->make( 'give-recurring' );
+		$sub_plugin = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
 
 		$registrar->register( $sub_plugin );
 
@@ -2248,8 +2365,8 @@ class RegistrarTest extends WPTestCase {
 	public function test_it_keeps_multiple_registrations(): void {
 		$registrar = new Registrar();
 
-		$registrar->register( $this->make( 'give-recurring' ) );
-		$registrar->register( $this->make( 'give-fee-recovery' ) );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
 
 		$this->assertCount( 2, $registrar->all() );
 		$this->assertArrayHasKey( 'give-recurring', $registrar->all() );
@@ -2258,8 +2375,8 @@ class RegistrarTest extends WPTestCase {
 
 	public function test_registering_the_same_slug_twice_lets_the_last_one_win(): void {
 		$registrar = new Registrar();
-		$first     = $this->make( 'give-recurring' );
-		$second    = $this->make( 'give-recurring' );
+		$first     = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
+		$second    = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
 
 		$registrar->register( $first );
 		$registrar->register( $second );
@@ -2268,9 +2385,30 @@ class RegistrarTest extends WPTestCase {
 		$this->assertSame( $second, $registrar->all()['give-recurring'] );
 	}
 
+	/**
+	 * A host registers every bundled sub-plugin up front, then re-registers one with a narrower
+	 * config once something it could not know at registration time resolves — a licence check, a
+	 * site option, a settings save — so the same routine runs twice for one slug. The second call
+	 * must update in place rather than move that slug behind the ones registered after it: for an
+	 * add-on that extends another sub-plugin's class, that ordering is the difference between
+	 * loading and a fatal.
+	 */
+	public function test_re_registering_keeps_the_original_position(): void {
+		$registrar = new Registrar();
+
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+
+		$this->assertSame(
+			[ 'give-recurring', 'give-fee-recovery' ],
+			array_keys( $registrar->all() )
+		);
+	}
+
 	public function test_reset_empties_the_registry(): void {
 		$registrar = new Registrar();
-		$registrar->register( $this->make( 'give-recurring' ) );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
 
 		$registrar->reset();
 
@@ -2386,7 +2524,7 @@ class Registrar implements Registrar_Interface {
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `slic run unit`
-Expected: PASS — 5 tests.
+Expected: PASS — 6 tests.
 
 - [ ] **Step 7: Commit, push, open the PR**
 
@@ -2406,7 +2544,7 @@ Why this way: keyed by slug so re-registering the same slug replaces rather than
 that conditionally registers in two code paths gets one entry, not two loads. The interface ships in
 this PR rather than in a contracts-only PR so it arrives with an implementation and tests.
 
-Verify: `slic run unit` — 5 tests.'
+Verify: `slic run unit` — 6 tests.'
 ```
 
 ---
@@ -2765,7 +2903,7 @@ Lands before the load path and the resolver because both call into it.
 - Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin` message getters (Task 7), `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces:
   - `Notices_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
   - `Loader::notices(): Notices_Interface`
@@ -2797,12 +2935,14 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices;
-use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
  * @since 1.0.0
  */
 class NoticesTest extends WPTestCase {
+	use WithSubPlugins;
+
 	private const TRANSIENT = 'give_plugin_absorber_notices';
 
 	public function setUp(): void {
@@ -2819,22 +2959,6 @@ class NoticesTest extends WPTestCase {
 		parent::tearDown();
 	}
 
-	/**
-	 * @param array<string,mixed> $overrides Config overrides.
-	 */
-	private function make( array $overrides = [] ): Sub_Plugin {
-		return new Sub_Plugin(
-			array_merge(
-				[
-					'slug'                   => 'give-recurring',
-					'bundled_plugin_file'    => '/tmp/give-recurring.php',
-					'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION_NOTICES',
-				],
-				$overrides
-			)
-		);
-	}
-
 	private function render_to_string( Notices $notices ): string {
 		ob_start();
 		$notices->render();
@@ -2847,7 +2971,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_it_queues_a_merge_notice_into_the_transient(): void {
-		( new Notices() )->queue_merge_notice( $this->make( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		( new Notices() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		$queue = get_transient( self::TRANSIENT );
 
@@ -2857,7 +2981,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_the_merge_notice_falls_back_to_a_default_message(): void {
-		( new Notices() )->queue_merge_notice( $this->make() );
+		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
 
 		$queue = get_transient( self::TRANSIENT );
 
@@ -2866,19 +2990,19 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_it_queues_a_conflict_notice(): void {
-		( new Notices() )->queue_conflict_notice( $this->make() );
+		( new Notices() )->queue_conflict_notice( $this->make_sub_plugin() );
 
 		$this->assertArrayHasKey( 'give-recurring:conflict', get_transient( self::TRANSIENT ) );
 	}
 
 	public function test_it_queues_a_dependency_notice_using_the_sub_plugin_message(): void {
-		( new Notices() )->queue_dependency_notice( $this->make( [ 'dependency_notice_message' => 'Needs Give.' ] ) );
+		( new Notices() )->queue_dependency_notice( $this->make_sub_plugin( [ 'dependency_notice_message' => 'Needs Give.' ] ) );
 
 		$this->assertSame( 'Needs Give.', get_transient( self::TRANSIENT )['give-recurring:dependency'] );
 	}
 
 	public function test_the_dependency_notice_falls_back_to_the_sub_plugin_default(): void {
-		( new Notices() )->queue_dependency_notice( $this->make() );
+		( new Notices() )->queue_dependency_notice( $this->make_sub_plugin() );
 
 		$this->assertSame(
 			'give-recurring could not be loaded because its requirements are not met.',
@@ -2888,23 +3012,23 @@ class NoticesTest extends WPTestCase {
 
 	public function test_queueing_the_same_slug_and_type_twice_does_not_duplicate(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make() );
-		$notices->queue_merge_notice( $this->make() );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertCount( 1, get_transient( self::TRANSIENT ) );
 	}
 
 	public function test_one_slug_can_hold_notices_of_different_types(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make() );
-		$notices->queue_dependency_notice( $this->make() );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
+		$notices->queue_dependency_notice( $this->make_sub_plugin() );
 
 		$this->assertCount( 2, get_transient( self::TRANSIENT ) );
 	}
 
 	public function test_render_outputs_dismissible_warning_markup(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		$output = $this->render_to_string( $notices );
 
@@ -2914,7 +3038,7 @@ class NoticesTest extends WPTestCase {
 
 	public function test_render_escapes_the_message(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
+		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
 
 		$output = $this->render_to_string( $notices );
 
@@ -2924,7 +3048,7 @@ class NoticesTest extends WPTestCase {
 
 	public function test_render_clears_the_queue(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make() );
+		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->render_to_string( $notices );
 
@@ -2937,7 +3061,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_the_queue_survives_a_simulated_redirect(): void {
-		( new Notices() )->queue_merge_notice( $this->make( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		( new Notices() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		// A redirect ends the request; the next one builds a fresh object against the same store.
 		$output = $this->render_to_string( new Notices() );
@@ -4355,7 +4479,7 @@ production calls `exit` while leaving a failing test free to report as failing.'
 - Modify: `src/Loader.php` (add `activation()` and call it from `load()`), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces: `Activation_Interface` with `maybe_run( Sub_Plugin $sub_plugin ): void`, and `Loader::activation(): Activation_Interface`.
 
 **Why this exists:** `register_activation_hook()` never fires for a `require_once`'d file, so the absorbed plugin's original activation routine would otherwise never run. Tracked per slug in one option, run exactly once ever. It is **not** a place for ongoing upgrade logic — a merged sub-plugin handles version upgrades with its own idempotent, version-gated migrations on load.
@@ -4380,12 +4504,14 @@ use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Activation;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
  * @since 1.0.0
  */
 class ActivationTest extends WPTestCase {
+	use WithSubPlugins;
+
 	private const OPTION = 'give_plugin_absorber_activations';
 
 	public function setUp(): void {
@@ -4402,22 +4528,6 @@ class ActivationTest extends WPTestCase {
 		parent::tearDown();
 	}
 
-	/**
-	 * @param array<string,mixed> $overrides Config overrides.
-	 */
-	private function make( array $overrides = [] ): Sub_Plugin {
-		return new Sub_Plugin(
-			array_merge(
-				[
-					'slug'                   => 'give-recurring',
-					'bundled_plugin_file'    => '/tmp/give-recurring.php',
-					'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION_ACTIVATION',
-				],
-				$overrides
-			)
-		);
-	}
-
 	public function test_the_loader_resolves_the_default_activation(): void {
 		$this->assertInstanceOf( Activation::class, Loader::activation() );
 	}
@@ -4425,7 +4535,7 @@ class ActivationTest extends WPTestCase {
 	public function test_it_runs_the_callback(): void {
 		$runs = 0;
 
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => static function () use ( &$runs ) { ++$runs; } ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => static function () use ( &$runs ) { ++$runs; } ] ) );
 
 		$this->assertSame( 1, $runs );
 	}
@@ -4435,8 +4545,8 @@ class ActivationTest extends WPTestCase {
 		$callback   = static function () use ( &$runs ) { ++$runs; };
 		$activation = new Activation();
 
-		$activation->maybe_run( $this->make( [ 'activation_callback' => $callback ] ) );
-		$activation->maybe_run( $this->make( [ 'activation_callback' => $callback ] ) );
+		$activation->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => $callback ] ) );
+		$activation->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => $callback ] ) );
 
 		$this->assertSame( 1, $runs, 'The callback must run exactly once, ever.' );
 	}
@@ -4445,20 +4555,20 @@ class ActivationTest extends WPTestCase {
 		$runs     = 0;
 		$callback = static function () use ( &$runs ) { ++$runs; };
 
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => $callback ] ) );
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => $callback ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => $callback ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => $callback ] ) );
 
 		$this->assertSame( 1, $runs, 'The flag lives in an option, not in memory.' );
 	}
 
 	public function test_it_records_the_slug(): void {
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => static function () {} ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => static function () {} ] ) );
 
 		$this->assertSame( [ 'give-recurring' => true ], get_option( self::OPTION ) );
 	}
 
 	public function test_it_does_nothing_without_a_callback(): void {
-		( new Activation() )->maybe_run( $this->make() );
+		( new Activation() )->maybe_run( $this->make_sub_plugin() );
 
 		$this->assertFalse( get_option( self::OPTION ), 'No callback means no option write at all.' );
 	}
@@ -4468,9 +4578,9 @@ class ActivationTest extends WPTestCase {
 		$fees      = 0;
 
 		$activation = new Activation();
-		$activation->maybe_run( $this->make( [ 'activation_callback' => static function () use ( &$recurring ) { ++$recurring; } ] ) );
+		$activation->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => static function () use ( &$recurring ) { ++$recurring; } ] ) );
 		$activation->maybe_run(
-			$this->make(
+			$this->make_sub_plugin(
 				[
 					'slug'                => 'give-fee-recovery',
 					'activation_callback' => static function () use ( &$fees ) { ++$fees; },
@@ -4487,7 +4597,7 @@ class ActivationTest extends WPTestCase {
 		update_option( self::OPTION, 'not-an-array' );
 
 		$runs = 0;
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => static function () use ( &$runs ) { ++$runs; } ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => static function () use ( &$runs ) { ++$runs; } ] ) );
 
 		$this->assertSame( 1, $runs );
 		$this->assertSame( [ 'give-recurring' => true ], get_option( self::OPTION ) );
@@ -4497,7 +4607,7 @@ class ActivationTest extends WPTestCase {
 		Config::reset();
 		Config::set_hook_prefix( 'learndash' );
 
-		( new Activation() )->maybe_run( $this->make( [ 'activation_callback' => static function () {} ] ) );
+		( new Activation() )->maybe_run( $this->make_sub_plugin( [ 'activation_callback' => static function () {} ] ) );
 
 		$this->assertSame( [ 'give-recurring' => true ], get_option( 'learndash_plugin_absorber_activations' ) );
 		$this->assertFalse( get_option( self::OPTION ) );
@@ -4965,7 +5075,15 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 			return $markup;
 		}
 
-		$message = $sub_plugin->get_conflict_notice_message();
+		// The default matters: without one, a host that never configured a message gets
+		// WordPress's raw "triggered a fatal error" screen -- the exact outcome this rewrite
+		// exists to prevent -- and the rewrite would silently do nothing.
+		$message = $sub_plugin->get_conflict_notice_message(
+			sprintf(
+				'%s is bundled with this plugin and loads automatically. The standalone copy cannot be activated alongside it.',
+				$sub_plugin->get_slug()
+			)
+		);
 
 		if ( $message === '' ) {
 			return $markup;
@@ -5084,11 +5202,11 @@ Exercises the whole matrix from the engineering plan's verification section agai
 
 **Files:**
 - Create: `tests/_data/plugins/absorber-host/absorber-host.php`, `tests/_data/plugins/fake-standalone/fake-standalone.php`, `tests/_support/Traits/WithBundledPlugins.php`, `tests/unit/EndToEndTest.php`
-- Modify: `tests/unit/LoaderLoadTest.php` (use the new trait), `README.md`
+- Modify: `tests/unit/LoaderLoadTest.php` (use the new bundled-file trait), `README.md`
 
 **Interfaces:**
 - Consumes: everything from Tasks 4 through 14.
-- Produces: `WithBundledPlugins` trait with `make_bundled_plugin( string $constant ): string` and `remove_bundled_plugins(): void` (`@after`).
+- Produces: `WithBundledPlugins` trait with `make_bundled_plugin( string $constant ): string`, `unique_guard_constant(): string`, and `remove_bundled_plugins(): void` (`@after`). This is the second fixture trait and the one that touches the filesystem: `WithSubPlugins` (Task 7) builds `Sub_Plugin` config objects in memory, `WithBundledPlugins` writes throwaway plugin files to disk and deletes them again. Tests that need a real file to `require_once` want this one.
 
 **Why generated bundled files:** `require_once` caches by resolved path for the whole PHP process. A committed bundled fixture would execute once across the entire suite, so every test after the first would silently pass without loading anything. Each test that asserts a load therefore writes its own file. The two committed fixtures are the ones that must be *readable* rather than *loaded*: `absorber-host.php` documents the consumer bootstrap, `fake-standalone.php` gives the standalone a real plugin header.
 
@@ -5098,7 +5216,11 @@ Exercises the whole matrix from the engineering plan's verification section agai
 git checkout 14-activation-error-notice && git checkout -b 15-e2e-fixtures
 ```
 
-- [ ] **Step 2: Extract the fixture helper into a shared trait**
+- [ ] **Step 2: Extract the bundled-file helper into a shared trait**
+
+`LoaderLoadTest` writes throwaway plugin files and the end-to-end test needs the same thing, so the
+generator moves next to `WithSubPlugins`. The two do not overlap: this one writes files to disk,
+`WithSubPlugins` builds config objects.
 
 ```php
 <?php
@@ -5516,8 +5638,9 @@ the three policies, and the run-once activation working together.
 
 Bundled fixtures are generated per test rather than committed: `require_once` caches by resolved
 path for the whole PHP process, so a committed bundled file would execute once for the entire suite
-and every later test would pass without loading anything. The helper moved into a shared
-`WithBundledPlugins` trait and `LoaderLoadTest` now uses it too.
+and every later test would pass without loading anything. The generator moved into a shared
+`WithBundledPlugins` trait — the on-disk counterpart to `WithSubPlugins` from PR 7 — and
+`LoaderLoadTest` now uses it too.
 
 Verify: `slic run unit` and `slic run unit --env multisite` — 9 end-to-end tests. Not covered: real
 HTTP requests and a real browser; the redirect is asserted as a call, not followed.'
@@ -5696,5 +5819,8 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   carries the code.
 - **Corrections applied during review.** Task 11's `boot()` wires only the @2 hook, with the @1 hook
   added in Task 12 alongside the resolver it calls — wiring it earlier would point a trampoline at a
-  non-existent accessor. Task 15 extracts the fixture helper into a trait and refactors Task 11's
-  test onto it, rather than duplicating six lines across two files.
+  non-existent accessor. Two fixture traits land, in the task that first needs one rather than in
+  the task that would have copied it: Task 7 extracts `WithSubPlugins`, the in-memory `Sub_Plugin`
+  builder that Tasks 8, 10 and 13 would each have redeclared, and Task 15 extracts
+  `WithBundledPlugins`, the on-disk plugin-file generator, refactoring Task 11's test onto it
+  rather than duplicating six lines across two files.

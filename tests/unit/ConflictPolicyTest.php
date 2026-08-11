@@ -37,6 +37,18 @@ class ConflictPolicyTest extends WPTestCase {
 		);
 	}
 
+	public function test_the_default_is_to_deactivate(): void {
+		$this->assertSame( Conflict_Policy::DEACTIVATE, Conflict_Policy::default() );
+	}
+
+	/**
+	 * A default nobody understands would send every unconfigured sub-plugin down the branch a
+	 * caller takes for garbage, which is not what "no policy configured" means.
+	 */
+	public function test_the_default_is_a_policy_the_library_understands(): void {
+		$this->assertTrue( Conflict_Policy::is_valid( Conflict_Policy::default() ) );
+	}
+
 	/**
 	 * @dataProvider valid_policies
 	 *
@@ -56,7 +68,10 @@ class ConflictPolicyTest extends WPTestCase {
 		$constants = ( new ReflectionClass( Conflict_Policy::class ) )->getConstants();
 
 		foreach ( $constants as $name => $value ) {
-			yield $name => [ (string) $value ];
+			// A non-string constant is yielded as the empty string rather than skipped, so a policy
+			// declared as something other than a string fails is_valid() here instead of vanishing
+			// from the set this provider exists to keep complete.
+			yield $name => [ is_string( $value ) ? $value : '' ];
 		}
 	}
 

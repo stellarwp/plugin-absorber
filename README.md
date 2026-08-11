@@ -3,24 +3,19 @@
 Safely load bundled WordPress plugins inside a host plugin — togglable or always-on — without
 re-declaration fatal errors.
 
+Requires PHP 7.4+ and WordPress 6.4+.
+
 ## Install
 
 ```bash
 composer require stellarwp/plugin-absorber
 ```
 
-**Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
-Two or more plugins shipping different versions of this library will collide otherwise.
+**Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md)** — two
+plugins shipping different versions of this library will collide otherwise. See
+[Installing](docs/installing.md) for the one prefixing rule you must not get wrong.
 
-> **Do not let `extra.strauss.constant_prefix` rewrite a sub-plugin's `plugin_loaded_constant`.**
-> Those are real, shared runtime constants — the whole safety mechanism depends on the bundled
-> copy and the standalone defining the *same* name. Add them to `exclude_from_copy`.
-
-Requires PHP 7.4+ and WordPress 6.4+.
-
-## Usage
-
-### Configure
+## Quick start
 
 ```php
 use Nexcess\PluginAbsorber\Config;
@@ -29,18 +24,23 @@ Config::set_hook_prefix( 'give' );          // required — keys hooks, transien
 Config::set_container( give()->container ); // optional — lets you rebind collaborators
 ```
 
-The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
-`Config_Exception`, as does reading it before it is set.
+Each sub-plugin is then described by a config array:
 
-### Conflict policies
+```php
+[
+    'slug'                       => 'give-stripe',
+    'bundled_plugin_file'        => __DIR__ . '/sub-plugins/give-stripe/give-stripe.php',
+    'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
+    'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
+]
+```
 
-When a sub-plugin's standalone counterpart is still active:
+## Docs
 
-| Policy | Behavior |
-|---|---|
-| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, notify, and redirect; the bundled copy loads on the next request. **Default.** |
-| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
-| `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
+- [Installing](docs/installing.md) — Composer, Strauss, and the constants Strauss must leave alone.
+- [Configuration](docs/configuration.md) — the hook prefix, the container, every sub-plugin key.
+- [Conflict handling](docs/conflict-handling.md) — the policies, the load guard, and its limits.
+- [Filters](docs/filters.md) — the runtime overrides for policies and notice text.
 
 ## License
 
