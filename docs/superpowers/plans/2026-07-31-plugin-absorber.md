@@ -17,7 +17,7 @@ Every task's requirements implicitly include this section.
 - **PHP floor:** `>=7.4`. **WordPress floor:** 6.4 (the `wp_admin_notice_markup` filter). Stated in the README only — WordPress is not a Composer dependency, so it is not enforceable in `require`.
 - **Class naming:** `Snake_Case` (`Sub_Plugin`, `Conflict_Policy`, `Config_Exception`). Methods fully spelled out and readable. Config keys descriptive and WordPress-centric.
 - **Filter names:** `"{$hook_prefix}/plugin_absorber/should_load"` and `"{$hook_prefix}/plugin_absorber/conflict_policy"`.
-- **Storage keys:** option `"{$hook_prefix}_plugin_absorber_activations"`, transient `"{$hook_prefix}_plugin_absorber_notices"`.
+- **Storage keys:** option `"{$option_prefix}_plugin_absorber_activations"`, option `"{$option_prefix}_plugin_absorber_notices"`. Both are assembled by `Config::get_option_name( string $name )` and nowhere else, alongside `Config::get_hook_name()` for filters. **Amended 2026-08-11:** `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, so `Give-Core` yields the option `give_core_plugin_absorber_notices` while still yielding the filter `Give-Core/plugin_absorber/should_load` — the prefix validator admits `A-Z` and `-`, and a hook-naming value should not reach a storage key verbatim. The two normalisations stay separate: folding case into the hook side would silently rename the host's own filters. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
 - **Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only. No other StellarWP library.
 - **PR size cap:** ≤10 files per PR, tests and test infrastructure excluded. No logic-bearing PR exceeds 4 source files.
 - **PR body format** — exactly four parts, nothing else. No boilerplate headings, no restating the diff, no checklists:
@@ -33,6 +33,8 @@ Every task's requirements implicitly include this section.
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
+- **Container tests use the test-support adapter, never di52 directly** (verified 2026-07-31 against `vendor/`). `lucatume\DI52\Container` implements `ArrayAccess` and **PSR's** `Psr\Container\ContainerInterface` — not `StellarWP\ContainerContract\ContainerInterface`; `stellarwp/container-contract` ships an adapter example at `examples/di52/Container.php` precisely because DI52 must be wrapped. Passing `new Container()` to `Config::set_container()` is a `TypeError`. Tests use `Nexcess\PluginAbsorber\Tests\Support\Test_Container`, which wraps a di52 container and implements the contract's four methods (`bind`, `get`, `has`, `singleton`); **every `use lucatume\DI52\Container;` in the task blocks below means `Test_Container`.** `Config::set_container()`'s signature is unchanged — the StellarWP contract stays the public API, per the production-dependency constraint above.
+- **`Config` carries no version handling** (ruled 2026-08-11, PR 4 review). `set_version()`/`get_version()` and the `$version` property were removed: nothing in the library reads a host version, and the one scenario that would want it — telling a bundled copy apart from a standalone at a specific release — is the host's problem. This closes spec known-issue F by deletion rather than by use.
 - **No test-only seams in `src/`** (ruled 2026-08-11, PR 4 review). Production classes do not carry a `reset()` for the suite's benefit — that is API the library then supports forever. Tests clear static state by reflection instead, through a helper under `tests/_support/`. `Config` is served by `Nexcess\PluginAbsorber\Tests\Support\Config_State::reset()`; **every `Config::reset()` in the task blocks below means `Config_State::reset()`.** `Registrar` is served by `Tests\Support\Registrar_State::reset( Registrar $registrar )` and `Loader` by `Tests\Support\Loader_State::reset()`, which empties the memoized registrar through `Registrar_State` before discarding the memo; both are spelled out in full in the task blocks below.
 
 ## File Structure
@@ -40,20 +42,27 @@ Every task's requirements implicitly include this section.
 ```
 plugin-absorber/
 ├── src/
-│   ├── Config.php                        # static config facade: hook prefix, version, container
+│   ├── Config.php                        # static config facade: hook prefix, container, name building
 │   ├── Loader.php                        # static facade: resolve/register/boot/load loop
 │   ├── Sub_Plugin.php                    # value object + every per-sub-plugin predicate
 │   ├── Conflict_Policy.php               # three policy string constants
+│   ├── Plugin_State.php                  # the only file touching WordPress plugin functions
 │   ├── Registrar.php                     # default slug => Sub_Plugin map
 │   ├── Activation.php                    # default run-once activation tracking
-│   ├── Notices.php                       # default notice queue + activation-error rewrite
 │   ├── Conflict/
-│   │   ├── Resolver.php                  # default standalone detection/deactivation/redirect
-│   │   └── Resolver_Interface.php
-│   ├── Contracts/
-│   │   ├── Registrar_Interface.php
-│   │   ├── Notices_Interface.php
-│   │   └── Activation_Interface.php
+│   │   ├── Contracts/
+│   │   │   └── Resolver_Interface.php
+│   │   └── Resolver.php                  # default standalone detection/deactivation/redirect
+│   ├── Contracts/                        # interfaces whose implementations sit at the src/ root
+│   │   ├── Activation_Interface.php
+│   │   ├── Plugin_State_Interface.php
+│   │   └── Registrar_Interface.php
+│   ├── Notices/
+│   │   ├── Contracts/
+│   │   │   └── Queue_Interface.php
+│   │   ├── Queue.php                     # default queue: wording + capability gate
+│   │   ├── Renderer.php                  # markup and severity
+│   │   └── Store.php                     # the option the queue lives in
 │   └── Exceptions/
 │       └── Config_Exception.php
 ├── tests/
@@ -73,1461 +82,9 @@ One responsibility per file. `Sub_Plugin` holds every predicate so the collabora
 
 ---
 
-## Task 1: Repo bootstrap
-
-**PR 1** · branch `01-repo-bootstrap` from `main` · 6 source files
-
-**Files:**
-- Create: `composer.json`, `LICENSE`, `.gitignore`, `.gitattributes`, `.editorconfig`, `README.md`, `cspell.json`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: the `Nexcess\PluginAbsorber\` PSR-4 autoload root that every later task relies on, and the `composer test:analysis` script Task 5 wires into CI.
-
-- [ ] **Step 1: Rename the working directory to match the remote**
-
-```bash
-cd /Users/owl/www/wp-plugins
-mv sub-plugin-loader plugin-absorber
-cd plugin-absorber
-git remote -v   # expect: origin  https://github.com/stellarwp/plugin-absorber.git
-```
-
-- [ ] **Step 2: Cut the branch**
-
-```bash
-git checkout -b 01-repo-bootstrap
-```
-
-- [ ] **Step 3: Write `composer.json`**
-
-```json
-{
-    "name": "stellarwp/plugin-absorber",
-    "description": "Safely load bundled WordPress plugins inside a host plugin, togglable or always-on, without fatal errors.",
-    "type": "library",
-    "license": "GPL-2.0-or-later",
-    "minimum-stability": "stable",
-    "authors": [
-        {
-            "name": "StellarWP",
-            "email": "eric_defore@vendor.stellarwp.com"
-        }
-    ],
-    "require": {
-        "php": ">=7.4",
-        "stellarwp/container-contract": "^1.0"
-    },
-    "require-dev": {
-        "codeception/module-asserts": "^1.0",
-        "codeception/util-universalframework": "^1.0",
-        "lucatume/di52": "^3.0",
-        "lucatume/wp-browser": "^3.6.5",
-        "php-stubs/wordpress-stubs": "^6.4",
-        "phpunit/phpunit": "^9.5",
-        "szepeviktor/phpstan-wordpress": "^1.3"
-    },
-    "autoload": {
-        "psr-4": {
-            "Nexcess\\PluginAbsorber\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Nexcess\\PluginAbsorber\\Tests\\": "tests/",
-            "Nexcess\\PluginAbsorber\\Tests\\Support\\": "tests/_support"
-        }
-    },
-    "scripts": {
-        "test:analysis": [
-            "phpstan analyse -c phpstan.neon.dist --memory-limit=512M"
-        ],
-        "test:unit": [
-            "slic run unit"
-        ]
-    },
-    "config": {
-        "optimize-autoloader": true,
-        "preferred-install": "dist",
-        "platform": {
-            "php": "7.4"
-        },
-        "allow-plugins": {
-            "phpstan/extension-installer": true
-        }
-    }
-}
-```
-
-- [ ] **Step 4: Write `.gitignore`**
-
-```gitignore
-/vendor/
-/composer.lock
-/tests/_output/*
-!/tests/_output/.gitkeep
-/phpstan-cache/
-/codeception.yml
-/.env.testing.local
-.DS_Store
-.idea/
-.vscode/
-```
-
-- [ ] **Step 5: Write `.gitattributes`**
-
-Keeps development files out of consumer installs.
-
-```gitattributes
-/.github            export-ignore
-/docs               export-ignore
-/tests              export-ignore
-/.editorconfig      export-ignore
-/.env.testing       export-ignore
-/.env.testing.slic  export-ignore
-/.gitattributes     export-ignore
-/.gitignore         export-ignore
-/codeception.dist.yml   export-ignore
-/codeception.slic.yml   export-ignore
-/cspell.json        export-ignore
-/engineering-plan.md    export-ignore
-/phpstan.neon.dist  export-ignore
-```
-
-- [ ] **Step 6: Write `.editorconfig`**
-
-```editorconfig
-root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-trim_trailing_whitespace = true
-indent_style = tab
-
-[*.{yml,yaml,json,md}]
-indent_style = space
-indent_size = 4
-
-[*.md]
-trim_trailing_whitespace = false
-```
-
-- [ ] **Step 7: Write `cspell.json`**
-
-The spec review flagged that domain vocabulary trips the editor spell-checker. Fix the dictionary, not the prose.
-
-```json
-{
-    "version": "0.2",
-    "language": "en",
-    "words": [
-        "absorber",
-        "Codeception",
-        "codeception",
-        "fatals",
-        "Kadence",
-        "learndash",
-        "multisite",
-        "Nexcess",
-        "nexcess",
-        "Packagist",
-        "phpstan",
-        "referer",
-        "slic",
-        "stellarwp",
-        "StellarWP",
-        "Strauss",
-        "unhookable",
-        "uopz",
-        "Uopz",
-        "wpunit"
-    ],
-    "ignorePaths": [
-        "vendor/**",
-        "tests/_output/**",
-        "composer.lock"
-    ]
-}
-```
-
-- [ ] **Step 8: Add the GPL-2.0-or-later `LICENSE`**
-
-```bash
-curl -sL https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt -o LICENSE
-head -3 LICENSE   # expect: GNU GENERAL PUBLIC LICENSE / Version 2, June 1991
-```
-
-- [ ] **Step 9: Write the README skeleton**
-
-Every later PR appends its own section here, so the README is never out of sync with what has shipped. Keep it dense — no prose introduction, no FAQ.
-
-```markdown
-# Plugin Absorber
-
-Safely load bundled WordPress plugins inside a host plugin — togglable or always-on — without
-re-declaration fatal errors.
-
-## Install
-
-```bash
-composer require stellarwp/plugin-absorber
-```
-
-**Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).**
-Two or more plugins shipping different versions of this library will collide otherwise.
-
-> **Do not let `extra.strauss.constant_prefix` rewrite a sub-plugin's `plugin_loaded_constant`.**
-> Those are real, shared runtime constants — the whole safety mechanism depends on the bundled
-> copy and the standalone defining the *same* name. Add them to `exclude_from_copy`.
-
-Requires PHP 7.4+ and WordPress 6.4+.
-
-## Usage
-
-_Added as each piece lands._
-```
-
-- [ ] **Step 10: Verify Composer accepts the manifest**
-
-Run: `composer validate --no-check-lock`
-Expected: `./composer.json is valid`
-
-- [ ] **Step 11: Commit**
-
-```bash
-git add composer.json LICENSE .gitignore .gitattributes .editorconfig cspell.json README.md
-git commit -m "Add repo skeleton: composer manifest, license, dotfiles, README stub"
-```
-
-- [ ] **Step 12: Push and open the PR**
-
-```bash
-git push -u origin 01-repo-bootstrap
-gh pr create --base main --title "Repo bootstrap" --body 'What: composer manifest, GPL-2.0 license, dotfiles, cspell dictionary, README skeleton.
-
-Usage:
-
-    composer require stellarwp/plugin-absorber
-
-Why this way: `stellarwp/plugin-absorber` over `sub-plugin-loader` — Packagist returns 21 hits for
-`plugin-loader` and the top five are WordPress mu-plugin autoloaders, so the term is taken and
-misleading; `plugin-absorber` returns zero. Dropping `-loader` also kills the `PluginAbsorber\Loader`
-stutter. `stellarwp/container-contract` is the only production dependency, matching uplink.
-
-Verify: `composer validate --no-check-lock`. No tests — nothing here has behavior. The test harness
-lands in the next PR and CI goes green in the one after.'
-```
-
----
-
-## Task 2: Codeception harness
-
-**PR 2** · branch `02-codeception-harness` from `01-repo-bootstrap` · 0 source files
-
-Configuration modelled on `stellarwp/harbor`, the closest sibling library. The `singlesite`/`multisite` envs matter — Task 12 needs multisite to test network-aware deactivation.
-
-**Files:**
-- Create: `codeception.dist.yml`, `codeception.slic.yml`, `tests/unit.suite.yml`, `tests/_bootstrap.php`, `tests/_support/UnitTester.php`, `tests/_support/Helper/Unit.php`, `.env.testing`, `.env.testing.slic`, `tests/_output/.gitkeep`
-
-**Interfaces:**
-- Consumes: the `Nexcess\PluginAbsorber\Tests\` autoload-dev root from Task 1.
-- Produces: a `unit` suite runnable as `slic run unit`, with `--env singlesite` and `--env multisite`. Every later test class extends `\Codeception\TestCase\WPTestCase` and lives in `tests/unit/`.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 01-repo-bootstrap && git checkout -b 02-codeception-harness
-```
-
-- [ ] **Step 2: Write `codeception.dist.yml`**
-
-```yaml
-actor: Tester
-bootstrap: _bootstrap.php
-paths:
-    tests: tests
-    output: tests/_output
-    data: tests/_data
-    support: tests/_support
-    envs: tests/_envs
-actor_suffix: Tester
-settings:
-    colors: true
-    memory_limit: 1024M
-    error_level: E_ALL
-params:
-    - .env.testing
-extensions:
-    enabled:
-        - Codeception\Extension\RunFailed
-```
-
-- [ ] **Step 3: Write `codeception.slic.yml`**
-
-slic overlays this file to swap in the containerised database host.
-
-```yaml
-params:
-    - .env.testing.slic
-```
-
-- [ ] **Step 4: Write `tests/unit.suite.yml`**
-
-`multisite: false` is the default; the `multisite` env flips it. Note this suite loads WordPress — it is a "unit" suite by name only, matching the `admin-notices` convention.
-
-```yaml
-# Codeception Test Suite Configuration
-# Loads a real WordPress via WPLoader. uopz stubs the functions WP cannot hook.
-actor: UnitTester
-bootstrap: _bootstrap.php
-modules:
-    enabled:
-        - WPLoader
-        - Asserts
-        - "Nexcess\\PluginAbsorber\\Tests\\Support\\Helper\\Unit"
-    config:
-        WPLoader:
-            wpRootFolder: "%WP_ROOT_FOLDER%"
-            dbName: "%WP_TEST_DB_NAME%"
-            dbHost: "%WP_TEST_DB_HOST%"
-            dbUser: "%WP_TEST_DB_USER%"
-            dbPassword: "%WP_TEST_DB_PASSWORD%"
-            tablePrefix: test_
-            domain: "%WP_DOMAIN%"
-            adminEmail: admin@plugin-absorber.test
-            title: "Plugin Absorber Tests"
-            theme: twentytwentythree
-            multisite: false
-
-env:
-    singlesite:
-    multisite:
-        modules:
-            config:
-                WPLoader:
-                    multisite: true
-```
-
-- [ ] **Step 5: Write `tests/_bootstrap.php`**
-
-```php
-<?php
-/**
- * Codeception bootstrap.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-require_once dirname( __DIR__ ) . '/vendor/autoload.php';
-```
-
-- [ ] **Step 6: Write `tests/_support/UnitTester.php`**
-
-```php
-<?php
-/**
- * Unit suite actor.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support;
-
-/**
- * Inherited methods are provided by Codeception at build time.
- *
- * @since 1.0.0
- */
-class UnitTester extends \Codeception\Actor {
-	use _generated\UnitTesterActions;
-}
-```
-
-- [ ] **Step 7: Write `tests/_support/Helper/Unit.php`**
-
-```php
-<?php
-/**
- * Unit suite helper.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support\Helper;
-
-use Codeception\Module;
-
-/**
- * Suite-level helper. Intentionally empty — per-test seams live in traits.
- *
- * @since 1.0.0
- */
-class Unit extends Module {
-}
-```
-
-- [ ] **Step 8: Write `.env.testing`**
-
-```dotenv
-WP_ROOT_FOLDER=/var/www/html
-WP_DOMAIN=plugin-absorber.test
-WP_URL=http://plugin-absorber.test
-WP_ADMIN_USERNAME=admin
-WP_ADMIN_PASSWORD=password
-WP_TABLE_PREFIX=wp_
-WP_DB_HOST=db
-WP_DB_NAME=test
-WP_DB_USER=root
-WP_DB_PASSWORD=password
-WP_TEST_DB_HOST=db
-WP_TEST_DB_NAME=test
-WP_TEST_DB_USER=root
-WP_TEST_DB_PASSWORD=password
-```
-
-- [ ] **Step 9: Write `.env.testing.slic`**
-
-```dotenv
-# Consumed by both CI and local slic runs.
-WP_VERSION=latest
-WP_ROOT_FOLDER=/var/www/html
-WP_URL=http://plugin-absorber.test
-WP_DOMAIN=plugin-absorber.test
-WP_ADMIN_USERNAME=admin
-WP_ADMIN_PASSWORD=password
-WP_TABLE_PREFIX=wp_
-WP_DB_PORT=3306
-WP_DB_HOST=db
-WP_DB_NAME=test
-WP_DB_USER=root
-WP_DB_PASSWORD=password
-WP_TEST_DB_HOST=db
-WP_TEST_DB_NAME=test
-WP_TEST_DB_USER=root
-WP_TEST_DB_PASSWORD=password
-USING_CONTAINERS=1
-```
-
-- [ ] **Step 10: Create the output directory placeholder**
-
-```bash
-mkdir -p tests/_output tests/_data tests/unit && touch tests/_output/.gitkeep
-```
-
-- [ ] **Step 11: Verify Codeception builds the actor**
-
-```bash
-slic here
-slic use plugin-absorber
-slic composer install
-slic cc build
-```
-Expected: `tests/_support/_generated/UnitTesterActions.php` is generated, no errors.
-
-- [ ] **Step 12: Commit**
-
-```bash
-git add codeception.dist.yml codeception.slic.yml tests/ .env.testing .env.testing.slic
-git commit -m "Add Codeception harness with singlesite and multisite envs"
-```
-
-- [ ] **Step 13: Push and open the PR**
-
-```bash
-git push -u origin 02-codeception-harness
-gh pr create --base 01-repo-bootstrap --title "Codeception harness" --body 'What: Codeception + wp-browser config for a WPLoader-backed `unit` suite, with `singlesite` and `multisite` envs.
-
-Usage:
-
-    slic run unit
-    slic run unit --env multisite
-
-Why this way: modelled on `stellarwp/harbor`, the closest sibling library, rather than invented.
-The suite is named `unit` but loads real WordPress — that is the `admin-notices` convention, and it
-lets the Notices and Activation tests exercise real transients and options instead of mocks. The
-`multisite` env exists because network-aware deactivation cannot be tested any other way.
-
-Verify: `slic cc build` generates the actor. No test assertions yet — the first green run is the
-next PR, which adds the smoke test and the CI workflow together.'
-```
-
----
-
-## Task 3: First green CI
-
-**PR 3** · branch `03-ci-tests` from `02-codeception-harness` · 1 source file
-
-**Files:**
-- Create: `.github/workflows/tests-php.yml`, `tests/unit/SmokeTest.php`, `tests/_support/TestException.php`, `tests/README.md`
-
-**Interfaces:**
-- Consumes: the `unit` suite from Task 2.
-- Produces: no local uopz trait. Every later test that stubs a WordPress function uses `lucatume\WPBrowser\Traits\UopzFunctions` from wp-browser — `setFunctionReturn( string $function, $value, bool $execute = false )`, with automatic teardown via the trait's own `@after resetUopzAlterations()`. Also produces `Nexcess\PluginAbsorber\Tests\Support\TestException`, thrown from a stubbed function to halt a code path in place of `exit`.
-
-**Why not a local trait:** a hand-rolled `WithUopz` is duplicated across every StellarWP plugin repo and drifts. `UopzFunctions` is maintained by wp-browser's author, is already in the dependency tree, and exists as far back as the `^3.6.5` floor this library pins. Nothing to keep in sync.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 02-codeception-harness && git checkout -b 03-ci-tests
-```
-
-- [ ] **Step 2: Write the failing smoke test**
-
-```php
-<?php
-/**
- * Verifies the harness itself before any library code depends on it.
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use lucatume\WPBrowser\Traits\UopzFunctions;
-
-/**
- * @since 1.0.0
- */
-class SmokeTest extends WPTestCase {
-	use UopzFunctions;
-
-	public function test_wordpress_is_loaded(): void {
-		$this->assertTrue( function_exists( 'add_action' ) );
-		$this->assertTrue( defined( 'ABSPATH' ) );
-	}
-
-	public function test_uopz_is_available(): void {
-		$this->assertTrue( extension_loaded( 'uopz' ), 'uopz is required to stub WordPress functions.' );
-		$this->assertTrue( function_exists( 'uopz_set_return' ) );
-	}
-
-	public function test_uopz_can_stub_a_function(): void {
-		$this->setFunctionReturn( 'wp_get_referer', 'https://example.test/wp-admin/plugins.php' );
-
-		$this->assertSame( 'https://example.test/wp-admin/plugins.php', wp_get_referer() );
-	}
-}
-```
-
-There is deliberately no test that `exit` can be neutralised. See Step 4.
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `wp_get_referer()` returns the real value, so `test_uopz_can_stub_a_function` fails on the `assertSame`, until `use UopzFunctions` is in place.
-
-- [ ] **Step 4: Add `TestException` and the tests README**
-
-There is no local uopz trait to write. `use lucatume\WPBrowser\Traits\UopzFunctions;` in the smoke test is the entire change on the stubbing side: it ships with wp-browser, undoes every override via its own `@after resetUopzAlterations()`, and takes an explicit `$execute` flag instead of guessing whether a value is callable.
-
-`UopzFunctions::preventExit()` exists, but this library does not use it. Neutralising `exit` lets a test keep running past the point where production would have stopped, so a test that should fail can report as passing and CI will not say otherwise. Tasks 8 and 13 instead stub the call immediately before `exit` and throw from it, which stops execution at a point the test controls.
-
-```php
-<?php
-/**
- * Exception used to halt execution in place of exit().
- *
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Support;
-
-use Exception;
-
-/**
- * Thrown from a stubbed function to stop a code path right before it calls exit().
- *
- * Mocking exit() itself lets a test keep running past the point production would
- * have halted, which can report a failing test as passing. Throwing instead stops
- * execution at a point the test controls. See tests/README.md.
- *
- * @since 1.0.0
- */
-class TestException extends Exception {
-}
-```
-
-Also write `tests/README.md`, documenting how to run the suites, the `setFunctionReturn()` pattern, and the no-mocking-`exit` rule with a worked example. Tasks 8 and 13 follow it rather than rediscovering it.
-
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 3 tests, 5 assertions.
-
-- [ ] **Step 6: Write the tests CI workflow**
-
-Adapted from `stellarwp/harbor`'s `tests-php.yml`, running the ends of the supported PHP range against WordPress `latest` and `nightly` — four legs, with the `nightly` ones non-blocking. Testing only 7.4 and 8.5 is deliberate: a deprecation introduced at any PHP version fires on every later one, so 8.5 catches whatever 8.0–8.4 would, and `config.platform.php` pins dependency resolution to 7.4 on every leg regardless of runtime, so there is no per-version dependency drift to catch either.
-
-```yaml
-# cspell:ignore DotReporter
-name: PHP Tests
-
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-
-# This workflow only reads the repository. Narrow the token accordingly.
-permissions:
-  contents: read
-
-# A superseded PR run is a result nobody is waiting on any more. Pushes to a
-# long-lived branch are left alone so their history stays complete.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    # A broken WordPress nightly is upstream's problem, not this library's, so
-    # those legs report without blocking the PR.
-    continue-on-error: ${{ matrix.wp == 'nightly' }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        # The ends of the supported range only. A deprecation introduced at any
-        # PHP version fires on every later one, so 8.5 catches what 8.0-8.4
-        # would, and every leg resolves identical dependencies because
-        # config.platform.php pins resolution to 7.4 regardless of runtime.
-        php:
-          - "7.4"
-          - "8.5"
-        # The nightly column is early warning for core regressions; when a
-        # nightly leg is red, its latest counterpart on the same PHP tells you
-        # whether WordPress or PHP is at fault.
-        wp:
-          - "latest"
-          - "nightly"
-
-    name: "Tests: PHP ${{ matrix.php }} / WP ${{ matrix.wp }}"
-
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Checkout slic
-        uses: actions/checkout@v6
-        with:
-          repository: stellarwp/slic
-          ref: main
-          path: slic
-          fetch-depth: 1
-
-      # Codeception refuses to start unless register_argc_argv is On. slic's
-      # php.ini does not set it, so the base image default applies, and that
-      # differs between PHP versions -- 7.4 is On, 8.5 is Off. This file is
-      # bind-mounted into the slic container as conf.d/zz-docker.ini, which
-      # loads after the main php.ini, so appending here wins.
-      - name: Enable register_argc_argv for Codeception
-        run: echo "register_argc_argv=On" >> ${GITHUB_WORKSPACE}/slic/containers/slic/php.ini
-
-      - name: Set up slic env vars
-        run: |
-          echo "SLIC_BIN=${GITHUB_WORKSPACE}/slic/slic" >> $GITHUB_ENV
-          echo "SLIC_WP_DIR=${GITHUB_WORKSPACE}/slic/_wordpress" >> $GITHUB_ENV
-          echo "SLIC_WORDPRESS_DOCKERFILE=Dockerfile.base" >> $GITHUB_ENV
-
-      - name: Set run context for slic
-        run: echo "SLIC=1" >> $GITHUB_ENV && echo "CI=1" >> $GITHUB_ENV
-
-      - name: Start ssh-agent
-        run: |
-          eval `ssh-agent -s`
-          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
-
-      - name: Set up slic for CI
-        run: |
-          cd ${GITHUB_WORKSPACE}/..
-          ${SLIC_BIN} here
-          ${SLIC_BIN} interactive off
-          ${SLIC_BIN} build-prompt off
-          ${SLIC_BIN} build-subdir off
-          ${SLIC_BIN} xdebug off
-          ${SLIC_BIN} debug on
-          ${SLIC_BIN} php-version set ${{ matrix.php }} --skip-rebuild
-
-      - name: Set up the library
-        run: |
-          ${SLIC_BIN} use plugin-absorber
-          ${SLIC_BIN} composer set-version 2
-          ${SLIC_BIN} composer validate
-          ${SLIC_BIN} composer install
-
-      # The slic image ships a fixed WordPress that varies by PHP version, and
-      # WP_VERSION in .env.testing.slic does not change it. Without this step a
-      # leg named "WP latest" silently tests whatever core the image happened to
-      # bake in. WPLoader installs from this codebase, so pinning here is what
-      # actually puts the suite on the version the leg claims.
-      - name: Pin the WordPress version
-        run: ${SLIC_BIN} site-cli core update --version=${{ matrix.wp }} --force
-
-      - name: Build codeception
-        run: ${SLIC_BIN} cc build
-
-      - name: Run unit tests (singlesite)
-        run: ${SLIC_BIN} run unit --env singlesite --ext DotReporter
-
-      # Run even when singlesite failed: one run should report both envs rather
-      # than making you fix one and rediscover the other.
-      - name: Run unit tests (multisite)
-        if: ${{ !cancelled() }}
-        run: ${SLIC_BIN} run unit --env multisite --ext DotReporter
-
-      - name: Upload test output
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: "test-output-php${{ matrix.php }}-wp${{ matrix.wp }}"
-          path: tests/_output
-          if-no-files-found: ignore
-          retention-days: 7
-```
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add tests/unit/SmokeTest.php tests/_support/TestException.php tests/README.md .github/workflows/tests-php.yml
-git commit -m "Add harness smoke test, exit policy, and PHP tests workflow"
-```
-
-- [ ] **Step 8: Push and confirm CI is actually green**
-
-```bash
-git push -u origin 03-ci-tests
-gh pr create --base 02-codeception-harness --title "First green CI" --body 'What: a smoke test that proves the harness, the `TestException` and README that set the stubbing rules, and the PHP tests workflow.
-
-Usage:
-
-    class SomeTest extends WPTestCase {
-        use UopzFunctions; // from wp-browser, not a local trait.
-
-        public function test_something(): void {
-            $this->setFunctionReturn( "is_plugin_active", true );
-        }
-    }
-
-Why this way: the smoke test asserts WordPress is loaded, uopz is present, and a function can
-actually be stubbed — the assumptions every later test rests on. Proving them here means a later
-failure is a real bug rather than a harness problem.
-
-No local `WithUopz`: `lucatume\WPBrowser\Traits\UopzFunctions` ships with wp-browser, is maintained
-by its author, undoes overrides through its own `@after`, and exists as far back as the `^3.6.5`
-floor this library pins. One less copy to drift across repos.
-
-`exit` is never mocked. Neutralising it lets a test keep running past the point production would
-have stopped, so a test that should fail can report as passing. Redirect branches are tested by
-stubbing the call immediately before `exit` and throwing `TestException` from it — worked example
-in tests/README.md.
-
-Verify: `slic run unit` — 3 tests. CI runs both envs across PHP 7.4 through 8.5 against WordPress
-latest and nightly — four legs, with the nightly ones non-blocking. Static analysis is not
-wired yet; it lands after the first src/ file, because PHPStan errors on an empty directory.'
-
-gh run watch
-```
-Expected: all matrix legs green. **Do not proceed until they are** — every later task assumes this harness works.
-
----
-
-## Task 4: `Config`
-
-**PR 4** · branch `04-config` from `03-ci-tests` · 3 source files
-
-**Files:**
-- Create: `src/Config.php`, `src/Exceptions/Config_Exception.php`, `tests/unit/ConfigTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces:
-  - `Config_Exception extends \RuntimeException`
-  - `Config::set_hook_prefix( string ): void` — throws `Config_Exception` on characters outside `[a-zA-Z0-9_-]`
-  - `Config::get_hook_prefix(): string` — throws `Config_Exception` when unset
-  - `Config::set_container( ContainerInterface ): void` / `get_container(): ?ContainerInterface` / `has_container(): bool`
-
-  Every later task calls `Config::set_hook_prefix()` in `setUp()` and `Config_State::reset()` in `tearDown()`.
-
-> **Deviation from the engineering plan, deliberate:** the plan's sketch throws bare
-> `RuntimeException`. This throws `Config_Exception`, which extends `RuntimeException`, so the
-> documented contract still holds while callers get one catchable type across the whole library.
-
-> **Second deviation, deliberate (added 2026-08-03):** `set_hook_prefix()` also rejects the empty
-> string. The character-class check alone would accept `''` — it contains no invalid character —
-> and the failure would resurface at `get_hook_prefix()` as the misleading "You must call
-> `Config::set_hook_prefix()`" long after the real mistake.
-
-> **Third deviation, from the PR 4 review (2026-08-11) — two removals. The code blocks below still
-> show both; they are wrong and were left for the record.**
->
-> 1. **`set_version()` / `get_version()` are gone**, along with the `$version` property, its two
->    tests, and the README line. Nothing in the library reads a host version, and the one scenario
->    that would want it — telling a bundled copy apart from a standalone at a specific release, à la
->    ProPanel v3.0 — is the host's problem, not this library's. This closes spec known-issue F by
->    deletion rather than by use.
-> 2. **`Config::reset()` is gone.** It existed only so the suite could clear static state, and a
->    public method is a promise to everyone, not just to tests. The suite now uses
->    `Tests\Support\Config_State::reset()`, which walks `Config`'s declared static defaults by
->    reflection — so state added to `Config` later is cleared with no change to the helper. See the
->    Global Constraint on test-only seams.
->
-> The `ConfigTest` block below is also superseded on two points the review raised: the prefix tests
-> are driven by `public static` `Generator` data providers (valid and invalid, the empty string
-> among the invalid), and the `RuntimeException` test now catches as `RuntimeException` and asserts
-> `instanceof Config_Exception` — proving both halves of the contract instead of passing merely
-> because one extends the other.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 03-ci-tests && git checkout -b 04-config
-```
-
-- [ ] **Step 2: Write the failing test**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use lucatume\DI52\Container;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-
-/**
- * @since 1.0.0
- */
-class ConfigTest extends WPTestCase {
-	public function tearDown(): void {
-		Config::reset();
-		parent::tearDown();
-	}
-
-	public function test_it_stores_and_returns_the_hook_prefix(): void {
-		Config::set_hook_prefix( 'give' );
-
-		$this->assertSame( 'give', Config::get_hook_prefix() );
-	}
-
-	public function test_it_accepts_letters_numbers_hyphens_and_underscores(): void {
-		Config::set_hook_prefix( 'give-recurring_2' );
-
-		$this->assertSame( 'give-recurring_2', Config::get_hook_prefix() );
-	}
-
-	/**
-	 * @dataProvider invalid_hook_prefixes
-	 *
-	 * @param string $prefix Prefix under test.
-	 */
-	public function test_it_rejects_invalid_hook_prefixes( string $prefix ): void {
-		$this->expectException( Config_Exception::class );
-
-		Config::set_hook_prefix( $prefix );
-	}
-
-	/**
-	 * @return array<string,array{0:string}>
-	 */
-	public function invalid_hook_prefixes(): array {
-		return [
-			'slash'     => [ 'give/recurring' ],
-			'space'     => [ 'give recurring' ],
-			'dot'       => [ 'give.recurring' ],
-			'backslash' => [ 'give\\recurring' ],
-		];
-	}
-
-	public function test_it_throws_when_the_hook_prefix_was_never_set(): void {
-		$this->expectException( Config_Exception::class );
-
-		Config::get_hook_prefix();
-	}
-
-	public function test_it_stores_and_returns_the_version(): void {
-		Config::set_version( '3.0.0' );
-
-		$this->assertSame( '3.0.0', Config::get_version() );
-	}
-
-	public function test_the_version_defaults_to_an_empty_string(): void {
-		$this->assertSame( '', Config::get_version() );
-	}
-
-	public function test_it_reports_no_container_by_default(): void {
-		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
-	}
-
-	public function test_it_stores_and_returns_a_container(): void {
-		$container = new Container();
-
-		Config::set_container( $container );
-
-		$this->assertTrue( Config::has_container() );
-		$this->assertSame( $container, Config::get_container() );
-	}
-
-	public function test_reset_clears_every_value(): void {
-		Config::set_hook_prefix( 'give' );
-		Config::set_version( '3.0.0' );
-		Config::set_container( new Container() );
-
-		Config::reset();
-
-		$this->assertSame( '', Config::get_version() );
-		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
-
-		$this->expectException( Config_Exception::class );
-		Config::get_hook_prefix();
-	}
-}
-```
-
-> **CORRECTION (2026-07-31, verified against vendor/):** `lucatume\DI52\Container` does **not**
-> implement `StellarWP\ContainerContract\ContainerInterface`. It implements `ArrayAccess` and
-> **PSR's** `Psr\Container\ContainerInterface`. `stellarwp/container-contract` ships an adapter
-> example at `examples/di52/Container.php` precisely because DI52 must be wrapped.
-> `new Container()` therefore cannot be passed to `Config::set_container()` — it is a `TypeError`.
->
-> Tests must use the test-support adapter `Nexcess\PluginAbsorber\Tests\Support\Test_Container`
-> (wraps a DI52 container, implements the StellarWP contract's four methods: `bind`, `get`,
-> `has`, `singleton`). This affects **Task 4 and Task 10** — both of their test blocks below still
-> show the incorrect `use lucatume\DI52\Container;`. `Config::set_container()`'s signature is
-> unchanged: the StellarWP contract stays the public API, per the Global Constraint that
-> `stellarwp/container-contract` is the only production dependency.
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Config" not found`.
-
-- [ ] **Step 4: Write `src/Exceptions/Config_Exception.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Exceptions;
-
-use RuntimeException;
-
-/**
- * Thrown when the library is configured incorrectly.
- *
- * Extends RuntimeException so callers may catch either type.
- *
- * @since 1.0.0
- */
-class Config_Exception extends RuntimeException {
-}
-```
-
-- [ ] **Step 5: Write `src/Config.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use StellarWP\ContainerContract\ContainerInterface;
-
-/**
- * Static configuration facade.
- *
- * @since 1.0.0
- */
-class Config {
-	/**
-	 * @var string
-	 */
-	protected static $hook_prefix = '';
-
-	/**
-	 * @var string
-	 */
-	protected static $version = '';
-
-	/**
-	 * @var ContainerInterface|null
-	 */
-	protected static $container = null;
-
-	/**
-	 * Set the unique per-host slug that keys hooks, transients, and the activation option.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param string $prefix Host slug.
-	 *
-	 * @throws Config_Exception When the prefix contains unsupported characters.
-	 *
-	 * @return void
-	 */
-	public static function set_hook_prefix( string $prefix ): void {
-		if ( preg_match( '/[^a-zA-Z0-9_-]/', $prefix ) ) {
-			throw new Config_Exception(
-				'Hook prefix must only contain letters, numbers, hyphens, and underscores.'
-			);
-		}
-
-		self::$hook_prefix = $prefix;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When no prefix has been set.
-	 *
-	 * @return string
-	 */
-	public static function get_hook_prefix(): string {
-		if ( self::$hook_prefix === '' ) {
-			throw new Config_Exception(
-				'You must call Config::set_hook_prefix() before booting the Plugin Absorber.'
-			);
-		}
-
-		return self::$hook_prefix;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param string $version Host plugin version.
-	 *
-	 * @return void
-	 */
-	public static function set_version( string $version ): void {
-		self::$version = $version;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return string
-	 */
-	public static function get_version(): string {
-		return self::$version;
-	}
-
-	/**
-	 * Share the host's container so collaborators become bindable.
-	 *
-	 * Entirely optional — with no container the library instantiates its own defaults.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param ContainerInterface $container Host container.
-	 *
-	 * @return void
-	 */
-	public static function set_container( ContainerInterface $container ): void {
-		self::$container = $container;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return ContainerInterface|null
-	 */
-	public static function get_container(): ?ContainerInterface {
-		return self::$container;
-	}
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	public static function has_container(): bool {
-		return self::$container !== null;
-	}
-
-	/**
-	 * Reset all static state. Test seam.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	public static function reset(): void {
-		self::$hook_prefix = '';
-		self::$version     = '';
-		self::$container   = null;
-	}
-}
-```
-
-- [ ] **Step 6: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 13 tests (4 from the data provider).
-
-- [ ] **Step 7: Append to the README**
-
-Replace the `_Added as each piece lands._` placeholder with:
-
-```markdown
-### Configure
-
-```php
-use Nexcess\PluginAbsorber\Config;
-
-Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
-Config::set_version( GIVE_VERSION );        // optional
-Config::set_container( give()->container ); // optional — see Rebinding below
-```
-
-The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
-`Config_Exception`, as does reading it before it is set.
-```
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add src/Config.php src/Exceptions/Config_Exception.php tests/unit/ConfigTest.php README.md
-git commit -m "Add Config facade and Config_Exception"
-```
-
-- [ ] **Step 9: Push and open the PR**
-
-```bash
-git push -u origin 04-config
-gh pr create --base 03-ci-tests --title "Config facade" --body 'What: `Config` static facade — hook prefix, version, optional container — plus `Config_Exception`.
-
-Usage:
-
-    Config::set_hook_prefix( "give" );
-    Config::set_container( give()->container ); // optional
-
-Why this way: the plan sketched bare `RuntimeException`; this throws `Config_Exception extends
-RuntimeException`, so the documented contract still holds and callers get one catchable type across
-the library. `set_hook_prefix()` validates eagerly rather than at use, because a bad prefix
-otherwise surfaces as a silently-never-firing filter much later.
-
-Verify: `slic run unit` — the validation regex over valid and invalid prefixes, the unset-prefix
-throw, the `RuntimeException` catchability contract, and container storage. Version handling is not
-covered because it no longer exists; see the third deviation above.'
-```
-
----
-
-## Task 5: Static analysis in CI
-
-**PR 5** · branch `05-ci-static-analysis` from `04-config` · 2 source files
-
-Lands here rather than in Task 1 because PHPStan errors on an empty `src/`.
-
-**Files:**
-- Create: `phpstan.neon.dist`, `.github/workflows/static-analysis.yml`
-
-**Interfaces:**
-- Consumes: `src/Config.php` from Task 4 — the first file to analyse.
-- Produces: a green `composer test:analysis`. Every later task must keep it green.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 04-config && git checkout -b 05-ci-static-analysis
-```
-
-- [ ] **Step 2: Write `phpstan.neon.dist`**
-
-Level 5 per the engineering plan. `szepeviktor/phpstan-wordpress` supplies WordPress function signatures.
-
-```neon
-includes:
-	- vendor/szepeviktor/phpstan-wordpress/extension.neon
-
-parameters:
-	phpVersion: 70400
-	level: 5
-	tmpDir: phpstan-cache
-	treatPhpDocTypesAsCertain: false
-	reportUnmatchedIgnoredErrors: false
-
-	paths:
-		- src
-
-	scanDirectories:
-		- vendor/stellarwp/container-contract/src
-```
-
-- [ ] **Step 3: Run it and confirm it is clean**
-
-Run: `composer test:analysis`
-Expected: `[OK] No errors`.
-
-If `Config::$container` reports an unknown `ContainerInterface`, confirm
-`stellarwp/container-contract` installed and that `scanDirectories` points at its real `src` path.
-
-- [ ] **Step 4: Write the static analysis workflow**
-
-Adapted from `stellarwp/harbor`'s `static-analysis.yml`.
-
-```yaml
-# cspell:ignore shivammathur ramsey reqs
-name: PHPStan
-
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-
-jobs:
-  phpstan:
-    name: phpstan
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Configure PHP environment
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.0"
-          extensions: mbstring, intl
-          coverage: none
-
-      - uses: ramsey/composer-install@v3
-        with:
-          composer-options: "--ignore-platform-reqs --optimize-autoloader"
-          dependency-versions: highest
-
-      - name: Restore PHPStan cache
-        uses: actions/cache/restore@v4
-        with:
-          path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-
-            v1-phpstan-${{ runner.os }}-
-            v1-phpstan-
-
-      - name: Run PHPStan static analysis
-        run: composer test:analysis
-
-      - name: Save PHPStan cache
-        uses: actions/cache/save@v4
-        if: ${{ !cancelled() }}
-        with:
-          path: phpstan-cache
-          key: v1-phpstan-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add phpstan.neon.dist .github/workflows/static-analysis.yml
-git commit -m "Add PHPStan level 5 and the static analysis workflow"
-```
-
-- [ ] **Step 6: Push, open the PR, confirm green**
-
-```bash
-git push -u origin 05-ci-static-analysis
-gh pr create --base 04-config --title "Static analysis" --body 'What: PHPStan level 5 with `szepeviktor/phpstan-wordpress`, plus its CI workflow.
-
-Usage:
-
-    composer test:analysis
-
-Why this way: level 5 per the engineering plan rather than harbor is level max — this library has
-almost no generics or array shapes to model, so max would mostly generate baseline noise. It lands
-now rather than in the bootstrap PR because PHPStan errors on an empty `src/`, so it needed a real
-file to analyse.
-
-Verify: `composer test:analysis` is clean. From this PR on, both workflows gate every merge.'
-
-gh run watch
-```
-
----
-
-## Task 6: `Conflict_Policy`
-
-**PR 6** · branch `06-conflict-policy` from `05-ci-static-analysis` · 2 source files
-
-Split from `Sub_Plugin` so that PR 7 is purely predicate logic.
-
-**Files:**
-- Create: `src/Conflict_Policy.php`, `tests/unit/ConflictPolicyTest.php`
-- Modify: `README.md`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: `Conflict_Policy::DEACTIVATE` (`'deactivate'`), `Conflict_Policy::DEFER` (`'defer'`), `Conflict_Policy::NOTICE_ONLY` (`'notice_only'`). Tasks 7 and 12 both depend on these exact string values.
-
-- [ ] **Step 1: Cut the branch**
-
-```bash
-git checkout 05-ci-static-analysis && git checkout -b 06-conflict-policy
-```
-
-- [ ] **Step 2: Write the failing test**
-
-The values are asserted literally because they are a public contract — a host may store one in an option, and changing a value later would silently break it.
-
-> **Deviation, deliberate (added 2026-08-03, from PR 6 review):** the class also ships
-> `is_valid( string ): bool`, over a private `all(): string[]`. Without it nothing rejects an unknown policy:
-> `Sub_Plugin::get_conflict_policy()` returns whatever the config or the filter hands back, and
-> `Conflict\Resolver::resolve()` switches on it with `default:` falling into `deactivate()`. A typo
-> like `'defered'`, or a stale filter return, would therefore deactivate a plugin the site owner
-> deliberately turned on — the most surprising and least recoverable of the three outcomes, reached
-> by accident. Task 12 must call `is_valid()` and treat an unknown policy as its own case rather
-> than relying on the fallthrough. The reflection test pins the constant set so a fourth policy
-> cannot be added without that switch being revisited, and the valid-policy provider reads the
-> constants too, so a policy declared but never taught to `is_valid()` fails as well.
->
-> `all()` is private: nothing in this plan reads the set, only `is_valid()` does. Widen it if a
-> host ever needs to enumerate the policies.
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Conflict_Policy;
-
-/**
- * @since 1.0.0
- */
-class ConflictPolicyTest extends WPTestCase {
-	public function test_the_policy_values_are_stable(): void {
-		$this->assertSame( 'deactivate', Conflict_Policy::DEACTIVATE );
-		$this->assertSame( 'defer', Conflict_Policy::DEFER );
-		$this->assertSame( 'notice_only', Conflict_Policy::NOTICE_ONLY );
-	}
-
-	public function test_the_policies_are_distinct(): void {
-		$policies = [
-			Conflict_Policy::DEACTIVATE,
-			Conflict_Policy::DEFER,
-			Conflict_Policy::NOTICE_ONLY,
-		];
-
-		$this->assertCount( 3, array_unique( $policies ) );
-	}
-}
-```
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `slic run unit`
-Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict_Policy" not found`.
-
-- [ ] **Step 4: Write `src/Conflict_Policy.php`**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber;
-
-/**
- * What to do when a sub-plugin's standalone counterpart is still active.
- *
- * @since 1.0.0
- */
-final class Conflict_Policy {
-	/**
-	 * Deactivate the standalone, load the bundled copy, notify, redirect. The default.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const DEACTIVATE = 'deactivate';
-
-	/**
-	 * Leave the standalone alone and let it win. The load guard stands the bundled copy down.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const DEFER = 'defer';
-
-	/**
-	 * Leave the standalone active but ask the user to deactivate it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	const NOTICE_ONLY = 'notice_only';
-}
-```
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-Run: `slic run unit`
-Expected: PASS — 2 tests.
-
-- [ ] **Step 6: Append to the README**
-
-```markdown
-### Conflict policies
-
-When a sub-plugin's standalone counterpart is still active:
-
-| Policy | Behavior |
-|---|---|
-| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, load the bundled copy, notify, redirect. **Default.** |
-| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
-| `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
-```
-
-- [ ] **Step 7: Commit, push, open the PR**
-
-```bash
-git add src/Conflict_Policy.php tests/unit/ConflictPolicyTest.php README.md
-git commit -m "Add Conflict_Policy constants"
-git push -u origin 06-conflict-policy
-gh pr create --base 05-ci-static-analysis --title "Conflict policy constants" --body 'What: the three conflict-policy string constants.
-
-Usage:
-
-    "conflict_policy" => Conflict_Policy::DEACTIVATE,  // or DEFER, or NOTICE_ONLY
-
-Why this way: string constants rather than an enum because the PHP floor is 7.4, and rather than
-bare strings because a host may persist one in an option. The test asserts the literal values for
-that reason — they are a public contract, not an implementation detail.
-
-Verify: `slic run unit` — 2 tests. Split out from Sub_Plugin so that PR reviews as pure predicate
-logic.'
-```
+Tasks 1–6 (repo bootstrap, Codeception harness, first green CI, `Config`, static analysis in CI,
+`Conflict_Policy`) shipped in PRs #1–#6 and their sections have been removed. Git history has them if
+you need to read one back.
 
 ---
 
@@ -2076,7 +633,7 @@ class Sub_Plugin {
 		}
 
 		return (string) apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/conflict_policy',
+			Config::get_hook_name( 'conflict_policy' ),
 			$policy,
 			$this
 		);
@@ -2963,8 +1520,8 @@ Config::set_container( $container );
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
-| `Contracts\Notices_Interface` | `Notices` | Notice queue and the activation-error rewrite. |
-| `Conflict\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Notice queue and the activation-error rewrite. |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
 | `Contracts\Activation_Interface` | `Activation` | Run-once activation tracking. |
 
 The container is **not** used to wire hooks — those stay plain static callbacks, so the container
@@ -3012,19 +1569,95 @@ container.'
 Lands before the load path and the resolver because both call into it.
 
 **Files:**
-- Create: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `tests/unit/NoticesTest.php`
+- Create: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Notices/Store.php`, `src/Notices/Renderer.php`, `tests/unit/Notices/QueueTest.php`, `tests/unit/Notices/StoreTest.php`, `tests/unit/Notices/RendererTest.php`
 - Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_option_name()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces:
-  - `Notices_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
-  - `Loader::notices(): Notices_Interface`
+  - `Notices\Contracts\Queue_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
+  - `Loader::notices(): Notices\Contracts\Queue_Interface`
 
   Task 11 calls `queue_dependency_notice()`; Task 12 calls `queue_merge_notice()` and `queue_conflict_notice()`; Task 14 extends this interface.
 
 **Design notes:**
-- Transient `"{$hook_prefix}_plugin_absorber_notices"`, no expiry, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
+- Option `"{$option_prefix}_plugin_absorber_notices"`, built by `Config::get_option_name( 'notices' )`, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
+
+> **Deviations, deliberate (added 2026-08-03, from the PR 10 review):**
+>
+> 1. **An option, not a transient.** Verified in core: `set_transient()` short-circuits to
+>    `wp_cache_set()` and never writes the database when an external object cache is present. On a
+>    Redis or Memcached site the queue would exist only in the cache, and `wp_cache_flush()` — run
+>    by deploy scripts and every "purge cache" button — destroys it. The merge notice is raised
+>    once and never re-queued, so losing it means the site owner is never told. This queue is not
+>    a cache. See the amended Global Constraint.
+> 2. **Network options on multisite.** The resolver passes `$network_wide` to
+>    `deactivate_plugins()`, which removes the plugin from every site in the network. A per-site
+>    option would have parked the explanation in whichever site's options table happened to serve
+>    the request that triggered it — invisible to the superadmin, on one of fifty sites.
+> 3. **`render()` checks `activate_plugins` first.** Rendering *consumes* the queue, so without a
+>    gate any logged-in user loading `profile.php` would silently swallow the one warning an
+>    administrator was going to get. On multisite this correctly resolves to superadmins, since
+>    `activate_plugins` maps through `manage_network_plugins` there.
+> 4. **`all_admin_notices`, not `admin_notices`** (see Task 11). The three notice hooks are
+>    mutually exclusive branches in `admin-header.php`, and `admin_notices` does not fire in the
+>    network admin — exactly where a network-wide deactivation would be noticed.
+> 5. **`get_conflict_notice_message( $default )` replaces the planned private `message_or_default()`
+>    helper**, using the parameter added to `Sub_Plugin` in PR 7. Identical semantics, one less
+>    duplicated method.
+> 6. **`get_queue()` drops non-string entries** rather than printing them, and writes the cleaned
+>    array back, so a corrupted queue heals on the next write. This moved to `Notices\Store::all()`
+>    in deviation 7.
+> 7. **`Notices` is split into three, renamed, and grouped into `src/Notices/`** (added
+>    2026-08-11). `Notices\Store` owns the option, `Notices\Renderer` owns the markup and the
+>    severity map, and `Notices\Queue` keeps the interface, the message defaults and the capability
+>    gate. One class had four reasons to change — storage, wording, severity, markup — and Task 14
+>    adds a fifth by hanging the activation-error rewrite off the same class. Splitting now means a
+>    host that wants only different markup replaces `Notices\Renderer` instead of reimplementing
+>    the queue.
+>
+>    `Notices` was a plural bag noun naming the subject rather than the job, which read worst of
+>    the three once the split landed. The folder carries the subject and the class carries the job,
+>    following `Conflict\Resolver`. The rename is free now and a breaking change after 1.0.
+>
+>    The interface follows the folder: `Notices\Contracts\Queue_Interface` in
+>    `src/Notices/Contracts/Queue_Interface.php`. A folder-scoped concern owns its own contract, so
+>    the top-level `src/Contracts/` is left holding only the interfaces whose implementations sit at
+>    the `src/` root — `Registrar_Interface`, `Plugin_State_Interface`, `Activation_Interface`.
+>    Task 12 does the same for `Conflict\Contracts\Resolver_Interface`.
+>
+>    Both collaborators are constructor arguments defaulting to the standard implementations, so
+>    `new Queue()` — what `Loader::resolve()` builds when the container holds no binding — behaves
+>    exactly as `new Notices()` did, and the interface's method set is unchanged. Tasks 11, 12 and
+>    14 need no rework beyond the new type name and import.
+>
+>    The capability check stays in `Notices\Queue::render()` rather than moving into the renderer,
+>    because it guards clearing the queue as much as drawing it: split apart, a user who may not
+>    see the queue could still consume it.
+>
+>    Not done, and deliberately: the interface still mixes queueing with rendering, so a host
+>    replacing one inherits the other, and a fourth notice type is still a breaking interface
+>    change. Both need a spec amendment and rework in Tasks 11, 12 and 14, and fixing them here
+>    would put this PR over the four-source-file cap. The same cap is why `Notices\Store` and
+>    `Notices\Renderer` are concrete rather than interface-backed.
+>
+> 8. **`Notices\Store` builds its key with `Config::get_option_name( 'notices' )`** (added
+>    2026-08-11), not by concatenating `Config::get_hook_prefix()`. The prefix validator admits
+>    `A-Z` and `-`, so `Give-Core` would otherwise put a capitalised, hyphenated segment straight
+>    into a storage key. `get_option_name()` lowercases and folds hyphens to underscores;
+>    `get_hook_name()` deliberately does not, because normalising there would silently rename the
+>    host's own filters. Nothing outside `Config` assembles either kind of name.
+> 9. **`Notices\Renderer` prints through `wp_kses_post()`, not `esc_html()`** (added 2026-08-11).
+>    A message reaches the renderer only from the host's own `conflict_notice_message` /
+>    `dependency_notice_message` config or from its filter — never from user input — and the
+>    commonest thing a host wants in a merge notice is a link to its own knowledge-base article.
+>    `wp_kses_post()` still strips scripts and event handlers, so the XSS surface is unchanged.
+>    Task 14's activation-error rewrite takes the same message from the same source onto the same
+>    screen, so the two must not diverge.
+>
+>    The Step 4/5 code listings below still show the pre-split, pre-rename shape, exactly as they
+>    still show the transient that deviation 1 replaced and the hand-built option key that
+>    deviation 8 replaced. The deviations are the record of what shipped.
 - Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
 - Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
 
@@ -3150,14 +1783,21 @@ class NoticesTest extends WPTestCase {
 		$this->assertStringContainsString( 'Bundled now.', $output );
 	}
 
-	public function test_render_escapes_the_message(): void {
+	public function test_render_strips_unsafe_markup_but_keeps_a_link(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin(
+				[ 'conflict_notice_message' => '<script>alert(1)</script><a href="https://example.com/kb">Read more</a>' ]
+			)
+		);
 
 		$output = $this->render_to_string( $notices );
 
 		$this->assertStringNotContainsString( '<script>', $output );
-		$this->assertStringContainsString( '&lt;script&gt;', $output );
+
+		// wp_kses_post() is the point: a host's knowledge-base link has to survive, and
+		// esc_html() would have turned it into visible angle brackets.
+		$this->assertStringContainsString( '<a href="https://example.com/kb">Read more</a>', $output );
 	}
 
 	public function test_render_clears_the_queue(): void {
@@ -3362,7 +2002,7 @@ class Notices implements Notices_Interface {
 
 			printf(
 				'<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-				esc_html( $message )
+				wp_kses_post( $message )
 			);
 		}
 	}
@@ -3458,7 +2098,7 @@ gh pr create --base 09-loader-resolve --title "Notice queue" --body 'What: the t
 Usage:
 
     Loader::notices()->queue_merge_notice( $sub_plugin );
-    Loader::notices()->render();   // hooked to admin_notices by boot()
+    Loader::notices()->render();   // hooked to all_admin_notices by boot()
 
     // Or supply your own copy:
     "conflict_notice_message" => static fn() => __( "Now bundled with Give.", "give" ),
@@ -3474,8 +2114,8 @@ Default messages live here rather than in `Sub_Plugin`, which returns "" when un
 way auto-deactivating a plugin can never leave the user with a blank explanation, while a host that
 does configure a message still gets exactly its own text.
 
-Verify: `slic run unit` — 13 tests, including escaping, queue-clearing on render, and a simulated
-redirect (queue with one instance, render with another).'
+Verify: `slic run unit` — 13 tests, including `wp_kses_post()` sanitising, queue-clearing on render,
+and a simulated redirect (queue with one instance, render with another).'
 ```
 
 ---
@@ -3489,7 +2129,7 @@ redirect (queue with one instance, render with another).'
 - Create: `tests/unit/LoaderLoadTest.php`, `tests/unit/LoaderBootTest.php`
 
 **Interfaces:**
-- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::notices()` (Task 10), `Config::get_hook_prefix()` (Task 4).
+- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::notices()` (Task 10), `Config::get_hook_name()` (Task 4).
 - Produces:
   - `Loader::boot(): void` — idempotent
   - `Loader::load_all(): void`
@@ -3499,7 +2139,7 @@ redirect (queue with one instance, render with another).'
 
   Task 12 adds the `plugins_loaded` @1 hook to `boot()`; Task 13 adds the activation call to `load()`.
 
-**Design note:** `boot()` wires only the @2 load hook and `admin_notices` in this PR. The @1 conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline to a collaborator that does not exist yet would not run.
+**Design note:** `boot()` wires only the @2 load hook and `all_admin_notices` in this PR. The @1 conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline to a collaborator that does not exist yet would not run.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -3730,7 +2370,7 @@ class LoaderBootTest extends WPTestCase {
 
 	public function tearDown(): void {
 		remove_all_actions( 'plugins_loaded' );
-		remove_all_actions( 'admin_notices' );
+		remove_all_actions( 'all_admin_notices' );
 		Loader_State::reset();
 		Config::reset();
 		parent::tearDown();
@@ -3759,7 +2399,7 @@ class LoaderBootTest extends WPTestCase {
 
 		Loader::boot();
 
-		$this->assertNotFalse( has_action( 'admin_notices', [ Loader::class, 'render_notices' ] ) );
+		$this->assertNotFalse( has_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] ) );
 
 		set_current_screen( 'front' );
 	}
@@ -3806,7 +2446,11 @@ Append these methods:
 		add_action( 'plugins_loaded', [ self::class, 'load_all' ], 2 );
 
 		if ( is_admin() ) {
-			add_action( 'admin_notices', [ self::class, 'render_notices' ] );
+			// all_admin_notices, not admin_notices. WordPress dispatches admin_notices,
+			// network_admin_notices and user_admin_notices as mutually exclusive branches, so a
+			// superadmin working in the network admin -- exactly where a network-wide
+			// deactivation gets noticed -- would never see the queue rendered.
+			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
 		}
 	}
 
@@ -3868,7 +2512,7 @@ Append these methods:
 		}
 
 		$should_load = apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/should_load',
+			Config::get_hook_name( 'should_load' ),
 			true,
 			$sub_plugin
 		);
@@ -3959,7 +2603,7 @@ gh pr create --base 10-notices-queue --title "Loader boot and load path" --body 
 Usage:
 
     Loader::register( [ ... ] );
-    Loader::boot();   // wires plugins_loaded @2 and admin_notices
+    Loader::boot();   // wires plugins_loaded @2 and all_admin_notices
 
     add_filter( "give/plugin_absorber/should_load", function ( $should_load, $sub_plugin ) {
         return $should_load;
@@ -3985,13 +2629,13 @@ loading anything.'
 **PR 12** · branch `12-conflict-resolver` from `11-loader-load-path` · 4 source files
 
 **Files:**
-- Create: `src/Conflict/Resolver_Interface.php`, `src/Conflict/Resolver.php`, `tests/unit/Conflict/ResolverTest.php`
+- Create: `src/Conflict/Contracts/Resolver_Interface.php`, `src/Conflict/Resolver.php`, `tests/unit/Conflict/ResolverTest.php`
 - Modify: `src/Loader.php` (add `resolver()` and the @1 hook), `README.md`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Loader::notices()` (Task 10), `Sub_Plugin::is_standalone_plugin_active()` / `is_standalone_plugin_network_active()` / `get_conflict_policy()` (Task 7), `Conflict_Policy::*` (Task 6).
 - Produces:
-  - `Conflict\Resolver_Interface` with `resolve_all(): void`
+  - `Conflict\Contracts\Resolver_Interface` with `resolve_all(): void` — a folder-scoped concern owns its own contract, so this lives in `src/Conflict/Contracts/`, not in the top-level `src/Contracts/` and not beside `Resolver`. Matches `Notices\Contracts\Queue_Interface` from Task 10.
   - `Conflict\Resolver::redirect_destination( $referrer )` — `protected`, returns `string|false`
   - `Loader::resolver(): Resolver_Interface`
   - `Loader::run_conflict_resolution(): void`
@@ -4307,7 +2951,7 @@ class ResolverTest extends WPTestCase {
 Run: `slic run unit`
 Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict\Resolver" not found`.
 
-- [ ] **Step 4: Write `src/Conflict/Resolver_Interface.php`**
+- [ ] **Step 4: Write `src/Conflict/Contracts/Resolver_Interface.php`**
 
 ```php
 <?php
@@ -4315,7 +2959,7 @@ Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict\Resolver" not found`.
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Conflict;
+namespace Nexcess\PluginAbsorber\Conflict\Contracts;
 
 /**
  * Decides what happens when a sub-plugin's standalone counterpart is still active.
@@ -4346,6 +2990,7 @@ interface Resolver_Interface {
 
 namespace Nexcess\PluginAbsorber\Conflict;
 
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
@@ -4470,7 +3115,7 @@ class Resolver implements Resolver_Interface {
 
 - [ ] **Step 6: Add the resolver accessor and the @1 hook to `src/Loader.php`**
 
-Add `use Nexcess\PluginAbsorber\Conflict\Resolver_Interface;` and `use Nexcess\PluginAbsorber\Conflict\Resolver;` to the imports, then:
+Add `use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;` and `use Nexcess\PluginAbsorber\Conflict\Resolver;` to the imports, then:
 
 ```php
 	/**
@@ -4604,8 +3249,15 @@ production calls `exit` while leaving a failing test free to report as failing.'
 - Modify: `src/Loader.php` (add `activation()` and call it from `load()`), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_option_name()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces: `Activation_Interface` with `maybe_run( Sub_Plugin $sub_plugin ): void`, and `Loader::activation(): Activation_Interface`.
+
+**Design note:** the option key comes from `Config::get_option_name( 'activations' )`, never from
+concatenating `Config::get_hook_prefix()`. The prefix validator admits `A-Z` and `-`, so a host
+registering `Give-Core` would otherwise write to `Give-Core_plugin_absorber_activations`;
+`get_option_name()` normalises that to `give_core_plugin_absorber_activations` while
+`get_hook_name()` leaves filter names byte-for-byte as the host wrote them. `Notices\Store` uses the
+same helper, so the two storage keys cannot drift apart.
 
 **Why this exists:** `register_activation_hook()` never fires for a `require_once`'d file, so the absorbed plugin's original activation routine would otherwise never run. Tracked per slug in one option, run exactly once ever. It is **not** a place for ongoing upgrade logic — a merged sub-plugin handles version upgrades with its own idempotent, version-gated migrations on load.
 
@@ -4838,7 +3490,7 @@ class Activation implements Activation_Interface {
 	 * @return string
 	 */
 	private function option_name(): string {
-		return Config::get_hook_prefix() . '_plugin_absorber_activations';
+		return Config::get_option_name( 'activations' );
 	}
 }
 ```
@@ -4970,13 +3622,13 @@ generic *"Plugin could not be activated because it triggered a fatal error."* �
 completely unhelpful. Swap in the sub-plugin's own explanation.
 
 **Files:**
-- Modify: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `src/Loader.php`, `README.md`
-- Create: `tests/unit/NoticesActivationErrorTest.php`
+- Modify: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Loader.php`, `README.md`
+- Create: `tests/unit/Notices/QueueActivationErrorTest.php`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Sub_Plugin::get_standalone_plugin_basename()` / `get_conflict_notice_message()` (Task 7).
 - Produces:
-  - `Notices_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
+  - `Notices\Contracts\Queue_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
   - `Loader::filter_activation_error_markup( $markup ): string`
 
 **Design note (amendment A):** the engineering plan prescribed `ob_start()` on `admin_head-plugins.php`, copied from Kadence. The newer LearnDash reference (`Course_Grid/Legacy/Loader::update_legacy_plugin_activation_notice()`) uses the `wp_admin_notice_markup` filter instead. Same nonce check, same `str_replace`, but no buffering and no risk of mangling unrelated admin output — and it is testable by calling the filter directly. This is why the library requires WordPress 6.4+.
@@ -5117,12 +3769,18 @@ class NoticesActivationErrorTest extends WPTestCase {
 		);
 	}
 
-	public function test_it_escapes_the_replacement(): void {
-		$this->register( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] );
+	public function test_it_strips_unsafe_markup_from_the_replacement_but_keeps_a_link(): void {
+		$this->register(
+			[ 'conflict_notice_message' => '<script>alert(1)</script><a href="https://example.com/kb">Read more</a>' ]
+		);
 
 		$result = ( new Notices() )->filter_activation_error_markup( $this->wordpress_markup );
 
 		$this->assertStringNotContainsString( '<script>', $result );
+
+		// The replacement goes through wp_kses_post(), not esc_html(), so the host's own link
+		// reaches the screen instead of arriving as visible angle brackets.
+		$this->assertStringContainsString( '<a href="https://example.com/kb">Read more</a>', $result );
 	}
 
 	public function test_the_loader_trampoline_delegates(): void {
@@ -5141,7 +3799,7 @@ class NoticesActivationErrorTest extends WPTestCase {
 Run: `slic run unit`
 Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::filter_activation_error_markup()`.
 
-- [ ] **Step 4: Add the method to `src/Contracts/Notices_Interface.php`**
+- [ ] **Step 4: Add the method to `src/Notices/Contracts/Queue_Interface.php`**
 
 ```php
 	/**
@@ -5159,7 +3817,7 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 	public function filter_activation_error_markup( string $markup ): string;
 ```
 
-- [ ] **Step 5: Implement it in `src/Notices.php`**
+- [ ] **Step 5: Implement it in `src/Notices/Queue.php`**
 
 ```php
 	/**
@@ -5212,6 +3870,15 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 			)
 		);
 
+		// wp_kses_post(), matching Notices\Renderer: the message comes from the host's own config
+		// or filter, never from user input, so a knowledge-base link has to survive. Same message,
+		// same screen -- the two rendering paths must not sanitise differently.
+		//
+		// Sanitising before the emptiness check, not after, is what makes the check hold: a
+		// message that is nothing but disallowed markup filters down to '', and replacing
+		// WordPress's wording with an empty string leaves the user staring at a blank notice.
+		$message = trim( wp_kses_post( $message ) );
+
 		if ( $message === '' ) {
 			return $markup;
 		}
@@ -5219,7 +3886,7 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 		// phpcs:ignore WordPress.WP.I18n.TextDomainMismatch -- deliberately matching WordPress's own string.
 		$wordpress_text = __( 'Plugin could not be activated because it triggered a <strong>fatal error</strong>.', 'default' );
 
-		return str_replace( $wordpress_text, esc_html( $message ), $markup );
+		return str_replace( $wordpress_text, $message, $markup );
 	}
 
 	/**
@@ -5255,11 +3922,11 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 	}
 ```
 
-And inside `boot()`'s `is_admin()` block, beside the existing `admin_notices` line:
+And inside `boot()`'s `is_admin()` block, beside the existing `all_admin_notices` line:
 
 ```php
 		if ( is_admin() ) {
-			add_action( 'admin_notices', [ self::class, 'render_notices' ] );
+			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
 			add_filter( 'wp_admin_notice_markup', [ self::class, 'filter_activation_error_markup' ] );
 		}
 ```
@@ -5293,7 +3960,7 @@ Requires WordPress 6.4+ for the `wp_admin_notice_markup` filter.
 - [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Notices.php src/Contracts/Notices_Interface.php src/Loader.php tests/unit/NoticesActivationErrorTest.php README.md
+git add src/Notices/Queue.php src/Notices/Contracts/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
 git commit -m "Replace WordPress fatal-activation text for absorbed standalones"
 git push -u origin 14-activation-error-notice
 gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: replaces WordPress generic "triggered a fatal error" notice with the sub-plugin own
@@ -5314,9 +3981,11 @@ registered standalone basename, and a valid `plugin-activation-error_{basename}`
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
+This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no
+consumers.
 
-Verify: `slic run unit` — 8 tests, one per gate plus escaping and the Loader trampoline.'
+Verify: `slic run unit` — 8 tests, one per gate plus `wp_kses_post()` sanitising and the Loader
+trampoline.'
 ```
 
 ---
@@ -5929,7 +4598,7 @@ Recorded in the spec, deliberately not fixed in 1.0.0:
 - **E** — `Activation::maybe_run()` reads the option, runs the callback, then writes. Two
   simultaneous first requests can both run it. `add_option()` as an atomic claim would close it.
 - ~~**F** — `Config::get_version()` is stored but never read.~~ Closed 2026-08-11 by removing
-  version handling from `Config` outright; see Task 4's third deviation.
+  version handling from `Config` outright; see the Global Constraint on version handling.
 
 ## Self-review
 
@@ -5939,8 +4608,8 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   (`is_standalone_plugin_network_active()`) + Task 12 (the `$network_wide` argument); D → Task 7
   (`get_dependency_notice_message()`) + Task 10 (rendering). Deferred B/E/F are recorded above and
   in the PR bodies that touch them. Every spec test bullet has a corresponding test method.
-- **Interface consistency.** `Notices_Interface` grows one method in Task 14 — flagged in both the
-  task and the PR body rather than left implicit. `Loader::reset()` is written once in Task 9 and
+- **Interface consistency.** `Notices\Contracts\Queue_Interface` grows one method in Task 14 —
+  flagged in both the task and the PR body rather than left implicit. `Loader_State::reset()` is written once in Task 9 and
   extended once in Task 11 (`$booted`), shown in full both times. `redirect_destination()` is
   `protected`, matching how the Task 12 tests subclass it.
 - **Placeholder scan.** No TBD, no "add error handling", no "similar to Task N". Every code step

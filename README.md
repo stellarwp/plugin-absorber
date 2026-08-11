@@ -20,7 +20,7 @@ plugins shipping different versions of this library will collide otherwise. See
 ```php
 use Nexcess\PluginAbsorber\Config;
 
-Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
+Config::set_hook_prefix( 'give' );          // required — keys the hooks and options
 Config::set_container( give()->container ); // optional — lets you rebind collaborators
 ```
 
@@ -41,6 +41,7 @@ Each sub-plugin is then described by a config array:
 - [Configuration](docs/configuration.md) — the hook prefix, the container, every sub-plugin key.
 - [Conflict handling](docs/conflict-handling.md) — the policies, the load guard, and its limits.
 - [Filters](docs/filters.md) — the runtime overrides for policies and notice text.
+- [Notices](docs/notices.md) — where the queue lives, who may see it, and how to render it yourself.
 
 ## License
 

@@ -65,9 +65,13 @@ Four interface-backed collaborators, each with a default implementation:
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
-| `Contracts\Notices_Interface` | `Notices` | notice queue + activation-error rewrite |
-| `Conflict\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
 | `Contracts\Activation_Interface` | `Activation` | run-once activation-callback tracking |
+
+An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
+implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
+implementations sit at the root — `Registrar`, `Plugin_State`, `Activation`.
 
 All four come through one generic helper — `Loader::resolve( string $interface, string
 $default_class ): object` — which returns the container binding when `$container->has()`, otherwise
@@ -86,7 +90,7 @@ config predicates there is what lets collaborators stay thin and lets them be te
 
 ### What exists today
 
-`Loader` and the four collaborators above are not built yet. Currently:
+`Loader`, `Conflict\Resolver` and `Activation` are not built yet. Currently:
 
 | Path | What |
 |---|---|
@@ -94,7 +98,9 @@ config predicates there is what lets collaborators stay thin and lets them be te
 | `src/Sub_Plugin.php` | Value object; validates config and answers everything config alone decides. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_State.php` | The only file that touches WordPress plugin functions. |
-| `src/Contracts/`, `src/Exceptions/` | `Plugin_State_Interface`, `Config_Exception`. |
+| `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
+| `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
+| `src/Contracts/`, `src/Exceptions/` | `Plugin_State_Interface`, `Registrar_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
 
@@ -106,7 +112,7 @@ Loader::boot();                               // idempotent
 
 plugins_loaded @1      → Conflict\Resolver::resolve_all()
 plugins_loaded @2      → Loader::load_all()
-admin_notices          → Loader::render_notices()                 [is_admin() only]
+all_admin_notices      → Loader::render_notices()                 [is_admin() only]
 wp_admin_notice_markup → Loader::filter_activation_error_markup() [is_admin() only]
 ```
 
@@ -126,8 +132,18 @@ owner deliberately turned on.
 ### Keys
 
 - Filters: `{$hook_prefix}/plugin_absorber/should_load`, `{$hook_prefix}/plugin_absorber/conflict_policy`
-- Option: `{$hook_prefix}_plugin_absorber_activations`
-- Transient: `{$hook_prefix}_plugin_absorber_notices`
+- Options: `{$option_prefix}_plugin_absorber_activations`, `{$option_prefix}_plugin_absorber_notices`
+
+Both are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
+the segment between the host's prefix and the key's own name. The two differ in one respect:
+`{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, because the
+prefix validator admits `A-Z` and `-` and a hook-naming value should not reach a storage key
+verbatim. Hook names keep the host's casing exactly as it passed it.
+
+The notice queue is an option, not a transient: with a persistent object cache a transient never
+reaches the database, so a `wp_cache_flush()` would destroy a merge notice that is raised exactly
+once and never re-queued. It is read and written through `get_site_option()`/`update_site_option()`,
+so it is a network option on multisite — matching `deactivate_plugins()`, which is network-wide.
 
 ## Conventions
 
@@ -197,6 +213,13 @@ treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means
 
 - **The guard constant and the standalone basename are two separate keys.** No constant does double
   duty as both a load guard and a path resolver.
+- **`get_hook_name()` and `get_option_name()` do not share a normalisation.** Folding case into the
+  hook prefix itself would silently rename the host's filters; leaving the raw prefix in an option
+  name puts `A-Z` and `-` into a storage key. Only the option side normalises, and collapsing the two
+  code paths breaks whichever end it is collapsed toward.
+- **Notice messages are rendered through `wp_kses_post()`, not escaped.** They come from the host's
+  own config or filter, never from user input, so a knowledge-base link survives. Tightening this to
+  `esc_html()` after 1.0 would break every host that shipped one.
 - **A configured string is never called; every other callable form is.** A string function name is
   indistinguishable from a string value, so honouring it would make the result depend on what else
   the site loaded — `date`, `flush` and `key` are all real functions and plausible values. Closures,
@@ -265,6 +288,13 @@ namespace, a `Config::set_version()` that was removed, and an `ob_start()` appro
 `wp_admin_notice_markup` filter. `docs/superpowers/plans/2026-07-31-plugin-absorber.md` holds the
 task-by-task breakdown.
 
+Once a task's PR merges to `main`, delete that task's section from the plan in the next branch that
+touches the file; git history keeps it. A shipped task's plan describes code that already exists in
+`src/`, so all it can still do is make an agent read past it to reach what is unbuilt — and since
+the plan is edited on every branch of a stacked series, an oversized one is a standing
+merge-conflict surface. Never renumber what survives: the numbers map 1:1 to branch names. The spec
+is the durable document; the plan is scaffolding and should shrink toward empty as the series lands.
+
 Human-facing docs are `README.md` plus `docs/installing.md`, `docs/configuration.md`,
-`docs/conflict-handling.md`, and `docs/filters.md`. Keep them short and keep rationale here or in
-code comments — do not grow the README back.
+`docs/conflict-handling.md`, `docs/filters.md`, and `docs/notices.md`. Keep them short and keep
+rationale here or in code comments — do not grow the README back.

@@ -5,12 +5,14 @@
 ```php
 use Nexcess\PluginAbsorber\Config;
 
-Config::set_hook_prefix( 'give' );          // required — keys hooks, transients, options
+Config::set_hook_prefix( 'give' );          // required — keys hooks and options
 Config::set_container( give()->container ); // optional — lets you rebind collaborators
 ```
 
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
-`Config_Exception`, as does reading the prefix before it is set.
+`Config_Exception`, as does reading the prefix before it is set. Hook names repeat it verbatim;
+option names lowercase it and turn hyphens into underscores, so `Give-Core` hooks
+`Give-Core/plugin_absorber/should_load` and stores `give_core_plugin_absorber_notices`.
 
 The container is optional. Without one, the library instantiates its own collaborators; with one,
 a host can rebind them.

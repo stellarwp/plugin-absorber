@@ -25,7 +25,10 @@ class Config {
 	protected static $container = null;
 
 	/**
-	 * Set the unique per-host slug that keys hooks, transients, and the activation option.
+	 * Set the unique per-host slug that keys this library's hooks and options.
+	 *
+	 * It is stored exactly as given: hook names repeat it verbatim, and only `get_option_name()`
+	 * folds it.
 	 *
 	 * @since 1.0.0
 	 *
@@ -86,6 +89,32 @@ class Config {
 	}
 
 	/**
+	 * Build the name of one of this library's options.
+	 *
+	 * The prefix is a hook-naming value: `set_hook_prefix()` takes anything WordPress will accept
+	 * inside a filter name, mixed case and hyphens included, and `get_hook_name()` repeats it byte
+	 * for byte — a host that passed `Give-Core` must be able to hook
+	 * `Give-Core/plugin_absorber/should_load` and have it fire. A storage key answers to a
+	 * narrower convention, so the folding happens here and nowhere else: the same prefix produces
+	 * `give_core_plugin_absorber_notices`.
+	 *
+	 * The `_plugin_absorber_` segment lives here for the reason `get_hook_name()` gives for its
+	 * own: the notice queue is not the only option keyed this way, and a segment each caller
+	 * assembled would have to be found in every one of them if it ever changed.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $name Option name, less the prefix and this library's namespace.
+	 *
+	 * @throws Config_Exception When no prefix has been set.
+	 *
+	 * @return string
+	 */
+	public static function get_option_name( string $name ): string {
+		return self::get_option_prefix() . '_plugin_absorber_' . $name;
+	}
+
+	/**
 	 * Share the host's container so collaborators become bindable.
 	 *
 	 * Entirely optional — with no container the library instantiates its own defaults.
@@ -116,5 +145,23 @@ class Config {
 	 */
 	public static function has_container(): bool {
 		return self::$container !== null;
+	}
+
+	/**
+	 * The hook prefix folded into the shape a storage key takes.
+	 *
+	 * Only option names are folded, and only on the way out — the stored prefix keeps whatever the
+	 * host passed, because that is what its hook names are made of. Two prefixes differing only in
+	 * case or in hyphens against underscores would land on the same option, which is the price of
+	 * asking a host for one prefix rather than two; no host runs both `Give-Core` and `give_core`.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no prefix has been set.
+	 *
+	 * @return string
+	 */
+	private static function get_option_prefix(): string {
+		return strtolower( str_replace( '-', '_', self::get_hook_prefix() ) );
 	}
 }
