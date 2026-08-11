@@ -1393,6 +1393,20 @@ git checkout 05-ci-static-analysis && git checkout -b 06-conflict-policy
 
 The values are asserted literally because they are a public contract — a host may store one in an option, and changing a value later would silently break it.
 
+> **Deviation, deliberate (added 2026-08-03, from PR 6 review):** the class also ships
+> `is_valid( string ): bool`, over a private `all(): string[]`. Without it nothing rejects an unknown policy:
+> `Sub_Plugin::get_conflict_policy()` returns whatever the config or the filter hands back, and
+> `Conflict\Resolver::resolve()` switches on it with `default:` falling into `deactivate()`. A typo
+> like `'defered'`, or a stale filter return, would therefore deactivate a plugin the site owner
+> deliberately turned on — the most surprising and least recoverable of the three outcomes, reached
+> by accident. Task 12 must call `is_valid()` and treat an unknown policy as its own case rather
+> than relying on the fallthrough. The reflection test pins the constant set so a fourth policy
+> cannot be added without that switch being revisited, and the valid-policy provider reads the
+> constants too, so a policy declared but never taught to `is_valid()` fails as well.
+>
+> `all()` is private: nothing in this plan reads the set, only `is_valid()` does. Widen it if a
+> host ever needs to enumerate the policies.
+
 ```php
 <?php
 /**
@@ -4116,7 +4130,16 @@ class Resolver implements Resolver_Interface {
 	 * @return void
 	 */
 	protected function resolve( Sub_Plugin $sub_plugin ): void {
-		switch ( $sub_plugin->get_conflict_policy() ) {
+		$policy = $sub_plugin->get_conflict_policy();
+
+		// A host may persist a policy in an option and a filter may return anything. Falling
+		// through to deactivate() would turn off a plugin the site owner deliberately activated
+		// on the strength of a typo, so an unrecognised policy takes the conservative branch.
+		if ( ! Conflict_Policy::is_valid( $policy ) ) {
+			$policy = Conflict_Policy::NOTICE_ONLY;
+		}
+
+		switch ( $policy ) {
 			case Conflict_Policy::DEFER:
 				// The standalone wins. Its own constant makes the load path skip the bundled copy.
 				return;

@@ -32,6 +32,16 @@ Config::set_container( give()->container ); // optional — lets you rebind coll
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
 `Config_Exception`, as does reading it before it is set.
 
+### Conflict policies
+
+When a sub-plugin's standalone counterpart is still active:
+
+| Policy | Behavior |
+|---|---|
+| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, notify, and redirect; the bundled copy loads on the next request. **Default.** |
+| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
+| `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
+
 ## License
 
 This program is free software; you can redistribute it and/or modify it under the terms of the
