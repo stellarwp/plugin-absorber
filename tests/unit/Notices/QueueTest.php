@@ -3,16 +3,16 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Notices;
 
 use Codeception\TestCase\WPTestCase;
 use Generator;
 use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Contracts\Notices_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notice_Renderer;
-use Nexcess\PluginAbsorber\Notice_Store;
-use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Notices\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Renderer;
+use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 use RuntimeException;
@@ -22,7 +22,7 @@ use wpdb;
 /**
  * @since 1.0.0
  */
-class NoticesTest extends WPTestCase {
+class QueueTest extends WPTestCase {
 	use WithSubPlugins;
 
 	private const OPTION = 'give_plugin_absorber_notices';
@@ -55,13 +55,13 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_the_default_notices_satisfy_the_contract(): void {
-		$this->assertInstanceOf( Notices_Interface::class, new Notices() );
+		$this->assertInstanceOf( Queue_Interface::class, new Queue() );
 	}
 
 	/**
 	 * @dataProvider queued_notices
 	 *
-	 * @param string              $method    Method on Notices that queues the notice.
+	 * @param string              $method    Method on Queue that queues the notice.
 	 * @param array<string,mixed> $overrides Sub-plugin config overrides.
 	 * @param string              $key       Queue key the notice must land under.
 	 * @param string              $expected  Expected message, whole or partial.
@@ -74,7 +74,7 @@ class NoticesTest extends WPTestCase {
 		string $expected,
 		bool $exact
 	): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->{$method}( $this->make_sub_plugin( $overrides ) );
 
 		$queue = $this->queue();
@@ -155,7 +155,7 @@ class NoticesTest extends WPTestCase {
 	 * already happened, the other asks the user to do it. Sharing a default would be wrong.
 	 */
 	public function test_the_merge_and_conflict_defaults_differ(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_conflict_notice( $this->make_sub_plugin() );
 
@@ -165,7 +165,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_a_configured_message_is_used_for_both_conflict_types(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Ours.' ] ) );
 		$notices->queue_conflict_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Ours.' ] ) );
 
@@ -176,7 +176,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_queueing_the_same_slug_and_type_twice_does_not_duplicate(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
@@ -184,7 +184,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_one_slug_can_hold_notices_of_different_types(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_dependency_notice( $this->make_sub_plugin() );
 
@@ -192,7 +192,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_different_slugs_do_not_collide(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
 
@@ -204,7 +204,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_dismissible_markup(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		$output = $this->render_to_string( $notices );
@@ -216,11 +216,11 @@ class NoticesTest extends WPTestCase {
 	/**
 	 * @dataProvider notice_severities
 	 *
-	 * @param string $method Method on Notices that queues the notice.
+	 * @param string $method Method on Queue that queues the notice.
 	 * @param string $class  Expected `notice-*` class.
 	 */
 	public function test_render_uses_the_severity_of_the_notice_type( string $method, string $class ): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->{$method}( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Something happened.' ] ) );
 
 		$this->assertStringContainsString( 'notice ' . $class . ' is-dismissible', $this->render_to_string( $notices ) );
@@ -239,7 +239,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_render_escapes_the_message(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
 
 		$output = $this->render_to_string( $notices );
@@ -254,7 +254,7 @@ class NoticesTest extends WPTestCase {
 	 * tightening it later is not.
 	 */
 	public function test_render_does_not_allow_markup_in_a_message(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => 'See <a href="https://example.com">the docs</a>.' ] )
 		);
@@ -266,7 +266,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_render_clears_the_queue(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->render_to_string( $notices );
@@ -276,7 +276,7 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_every_queued_notice(): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'First.' ] ) );
 		$notices->queue_dependency_notice( $this->make_sub_plugin( [ 'dependency_notice_message' => 'Second.' ] ) );
 
@@ -287,16 +287,16 @@ class NoticesTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_nothing_when_the_queue_is_empty(): void {
-		$this->assertSame( '', $this->render_to_string( new Notices() ) );
+		$this->assertSame( '', $this->render_to_string( new Queue() ) );
 	}
 
 	/**
 	 * Where notices are kept is a constructor argument, so a host can move the queue somewhere else
 	 * without also taking on how notices are worded or drawn. Both arguments default, so
-	 * `new Notices()` — which is what Loader::resolve() builds — is unaffected.
+	 * `new Queue()` — which is what Loader::resolve() builds — is unaffected.
 	 */
 	public function test_a_replacement_store_is_used_instead_of_the_option(): void {
-		$store = new class() extends Notice_Store {
+		$store = new class() extends Store {
 			/**
 			 * @var array<string,string>
 			 */
@@ -327,7 +327,7 @@ class NoticesTest extends WPTestCase {
 			}
 		};
 
-		( new Notices( $store ) )->queue_merge_notice(
+		( new Queue( $store ) )->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] )
 		);
 
@@ -339,7 +339,7 @@ class NoticesTest extends WPTestCase {
 	 * The other half of the same seam: different markup, same queue and same consumption rules.
 	 */
 	public function test_a_replacement_renderer_draws_the_queue(): void {
-		$renderer = new class() extends Notice_Renderer {
+		$renderer = new class() extends Renderer {
 			/**
 			 * @param array<string,string> $queue Queue to draw.
 			 *
@@ -350,7 +350,7 @@ class NoticesTest extends WPTestCase {
 			}
 		};
 
-		$notices = new Notices( null, $renderer );
+		$notices = new Queue( null, $renderer );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertSame( '<p class="mine">1</p>', $this->render_to_string( $notices ) );
@@ -362,7 +362,7 @@ class NoticesTest extends WPTestCase {
 	 * the renderer rather than inside it: a user who may not see the queue must not destroy it.
 	 */
 	public function test_a_replacement_renderer_is_never_reached_without_the_capability(): void {
-		$renderer = new class() extends Notice_Renderer {
+		$renderer = new class() extends Renderer {
 			/**
 			 * @var bool
 			 */
@@ -378,7 +378,7 @@ class NoticesTest extends WPTestCase {
 			}
 		};
 
-		$notices = new Notices( null, $renderer );
+		$notices = new Queue( null, $renderer );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		wp_set_current_user( $this->create_user( 'subscriber' ) );
@@ -398,7 +398,7 @@ class NoticesTest extends WPTestCase {
 	 * @param string|null $role Role to render as, or null for a logged-out visitor.
 	 */
 	public function test_render_does_nothing_for_a_user_who_cannot_activate_plugins( ?string $role ): void {
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		wp_set_current_user( $role === null ? 0 : $this->create_user( $role ) );
@@ -426,7 +426,7 @@ class NoticesTest extends WPTestCase {
 			$this->markTestSkipped( 'Outside multisite an administrator simply has activate_plugins.' );
 		}
 
-		$notices = new Notices();
+		$notices = new Queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		wp_set_current_user( $this->create_user( 'administrator' ) );
@@ -443,7 +443,7 @@ class NoticesTest extends WPTestCase {
 	 * transient-backed design this class exists to avoid.
 	 */
 	public function test_the_queue_is_a_durable_database_row(): void {
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
+		( new Queue() )->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Bundled now.' ] ) );
 
 		$this->assertStringContainsString(
 			'Bundled now.',
@@ -453,7 +453,7 @@ class NoticesTest extends WPTestCase {
 
 		wp_cache_flush();
 
-		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( new Notices() ) );
+		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( new Queue() ) );
 	}
 
 	/**
@@ -467,7 +467,7 @@ class NoticesTest extends WPTestCase {
 	public function test_render_ignores_anything_that_is_not_a_message( $stored, ?string $present, array $absent ): void {
 		$this->seed_queue( $stored );
 
-		$output = $this->render_to_string( new Notices() );
+		$output = $this->render_to_string( new Queue() );
 
 		if ( $present === null ) {
 			$this->assertSame( '', $output );
@@ -516,7 +516,7 @@ class NoticesTest extends WPTestCase {
 	public function test_a_corrupted_queue_heals_on_the_next_write(): void {
 		$this->seed_queue( [ 'a:merge' => [ 'nested' ] ] );
 
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
+		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertSame( [ 'give-recurring:merge' ], array_keys( $this->queue() ) );
 	}
@@ -525,9 +525,9 @@ class NoticesTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( 'woo_plugin_absorber_notices', Notices::option_name() );
+		$this->assertSame( 'woo_plugin_absorber_notices', Queue::option_name() );
 
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
+		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertIsArray( get_site_option( 'woo_plugin_absorber_notices', false ) );
 		$this->assertFalse( $this->queue_exists() );
@@ -538,7 +538,7 @@ class NoticesTest extends WPTestCase {
 
 		$this->expectException( Config_Exception::class );
 
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
+		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
 	}
 
 	/**
@@ -550,7 +550,7 @@ class NoticesTest extends WPTestCase {
 			$this->markTestSkipped( 'Network options are not part of the per-site autoload bundle.' );
 		}
 
-		( new Notices() )->queue_merge_notice( $this->make_sub_plugin() );
+		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertNotContains( self::OPTION, array_keys( wp_load_alloptions() ) );
 	}
@@ -647,7 +647,7 @@ class NoticesTest extends WPTestCase {
 		return $user_id;
 	}
 
-	private function render_to_string( Notices $notices ): string {
+	private function render_to_string( Queue $notices ): string {
 		ob_start();
 
 		try {

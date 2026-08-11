@@ -3,8 +3,9 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Notices;
 
+use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 
 /**
@@ -16,12 +17,12 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * is raised once and never again, so losing it means a site owner is never told their plugin was
  * deactivated. This queue is not a cache.
  *
- * Separate from Notices so that changing where notices are kept does not mean touching how they
- * are worded or drawn.
+ * Separate from Queue so that changing where notices are kept does not mean touching how they are
+ * worded or drawn.
  *
  * @since 1.0.0
  */
-class Notice_Store {
+class Store {
 	/**
 	 * The option name backing the queue. Read it directly to render these notices yourself.
 	 *

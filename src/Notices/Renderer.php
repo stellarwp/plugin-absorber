@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Notices;
 
 /**
  * How a queued notice is drawn.
@@ -17,7 +17,7 @@ namespace Nexcess\PluginAbsorber;
  *
  * @since 1.0.0
  */
-class Notice_Renderer {
+class Renderer {
 	/**
 	 * The `notice-*` class each notice type renders with.
 	 *
@@ -30,9 +30,9 @@ class Notice_Renderer {
 	 * @var array<string,string>
 	 */
 	private const CLASSES = [
-		Notices::TYPE_MERGE      => 'notice-warning',
-		Notices::TYPE_CONFLICT   => 'notice-warning',
-		Notices::TYPE_DEPENDENCY => 'notice-error',
+		Queue::TYPE_MERGE      => 'notice-warning',
+		Queue::TYPE_CONFLICT   => 'notice-warning',
+		Queue::TYPE_DEPENDENCY => 'notice-error',
 	];
 
 	/**

@@ -52,8 +52,12 @@ plugin-absorber/
 │   │   └── Resolver_Interface.php
 │   ├── Contracts/
 │   │   ├── Registrar_Interface.php
-│   │   ├── Notices_Interface.php
 │   │   └── Activation_Interface.php
+│   ├── Notices/
+│   │   ├── Queue.php                     # default queue: wording + capability gate
+│   │   ├── Queue_Interface.php
+│   │   ├── Renderer.php                  # markup and severity
+│   │   └── Store.php                     # the option the queue lives in
 │   └── Exceptions/
 │       └── Config_Exception.php
 ├── tests/
@@ -2852,7 +2856,7 @@ Config::set_container( $container );
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
-| `Contracts\Notices_Interface` | `Notices` | Notice queue and the activation-error rewrite. |
+| `Notices\Queue_Interface` | `Notices\Queue` | Notice queue and the activation-error rewrite. |
 | `Conflict\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
 | `Contracts\Activation_Interface` | `Activation` | Run-once activation tracking. |
 
@@ -2899,14 +2903,14 @@ container.'
 Lands before the load path and the resolver because both call into it.
 
 **Files:**
-- Create: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `src/Notice_Store.php`, `src/Notice_Renderer.php`, `tests/unit/NoticesTest.php`, `tests/unit/NoticeStoreTest.php`, `tests/unit/NoticeRendererTest.php`
+- Create: `src/Notices/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Notices/Store.php`, `src/Notices/Renderer.php`, `tests/unit/Notices/QueueTest.php`, `tests/unit/Notices/StoreTest.php`, `tests/unit/Notices/RendererTest.php`
 - Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
 
 **Interfaces:**
 - Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces:
-  - `Notices_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
-  - `Loader::notices(): Notices_Interface`
+  - `Notices\Queue_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
+  - `Loader::notices(): Notices\Queue_Interface`
 
   Task 11 calls `queue_dependency_notice()`; Task 12 calls `queue_merge_notice()` and `queue_conflict_notice()`; Task 14 extends this interface.
 
@@ -2936,28 +2940,40 @@ Lands before the load path and the resolver because both call into it.
 >    helper**, using the parameter added to `Sub_Plugin` in PR 7. Identical semantics, one less
 >    duplicated method.
 > 6. **`get_queue()` drops non-string entries** rather than printing them, and writes the cleaned
->    array back, so a corrupted queue heals on the next write. This moved to `Notice_Store::all()`
+>    array back, so a corrupted queue heals on the next write. This moved to `Notices\Store::all()`
 >    in deviation 7.
-> 7. **`Notices` is split into three** (added 2026-08-11): `Notice_Store` owns the option,
->    `Notice_Renderer` owns the markup and the severity map, and `Notices` keeps the interface, the
->    message defaults and the capability gate. One class had four reasons to change — storage,
->    wording, severity, markup — and Task 14 adds a fifth by hanging the activation-error rewrite
->    off the same class. Splitting now means a host that wants only different markup replaces
->    `Notice_Renderer` instead of reimplementing the queue.
+> 7. **`Notices` is split into three, renamed, and grouped into `src/Notices/`** (added
+>    2026-08-11). `Notices\Store` owns the option, `Notices\Renderer` owns the markup and the
+>    severity map, and `Notices\Queue` keeps the interface, the message defaults and the capability
+>    gate. One class had four reasons to change — storage, wording, severity, markup — and Task 14
+>    adds a fifth by hanging the activation-error rewrite off the same class. Splitting now means a
+>    host that wants only different markup replaces `Notices\Renderer` instead of reimplementing
+>    the queue.
 >
->    Both are constructor arguments defaulting to the standard implementations, so `new Notices()`
->    — what `Loader::resolve()` builds when the container holds no binding — is unchanged, and so
->    is `Notices_Interface`. Tasks 11, 12 and 14 are unaffected.
+>    `Notices` was a plural bag noun naming the subject rather than the job, which read worst of
+>    the three once the split landed. The folder carries the subject and the class carries the job,
+>    following `Conflict\Resolver` — which is also why `Queue_Interface` sits beside its
+>    implementation rather than in `Contracts\`. The rename is free now and a breaking change after
+>    1.0.
 >
->    The capability check stays in `Notices::render()` rather than moving into the renderer,
+>    Both collaborators are constructor arguments defaulting to the standard implementations, so
+>    `new Queue()` — what `Loader::resolve()` builds when the container holds no binding — behaves
+>    exactly as `new Notices()` did, and the interface's method set is unchanged. Tasks 11, 12 and
+>    14 need no rework beyond the new type name and import.
+>
+>    The capability check stays in `Notices\Queue::render()` rather than moving into the renderer,
 >    because it guards clearing the queue as much as drawing it: split apart, a user who may not
 >    see the queue could still consume it.
 >
->    Not done, and deliberately: `Notices_Interface` still mixes queueing with rendering, so a host
+>    Not done, and deliberately: the interface still mixes queueing with rendering, so a host
 >    replacing one inherits the other, and a fourth notice type is still a breaking interface
 >    change. Both need a spec amendment and rework in Tasks 11, 12 and 14, and fixing them here
->    would put this PR over the four-source-file cap. The same cap is why `Notice_Store` and
->    `Notice_Renderer` are concrete rather than interface-backed.
+>    would put this PR over the four-source-file cap. The same cap is why `Notices\Store` and
+>    `Notices\Renderer` are concrete rather than interface-backed.
+>
+>    The Step 4/5 code listings below still show the pre-split, pre-rename shape, exactly as they
+>    still show the transient that deviation 1 replaced. The deviations are the record of what
+>    shipped.
 - Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
 - Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
 
@@ -4901,13 +4917,13 @@ generic *"Plugin could not be activated because it triggered a fatal error."* �
 completely unhelpful. Swap in the sub-plugin's own explanation.
 
 **Files:**
-- Modify: `src/Contracts/Notices_Interface.php`, `src/Notices.php`, `src/Loader.php`, `README.md`
+- Modify: `src/Notices/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Loader.php`, `README.md`
 - Create: `tests/unit/NoticesActivationErrorTest.php`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Sub_Plugin::get_standalone_plugin_basename()` / `get_conflict_notice_message()` (Task 7).
 - Produces:
-  - `Notices_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
+  - `Notices\Queue_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
   - `Loader::filter_activation_error_markup( $markup ): string`
 
 **Design note (amendment A):** the engineering plan prescribed `ob_start()` on `admin_head-plugins.php`, copied from Kadence. The newer LearnDash reference (`Course_Grid/Legacy/Loader::update_legacy_plugin_activation_notice()`) uses the `wp_admin_notice_markup` filter instead. Same nonce check, same `str_replace`, but no buffering and no risk of mangling unrelated admin output — and it is testable by calling the filter directly. This is why the library requires WordPress 6.4+.
@@ -5071,7 +5087,7 @@ class NoticesActivationErrorTest extends WPTestCase {
 Run: `slic run unit`
 Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::filter_activation_error_markup()`.
 
-- [ ] **Step 4: Add the method to `src/Contracts/Notices_Interface.php`**
+- [ ] **Step 4: Add the method to `src/Notices/Queue_Interface.php`**
 
 ```php
 	/**
@@ -5089,7 +5105,7 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 	public function filter_activation_error_markup( string $markup ): string;
 ```
 
-- [ ] **Step 5: Implement it in `src/Notices.php`**
+- [ ] **Step 5: Implement it in `src/Notices/Queue.php`**
 
 ```php
 	/**
@@ -5223,7 +5239,7 @@ Requires WordPress 6.4+ for the `wp_admin_notice_markup` filter.
 - [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Notices.php src/Contracts/Notices_Interface.php src/Loader.php tests/unit/NoticesActivationErrorTest.php README.md
+git add src/Notices/Queue.php src/Notices/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
 git commit -m "Replace WordPress fatal-activation text for absorbed standalones"
 git push -u origin 14-activation-error-notice
 gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: replaces WordPress generic "triggered a fatal error" notice with the sub-plugin own
@@ -5244,7 +5260,7 @@ registered standalone basename, and a valid `plugin-activation-error_{basename}`
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
+This adds a method to `Notices\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
 
 Verify: `slic run unit` — 8 tests, one per gate plus escaping and the Loader trampoline.'
 ```
@@ -5868,7 +5884,7 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   (`is_standalone_plugin_network_active()`) + Task 12 (the `$network_wide` argument); D → Task 7
   (`get_dependency_notice_message()`) + Task 10 (rendering). Deferred B/E/F are recorded above and
   in the PR bodies that touch them. Every spec test bullet has a corresponding test method.
-- **Interface consistency.** `Notices_Interface` grows one method in Task 14 — flagged in both the
+- **Interface consistency.** `Notices\Queue_Interface` grows one method in Task 14 — flagged in both the
   task and the PR body rather than left implicit. `Loader::reset()` is written once in Task 9 and
   extended once in Task 11 (`$booted`), shown in full both times. `redirect_destination()` is
   `protected`, matching how the Task 12 tests subclass it.

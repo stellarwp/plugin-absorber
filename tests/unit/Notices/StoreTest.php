@@ -3,25 +3,25 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Notices;
 
 use Codeception\TestCase\WPTestCase;
 use Generator;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notice_Store;
+use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 
 /**
- * The storage half of the queue, exercised without going through Notices.
+ * The storage half of the queue, exercised without going through Queue.
  *
- * NoticesTest already covers this ground from the outside; these are the assertions that belong to
+ * QueueTest already covers this ground from the outside; these are the assertions that belong to
  * the store itself, so that swapping how notices are worded or drawn cannot quietly take the
  * storage guarantees with it.
  *
  * @since 1.0.0
  */
-class NoticeStoreTest extends WPTestCase {
+class StoreTest extends WPTestCase {
 	private const OPTION = 'give_plugin_absorber_notices';
 
 	public function setUp(): void {
@@ -40,9 +40,9 @@ class NoticeStoreTest extends WPTestCase {
 	}
 
 	public function test_it_stores_a_message_under_the_given_key(): void {
-		( new Notice_Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
-		$this->assertSame( [ 'give-recurring:merge' => 'Bundled now.' ], ( new Notice_Store() )->all() );
+		$this->assertSame( [ 'give-recurring:merge' => 'Bundled now.' ], ( new Store() )->all() );
 	}
 
 	/**
@@ -51,15 +51,15 @@ class NoticeStoreTest extends WPTestCase {
 	 * never the writing one.
 	 */
 	public function test_the_queue_outlives_the_instance_that_wrote_it(): void {
-		( new Notice_Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
 		wp_cache_flush();
 
-		$this->assertSame( 'Bundled now.', ( new Notice_Store() )->all()['give-recurring:merge'] ?? '' );
+		$this->assertSame( 'Bundled now.', ( new Store() )->all()['give-recurring:merge'] ?? '' );
 	}
 
 	public function test_writing_the_same_key_twice_replaces_rather_than_duplicates(): void {
-		$store = new Notice_Store();
+		$store = new Store();
 		$store->put( 'give-recurring:merge', 'First.' );
 		$store->put( 'give-recurring:merge', 'Second.' );
 
@@ -67,7 +67,7 @@ class NoticeStoreTest extends WPTestCase {
 	}
 
 	public function test_different_keys_coexist(): void {
-		$store = new Notice_Store();
+		$store = new Store();
 		$store->put( 'give-recurring:merge', 'One.' );
 		$store->put( 'give-recurring:dependency', 'Two.' );
 
@@ -75,7 +75,7 @@ class NoticeStoreTest extends WPTestCase {
 	}
 
 	public function test_clear_removes_the_row_entirely(): void {
-		$store = new Notice_Store();
+		$store = new Store();
 		$store->put( 'give-recurring:merge', 'Bundled now.' );
 
 		$store->clear();
@@ -93,7 +93,7 @@ class NoticeStoreTest extends WPTestCase {
 	public function test_it_drops_anything_that_is_not_a_message( $stored, array $expected ): void {
 		update_site_option( self::OPTION, $stored );
 
-		$this->assertSame( $expected, ( new Notice_Store() )->all() );
+		$this->assertSame( $expected, ( new Store() )->all() );
 	}
 
 	/**
@@ -122,16 +122,16 @@ class NoticeStoreTest extends WPTestCase {
 	public function test_a_corrupted_queue_heals_on_the_next_write(): void {
 		update_site_option( self::OPTION, [ 'a:merge' => [ 'nested' ] ] );
 
-		( new Notice_Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
-		$this->assertSame( [ 'give-recurring:merge' ], array_keys( ( new Notice_Store() )->all() ) );
+		$this->assertSame( [ 'give-recurring:merge' ], array_keys( ( new Store() )->all() ) );
 	}
 
 	public function test_the_option_is_keyed_by_the_hook_prefix(): void {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( 'woo_plugin_absorber_notices', Notice_Store::option_name() );
+		$this->assertSame( 'woo_plugin_absorber_notices', Store::option_name() );
 	}
 
 	public function test_it_needs_a_hook_prefix(): void {
@@ -139,7 +139,7 @@ class NoticeStoreTest extends WPTestCase {
 
 		$this->expectException( Config_Exception::class );
 
-		( new Notice_Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 	}
 
 	/**
@@ -151,7 +151,7 @@ class NoticeStoreTest extends WPTestCase {
 			$this->markTestSkipped( 'Network options are not part of the per-site autoload bundle.' );
 		}
 
-		( new Notice_Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
 		$this->assertNotContains( self::OPTION, array_keys( wp_load_alloptions() ) );
 	}

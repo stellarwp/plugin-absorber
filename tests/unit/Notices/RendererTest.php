@@ -3,12 +3,12 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Notices;
 
 use Codeception\TestCase\WPTestCase;
 use Generator;
-use Nexcess\PluginAbsorber\Notice_Renderer;
-use Nexcess\PluginAbsorber\Notices;
+use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Notices\Renderer;
 
 /**
  * The drawing half of the queue.
@@ -18,7 +18,7 @@ use Nexcess\PluginAbsorber\Notices;
  *
  * @since 1.0.0
  */
-class NoticeRendererTest extends WPTestCase {
+class RendererTest extends WPTestCase {
 	public function test_it_prints_dismissible_markup(): void {
 		$output = $this->render( [ 'give-recurring:merge' => 'Bundled now.' ] );
 
@@ -48,9 +48,9 @@ class NoticeRendererTest extends WPTestCase {
 	 * @return Generator<string,array{0:string,1:string}>
 	 */
 	public static function notice_severities(): Generator {
-		yield 'merge'         => [ 'give-recurring:' . Notices::TYPE_MERGE, 'notice-warning' ];
-		yield 'conflict'      => [ 'give-recurring:' . Notices::TYPE_CONFLICT, 'notice-warning' ];
-		yield 'dependency'    => [ 'give-recurring:' . Notices::TYPE_DEPENDENCY, 'notice-error' ];
+		yield 'merge'         => [ 'give-recurring:' . Queue::TYPE_MERGE, 'notice-warning' ];
+		yield 'conflict'      => [ 'give-recurring:' . Queue::TYPE_CONFLICT, 'notice-warning' ];
+		yield 'dependency'    => [ 'give-recurring:' . Queue::TYPE_DEPENDENCY, 'notice-error' ];
 		yield 'unknown type'  => [ 'give-recurring:invented', 'notice-warning' ];
 		yield 'no type at all' => [ 'give-recurring', 'notice-warning' ];
 	}
@@ -62,7 +62,7 @@ class NoticeRendererTest extends WPTestCase {
 	public function test_the_type_is_the_last_segment_of_the_key(): void {
 		$this->assertStringContainsString(
 			'notice-error',
-			$this->render( [ 'give:recurring:' . Notices::TYPE_DEPENDENCY => 'Requirements not met.' ] )
+			$this->render( [ 'give:recurring:' . Queue::TYPE_DEPENDENCY => 'Requirements not met.' ] )
 		);
 	}
 
@@ -129,7 +129,7 @@ class NoticeRendererTest extends WPTestCase {
 		ob_start();
 
 		try {
-			( new Notice_Renderer() )->render( $queue );
+			( new Renderer() )->render( $queue );
 		} finally {
 			// In a finally block so a throw from render() cannot leave the suite's own output
 			// trapped in an abandoned buffer.

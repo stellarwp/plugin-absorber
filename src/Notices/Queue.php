@@ -3,28 +3,27 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Notices;
 
-use Nexcess\PluginAbsorber\Contracts\Notices_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
- * Default notices: an option-backed queue that survives the resolver's redirect.
+ * Default queue: option-backed, so it survives the resolver's redirect.
  *
  * This class decides *what a notice says* and *who is allowed to consume the queue*. Where the
- * queue is kept is Notice_Store's job and how it is drawn is Notice_Renderer's, so a host can
- * replace either one without inheriting the other, and neither has to be understood to reword a
- * message.
+ * queue is kept is Store's job and how it is drawn is Renderer's, so a host can replace either one
+ * without inheriting the other, and neither has to be understood to reword a message.
  *
- * Both collaborators are constructor arguments with defaults, so `new Notices()` still gives the
+ * Both collaborators are constructor arguments with defaults, so `new Queue()` still gives the
  * standard behaviour — which is what `Loader::resolve()` builds when the container has no binding.
  *
- * A host already using stellarwp/admin-notices can bind its own implementation of
- * Notices_Interface and read the same option, whose name is `self::option_name()`.
+ * A host already using stellarwp/admin-notices can bind its own implementation of Queue_Interface
+ * and read the same option, whose name is `self::option_name()`.
  *
  * @since 1.0.0
  */
-class Notices implements Notices_Interface {
+class Queue implements Queue_Interface {
 	/**
 	 * Notice types. Public because they are the second half of a queue key — an entry is stored
 	 * under `slug:type`, and reading the queue yourself means matching against these.
@@ -65,26 +64,26 @@ class Notices implements Notices_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Notice_Store
+	 * @var Store
 	 */
 	private $store;
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Notice_Renderer
+	 * @var Renderer
 	 */
 	private $renderer;
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Notice_Store|null    $store    Where the queue is kept.
-	 * @param Notice_Renderer|null $renderer How a queued notice is drawn.
+	 * @param Store|null    $store    Where the queue is kept.
+	 * @param Renderer|null $renderer How a queued notice is drawn.
 	 */
-	public function __construct( ?Notice_Store $store = null, ?Notice_Renderer $renderer = null ) {
-		$this->store    = $store ?? new Notice_Store();
-		$this->renderer = $renderer ?? new Notice_Renderer();
+	public function __construct( ?Store $store = null, ?Renderer $renderer = null ) {
+		$this->store    = $store ?? new Store();
+		$this->renderer = $renderer ?? new Renderer();
 	}
 
 	/**
@@ -186,7 +185,7 @@ class Notices implements Notices_Interface {
 	 * @return string
 	 */
 	public static function option_name(): string {
-		return Notice_Store::option_name();
+		return Store::option_name();
 	}
 
 	/**

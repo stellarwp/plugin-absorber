@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Contracts;
+namespace Nexcess\PluginAbsorber\Notices;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
@@ -13,7 +13,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  *
  * @since 1.0.0
  */
-interface Notices_Interface {
+interface Queue_Interface {
 	/**
 	 * Queue the "we deactivated the standalone for you" notice.
 	 *

@@ -50,7 +50,7 @@ fatal string. The filter is strictly better: no buffering, no risk of mangling u
 output, and testable by calling the filter directly.
 
 Consequences:
-- `Notices_Interface` does **not** declare `start_buffer()`.
+- `Notices\Queue_Interface` does **not** declare `start_buffer()`.
 - `Loader::boot()` does **not** hook `admin_head-plugins.php`.
 - The library requires **WordPress 6.4+** (when the filter landed). Stated in the README only —
   not enforceable through Composer, since WordPress is not a Composer dependency.
@@ -142,7 +142,7 @@ trampolines, per the `admin-notices` precedent.
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
-| `Contracts\Notices_Interface` | `Notices` | notice queue + activation-error rewrite |
+| `Notices\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
 | `Conflict\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
 | `Contracts\Activation_Interface` | `Activation` | run-once activation-callback tracking |
 
@@ -182,11 +182,11 @@ from the size cap.
 | 7 | `07-sub-plugin` | 2 | `Sub_Plugin`, README |
 | 8 | `08-registrar` | 3 | `Contracts\Registrar_Interface`, `Registrar`, README |
 | 9 | `09-loader-resolve` | 2 | `Loader`, README |
-| 10 | `10-notices-queue` | 4 | `Contracts\Notices_Interface`, `Notices`, `Loader` mod, README |
+| 10 | `10-notices-queue` | 4 | `Notices\Queue_Interface`, `Notices\Queue`, `Notices\Store`, `Notices\Renderer`, README |
 | 11 | `11-loader-load-path` | 2 | `Loader` mod, README |
 | 12 | `12-conflict-resolver` | 4 | `Conflict\Resolver_Interface`, `Conflict\Resolver`, `Loader` mod, README |
 | 13 | `13-activation` | 4 | `Contracts\Activation_Interface`, `Activation`, `Loader` mod, README |
-| 14 | `14-activation-error-notice` | 3 | `Notices` mod, `Loader` mod, README |
+| 14 | `14-activation-error-notice` | 3 | `Notices\Queue` mod, `Loader` mod, README |
 | 15 | `15-e2e-fixtures` | 1 | README |
 | 16 | `16-readme-release` | 3 | README, `CHANGELOG.md`, `.gitattributes` mod |
 
@@ -246,10 +246,12 @@ message. This is documented in `tests/README.md`.
 - **9 — `Loader::resolve()`.** No container → default instance; di52 container binding a custom
   `Registrar_Interface` → bound instance returned; memoized (identical instance twice);
   `Loader::reset()` clears both the memo and the registry.
-- **10 — `Notices` queue.** Each queue method writes the transient; the same slug queued twice does
-  not duplicate; `render()` emits escaped `notice notice-warning is-dismissible` markup and then
-  clears the transient; empty queue emits nothing; dependency notice falls back to the default
-  message when `dependency_notice_message` is absent.
+- **10 — `Notices\Queue`.** Each queue method writes the option; the same slug and type queued twice
+  does not duplicate; `render()` emits escaped `notice notice-warning is-dismissible` markup and
+  then clears the option; empty queue emits nothing; dependency notice falls back to the default
+  message when `dependency_notice_message` is absent; a user without `activate_plugins` neither
+  sees nor consumes the queue. `Notices\Store` and `Notices\Renderer` are covered directly as well,
+  and a replacement of either is exercised through `Queue`'s constructor.
 - **11 — `Loader` load path.** `require_once` fires exactly once (fixture increments a global);
   skipped when disabled, when dependencies are unmet (and the notice is queued), when the constant
   is already defined, when the file is missing, and when `…/should_load` returns false; the filter
