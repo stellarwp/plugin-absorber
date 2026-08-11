@@ -241,7 +241,8 @@ message. This is documented in `tests/README.md`.
   `is_plugin_active` / `is_plugin_active_for_network`; `are_dependencies_met()` with and without a
   callable; `get_conflict_policy()` for string, for callable, and with the
   `…/conflict_policy` filter overriding both; both message getters, string and callable.
-- **8 — `Registrar`.** register; `all()`; last-wins dedupe by slug; `reset()`.
+- **8 — `Registrar`.** register; `all()`; a duplicate slug throws `Config_Exception` naming both
+  bundled files and leaves the registry untouched; `reset()` clears the guard with the registry.
 - **9 — `Loader::resolve()`.** No container → default instance; di52 container binding a custom
   `Registrar_Interface` → bound instance returned; memoized (identical instance twice);
   `Loader::reset()` clears both the memo and the registry.

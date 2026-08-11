@@ -61,8 +61,13 @@ The load guard and the standalone basename are deliberately **two separate keys*
 double duty as both a guard and a path resolver.
 
 Sub-plugins load in **registration order**, so register a dependency before anything that extends it
-at include time. Registering the same slug twice replaces the entry in place rather than moving it,
-which keeps that order stable for a host that registers conditionally from more than one code path.
+at include time.
+
+Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
+activation record, so a second registration under the same slug is refused with a
+`Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
+load. Register unconditionally and put anything you cannot decide up front — a licence that may not
+be active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
 
 A value that is a `string` is always used as a value, never called — even when a function of that
 name exists. `dependency_check` and `activation_callback` are the two keys that are only ever

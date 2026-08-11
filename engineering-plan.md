@@ -500,7 +500,7 @@ class Loader {
     // resolve()/registrar()/resolver()/notices()/activation() — see the Container section above.
 
     public static function register( array $config ): void {
-        self::registrar()->register( new Sub_Plugin( $config ) ); // last-wins dedupe by slug
+        self::registrar()->register( new Sub_Plugin( $config ) ); // throws on a duplicate slug
     }
 
     /** @return array<string,Sub_Plugin> */

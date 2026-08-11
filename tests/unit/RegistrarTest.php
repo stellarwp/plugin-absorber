@@ -7,6 +7,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
@@ -46,38 +47,79 @@ class RegistrarTest extends WPTestCase {
 		);
 	}
 
-	public function test_registering_the_same_slug_twice_lets_the_last_one_win(): void {
+	public function test_it_rejects_a_slug_that_is_already_registered(): void {
 		$registrar = new Registrar();
-		$first     = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
-		$second    = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
 
-		$registrar->register( $first );
-		$registrar->register( $second );
+		$this->expectException( Config_Exception::class );
 
-		$this->assertCount( 1, $registrar->all() );
-		$this->assertSame( $second, $registrar->all()['give-recurring'] );
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
 	}
 
 	/**
-	 * Re-registering must update in place rather than move the entry to the end.
-	 *
-	 * A host registers all of its bundled sub-plugins in one routine at load, then runs that
-	 * routine again for a single slug once something it could not know up front resolves — a
-	 * licence check that came back, a setting saved in the admin. Moving that slug to the end
-	 * puts it behind sub-plugins registered after it, and an add-on extending a class the moved
-	 * sub-plugin defines would then load first and fatal.
+	 * The collision is between two sub-plugins the reader cannot see from the stack trace: the
+	 * registrations come from different code paths, and often from different host plugins. Naming
+	 * both bundled files is what turns the fatal into a diagnosis.
 	 */
-	public function test_re_registering_keeps_the_original_position(): void {
+	public function test_the_rejection_names_the_slug_and_both_bundled_files(): void {
 		$registrar = new Registrar();
-
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
-		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
-
-		$this->assertSame(
-			[ 'give-recurring', 'give-fee-recovery' ],
-			array_keys( $registrar->all() )
+		$registrar->register(
+			$this->make_sub_plugin(
+				[
+					'slug'                => 'give-recurring',
+					'bundled_plugin_file' => '/give/vendor/bundled/give-recurring.php',
+				]
+			)
 		);
+
+		try {
+			$registrar->register(
+				$this->make_sub_plugin(
+					[
+						'slug'                => 'give-recurring',
+						'bundled_plugin_file' => '/other/vendor/bundled/recurring.php',
+					]
+				)
+			);
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
+			$this->assertStringContainsString( '/give/vendor/bundled/give-recurring.php', $exception->getMessage() );
+			$this->assertStringContainsString( '/other/vendor/bundled/recurring.php', $exception->getMessage() );
+
+			return;
+		}
+
+		$this->fail( 'register() accepted a duplicate slug instead of throwing.' );
+	}
+
+	public function test_a_rejected_registration_leaves_the_registry_untouched(): void {
+		$registrar = new Registrar();
+		$first     = $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] );
+		$registrar->register( $first );
+
+		try {
+			$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+		} catch ( Config_Exception $exception ) {
+			$this->assertSame( [ 'give-recurring' => $first ], $registrar->all() );
+
+			return;
+		}
+
+		$this->fail( 'register() accepted a duplicate slug instead of throwing.' );
+	}
+
+	/**
+	 * A host that boots twice in one process re-runs its registration routine, so the guard has to
+	 * live in the same state `reset()` clears or the second boot fatals.
+	 */
+	public function test_reset_lets_a_slug_be_registered_again(): void {
+		$registrar = new Registrar();
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+
+		$registrar->reset();
+		$registrar->register( $this->make_sub_plugin( [ 'slug' => 'give-recurring' ] ) );
+
+		$this->assertCount( 1, $registrar->all() );
 	}
 
 	public function test_reset_empties_the_registry(): void {

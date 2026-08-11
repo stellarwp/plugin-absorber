@@ -5,6 +5,7 @@
 
 namespace Nexcess\PluginAbsorber\Contracts;
 
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
@@ -14,11 +15,13 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  */
 interface Registrar_Interface {
 	/**
-	 * Register a sub-plugin. Registering an existing slug replaces it.
+	 * Register a sub-plugin. A slug may only be registered once.
 	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin to register.
+	 *
+	 * @throws Config_Exception When the slug is already registered.
 	 *
 	 * @return void
 	 */

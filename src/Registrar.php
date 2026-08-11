@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 
 /**
  * Default registry: a plain slug => Sub_Plugin map.
@@ -19,20 +20,41 @@ class Registrar implements Registrar_Interface {
 	private $sub_plugins = [];
 
 	/**
-	 * Register a sub-plugin, replacing any earlier one with the same slug.
+	 * Register a sub-plugin.
 	 *
-	 * Assigning by key rather than appending is what makes the replacement happen in place: the
-	 * entry keeps its original position, so a host that registers conditionally from two code
-	 * paths gets one entry and an unchanged load order.
+	 * A slug is an identity, not a key this map happens to use: it also names the sub-plugin's
+	 * notices and its once-ever activation record. Letting a second registration win would drop
+	 * the first sub-plugin from the load silently and hand its activation record to the winner, so
+	 * the collision is refused instead. There is no legitimate second registration to protect —
+	 * a decision the host cannot make up front belongs in the `enabled` callable, which is
+	 * re-evaluated on every load, not in a second call to this method.
 	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin to register.
 	 *
+	 * @throws Config_Exception When the slug is already registered.
+	 *
 	 * @return void
 	 */
 	public function register( Sub_Plugin $sub_plugin ): void {
-		$this->sub_plugins[ $sub_plugin->get_slug() ] = $sub_plugin;
+		$slug = $sub_plugin->get_slug();
+
+		if ( isset( $this->sub_plugins[ $slug ] ) ) {
+			// Both files, because the two registrations routinely come from different host plugins
+			// and the stack trace only shows the one that lost.
+			throw new Config_Exception(
+				sprintf(
+					'Two sub-plugins are registered under the slug "%1$s": %2$s and %3$s.'
+						. ' A slug must identify exactly one sub-plugin.',
+					$slug,
+					$this->sub_plugins[ $slug ]->get_bundled_plugin_file(),
+					$sub_plugin->get_bundled_plugin_file()
+				)
+			);
+		}
+
+		$this->sub_plugins[ $slug ] = $sub_plugin;
 	}
 
 	/**
