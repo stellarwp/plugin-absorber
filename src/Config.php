@@ -67,6 +67,25 @@ class Config {
 	}
 
 	/**
+	 * Build the name of one of this library's filters.
+	 *
+	 * The prefix lives here, so everything derived from it is built here too. A collaborator that
+	 * assembled its own name would be repeating the segment between the host's prefix and the
+	 * hook's own name, and would have to be found and corrected if it ever changed.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $name Hook name, less the prefix and this library's namespace.
+	 *
+	 * @throws Config_Exception When no prefix has been set.
+	 *
+	 * @return string
+	 */
+	public static function get_hook_name( string $name ): string {
+		return self::get_hook_prefix() . '/plugin_absorber/' . $name;
+	}
+
+	/**
 	 * Share the host's container so collaborators become bindable.
 	 *
 	 * Entirely optional — with no container the library instantiates its own defaults.

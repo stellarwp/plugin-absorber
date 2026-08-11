@@ -68,7 +68,10 @@ class ConflictPolicyTest extends WPTestCase {
 		$constants = ( new ReflectionClass( Conflict_Policy::class ) )->getConstants();
 
 		foreach ( $constants as $name => $value ) {
-			yield $name => [ (string) $value ];
+			// A non-string constant is yielded as the empty string rather than skipped, so a policy
+			// declared as something other than a string fails is_valid() here instead of vanishing
+			// from the set this provider exists to keep complete.
+			yield $name => [ is_string( $value ) ? $value : '' ];
 		}
 	}
 
