@@ -16,7 +16,7 @@ Where the two disagree, this document wins.
 | Repository | `github.com/stellarwp/plugin-absorber` |
 | Root namespace | `Nexcess\PluginAbsorber\` |
 | Filter segment | `{hook_prefix}/plugin_absorber/…` |
-| Option / transient | `{option_prefix}_plugin_absorber_activations` / `…_notices`, where `{option_prefix}` is the hook prefix lowercased with hyphens folded to underscores |
+| Options | `{option_prefix}_plugin_absorber_activations` / `…_notices`, where `{option_prefix}` is the hook prefix lowercased with hyphens folded to underscores. Options, never transients |
 | PR strategy | Stacked branches, merged to `main` in order |
 | Test strategy | Codeception + `wp-browser`, WPLoader (real WP) + `uopz` for unhookable functions |
 | PR size cap | ≤ 10 files, tests excluded; no logic-bearing PR exceeds 4 source files |

@@ -17,7 +17,7 @@ Every task's requirements implicitly include this section.
 - **PHP floor:** `>=7.4`. **WordPress floor:** 6.4 (the `wp_admin_notice_markup` filter). Stated in the README only — WordPress is not a Composer dependency, so it is not enforceable in `require`.
 - **Class naming:** `Snake_Case` (`Sub_Plugin`, `Conflict_Policy`, `Config_Exception`). Methods fully spelled out and readable. Config keys descriptive and WordPress-centric.
 - **Filter names:** `"{$hook_prefix}/plugin_absorber/should_load"` and `"{$hook_prefix}/plugin_absorber/conflict_policy"`.
-- **Storage keys:** option `"{$hook_prefix}_plugin_absorber_activations"`, option `"{$hook_prefix}_plugin_absorber_notices"`. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
+- **Storage keys:** option `"{$option_prefix}_plugin_absorber_activations"`, option `"{$option_prefix}_plugin_absorber_notices"`. Both are assembled by `Config::get_option_name( string $name )` and nowhere else, alongside `Config::get_hook_name()` for filters. **Amended 2026-08-11:** `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, so `Give-Core` yields the option `give_core_plugin_absorber_notices` while still yielding the filter `Give-Core/plugin_absorber/should_load` — the prefix validator admits `A-Z` and `-`, and a hook-naming value should not reach a storage key verbatim. The two normalisations stay separate: folding case into the hook side would silently rename the host's own filters. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
 - **Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only. No other StellarWP library.
 - **PR size cap:** ≤10 files per PR, tests and test infrastructure excluded. No logic-bearing PR exceeds 4 source files.
 - **PR body format** — exactly four parts, nothing else. No boilerplate headings, no restating the diff, no checklists:
@@ -42,21 +42,25 @@ Every task's requirements implicitly include this section.
 ```
 plugin-absorber/
 ├── src/
-│   ├── Config.php                        # static config facade: hook prefix, version, container
+│   ├── Config.php                        # static config facade: hook prefix, container, name building
 │   ├── Loader.php                        # static facade: resolve/register/boot/load loop
 │   ├── Sub_Plugin.php                    # value object + every per-sub-plugin predicate
 │   ├── Conflict_Policy.php               # three policy string constants
+│   ├── Plugin_State.php                  # the only file touching WordPress plugin functions
 │   ├── Registrar.php                     # default slug => Sub_Plugin map
 │   ├── Activation.php                    # default run-once activation tracking
 │   ├── Conflict/
-│   │   ├── Resolver.php                  # default standalone detection/deactivation/redirect
-│   │   └── Resolver_Interface.php
-│   ├── Contracts/
-│   │   ├── Registrar_Interface.php
-│   │   └── Activation_Interface.php
+│   │   ├── Contracts/
+│   │   │   └── Resolver_Interface.php
+│   │   └── Resolver.php                  # default standalone detection/deactivation/redirect
+│   ├── Contracts/                        # interfaces whose implementations sit at the src/ root
+│   │   ├── Activation_Interface.php
+│   │   ├── Plugin_State_Interface.php
+│   │   └── Registrar_Interface.php
 │   ├── Notices/
+│   │   ├── Contracts/
+│   │   │   └── Queue_Interface.php
 │   │   ├── Queue.php                     # default queue: wording + capability gate
-│   │   ├── Queue_Interface.php
 │   │   ├── Renderer.php                  # markup and severity
 │   │   └── Store.php                     # the option the queue lives in
 │   └── Exceptions/
@@ -629,7 +633,7 @@ class Sub_Plugin {
 		}
 
 		return (string) apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/conflict_policy',
+			Config::get_hook_name( 'conflict_policy' ),
 			$policy,
 			$this
 		);
@@ -1516,8 +1520,8 @@ Config::set_container( $container );
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
-| `Notices\Queue_Interface` | `Notices\Queue` | Notice queue and the activation-error rewrite. |
-| `Conflict\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Notice queue and the activation-error rewrite. |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Standalone detection, deactivation, redirect. |
 | `Contracts\Activation_Interface` | `Activation` | Run-once activation tracking. |
 
 The container is **not** used to wire hooks — those stay plain static callbacks, so the container
@@ -1565,19 +1569,19 @@ container.'
 Lands before the load path and the resolver because both call into it.
 
 **Files:**
-- Create: `src/Notices/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Notices/Store.php`, `src/Notices/Renderer.php`, `tests/unit/Notices/QueueTest.php`, `tests/unit/Notices/StoreTest.php`, `tests/unit/Notices/RendererTest.php`
+- Create: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Notices/Store.php`, `src/Notices/Renderer.php`, `tests/unit/Notices/QueueTest.php`, `tests/unit/Notices/StoreTest.php`, `tests/unit/Notices/RendererTest.php`
 - Modify: `src/Loader.php` (add the `notices()` accessor), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_option_name()` (Task 4), `Sub_Plugin` message getters (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces:
-  - `Notices\Queue_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
-  - `Loader::notices(): Notices\Queue_Interface`
+  - `Notices\Contracts\Queue_Interface` with `queue_merge_notice( Sub_Plugin ): void`, `queue_conflict_notice( Sub_Plugin ): void`, `queue_dependency_notice( Sub_Plugin ): void`, `render(): void`
+  - `Loader::notices(): Notices\Contracts\Queue_Interface`
 
   Task 11 calls `queue_dependency_notice()`; Task 12 calls `queue_merge_notice()` and `queue_conflict_notice()`; Task 14 extends this interface.
 
 **Design notes:**
-- Option `"{$hook_prefix}_plugin_absorber_notices"`, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
+- Option `"{$option_prefix}_plugin_absorber_notices"`, built by `Config::get_option_name( 'notices' )`, so the queue survives the resolver's `wp_safe_redirect()` and renders on the next admin load.
 
 > **Deviations, deliberate (added 2026-08-03, from the PR 10 review):**
 >
@@ -1614,9 +1618,13 @@ Lands before the load path and the resolver because both call into it.
 >
 >    `Notices` was a plural bag noun naming the subject rather than the job, which read worst of
 >    the three once the split landed. The folder carries the subject and the class carries the job,
->    following `Conflict\Resolver` — which is also why `Queue_Interface` sits beside its
->    implementation rather than in `Contracts\`. The rename is free now and a breaking change after
->    1.0.
+>    following `Conflict\Resolver`. The rename is free now and a breaking change after 1.0.
+>
+>    The interface follows the folder: `Notices\Contracts\Queue_Interface` in
+>    `src/Notices/Contracts/Queue_Interface.php`. A folder-scoped concern owns its own contract, so
+>    the top-level `src/Contracts/` is left holding only the interfaces whose implementations sit at
+>    the `src/` root — `Registrar_Interface`, `Plugin_State_Interface`, `Activation_Interface`.
+>    Task 12 does the same for `Conflict\Contracts\Resolver_Interface`.
 >
 >    Both collaborators are constructor arguments defaulting to the standard implementations, so
 >    `new Queue()` — what `Loader::resolve()` builds when the container holds no binding — behaves
@@ -1633,9 +1641,23 @@ Lands before the load path and the resolver because both call into it.
 >    would put this PR over the four-source-file cap. The same cap is why `Notices\Store` and
 >    `Notices\Renderer` are concrete rather than interface-backed.
 >
+> 8. **`Notices\Store` builds its key with `Config::get_option_name( 'notices' )`** (added
+>    2026-08-11), not by concatenating `Config::get_hook_prefix()`. The prefix validator admits
+>    `A-Z` and `-`, so `Give-Core` would otherwise put a capitalised, hyphenated segment straight
+>    into a storage key. `get_option_name()` lowercases and folds hyphens to underscores;
+>    `get_hook_name()` deliberately does not, because normalising there would silently rename the
+>    host's own filters. Nothing outside `Config` assembles either kind of name.
+> 9. **`Notices\Renderer` prints through `wp_kses_post()`, not `esc_html()`** (added 2026-08-11).
+>    A message reaches the renderer only from the host's own `conflict_notice_message` /
+>    `dependency_notice_message` config or from its filter — never from user input — and the
+>    commonest thing a host wants in a merge notice is a link to its own knowledge-base article.
+>    `wp_kses_post()` still strips scripts and event handlers, so the XSS surface is unchanged.
+>    Task 14's activation-error rewrite takes the same message from the same source onto the same
+>    screen, so the two must not diverge.
+>
 >    The Step 4/5 code listings below still show the pre-split, pre-rename shape, exactly as they
->    still show the transient that deviation 1 replaced. The deviations are the record of what
->    shipped.
+>    still show the transient that deviation 1 replaced and the hand-built option key that
+>    deviation 8 replaced. The deviations are the record of what shipped.
 - Queue entries are keyed `"{$slug}:{$type}"`, not by slug alone. A sub-plugin can legitimately earn a merge notice at `plugins_loaded` @1 and a dependency notice at @2 in the same request; keying by slug alone would silently drop one.
 - Default messages live **here**, not in `Sub_Plugin`. `get_conflict_notice_message()` returns `''` when unconfigured (Task 7 asserts this), and each notice type supplies its own fallback sentence — so auto-deactivating a plugin can never leave the user with no explanation.
 
@@ -1761,14 +1783,21 @@ class NoticesTest extends WPTestCase {
 		$this->assertStringContainsString( 'Bundled now.', $output );
 	}
 
-	public function test_render_escapes_the_message(): void {
+	public function test_render_strips_unsafe_markup_but_keeps_a_link(): void {
 		$notices = new Notices();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
+		$notices->queue_merge_notice(
+			$this->make_sub_plugin(
+				[ 'conflict_notice_message' => '<script>alert(1)</script><a href="https://example.com/kb">Read more</a>' ]
+			)
+		);
 
 		$output = $this->render_to_string( $notices );
 
 		$this->assertStringNotContainsString( '<script>', $output );
-		$this->assertStringContainsString( '&lt;script&gt;', $output );
+
+		// wp_kses_post() is the point: a host's knowledge-base link has to survive, and
+		// esc_html() would have turned it into visible angle brackets.
+		$this->assertStringContainsString( '<a href="https://example.com/kb">Read more</a>', $output );
 	}
 
 	public function test_render_clears_the_queue(): void {
@@ -1973,7 +2002,7 @@ class Notices implements Notices_Interface {
 
 			printf(
 				'<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
-				esc_html( $message )
+				wp_kses_post( $message )
 			);
 		}
 	}
@@ -2085,8 +2114,8 @@ Default messages live here rather than in `Sub_Plugin`, which returns "" when un
 way auto-deactivating a plugin can never leave the user with a blank explanation, while a host that
 does configure a message still gets exactly its own text.
 
-Verify: `slic run unit` — 13 tests, including escaping, queue-clearing on render, and a simulated
-redirect (queue with one instance, render with another).'
+Verify: `slic run unit` — 13 tests, including `wp_kses_post()` sanitising, queue-clearing on render,
+and a simulated redirect (queue with one instance, render with another).'
 ```
 
 ---
@@ -2100,7 +2129,7 @@ redirect (queue with one instance, render with another).'
 - Create: `tests/unit/LoaderLoadTest.php`, `tests/unit/LoaderBootTest.php`
 
 **Interfaces:**
-- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::notices()` (Task 10), `Config::get_hook_prefix()` (Task 4).
+- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::notices()` (Task 10), `Config::get_hook_name()` (Task 4).
 - Produces:
   - `Loader::boot(): void` — idempotent
   - `Loader::load_all(): void`
@@ -2483,7 +2512,7 @@ Append these methods:
 		}
 
 		$should_load = apply_filters(
-			Config::get_hook_prefix() . '/plugin_absorber/should_load',
+			Config::get_hook_name( 'should_load' ),
 			true,
 			$sub_plugin
 		);
@@ -2600,13 +2629,13 @@ loading anything.'
 **PR 12** · branch `12-conflict-resolver` from `11-loader-load-path` · 4 source files
 
 **Files:**
-- Create: `src/Conflict/Resolver_Interface.php`, `src/Conflict/Resolver.php`, `tests/unit/Conflict/ResolverTest.php`
+- Create: `src/Conflict/Contracts/Resolver_Interface.php`, `src/Conflict/Resolver.php`, `tests/unit/Conflict/ResolverTest.php`
 - Modify: `src/Loader.php` (add `resolver()` and the @1 hook), `README.md`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Loader::notices()` (Task 10), `Sub_Plugin::is_standalone_plugin_active()` / `is_standalone_plugin_network_active()` / `get_conflict_policy()` (Task 7), `Conflict_Policy::*` (Task 6).
 - Produces:
-  - `Conflict\Resolver_Interface` with `resolve_all(): void`
+  - `Conflict\Contracts\Resolver_Interface` with `resolve_all(): void` — a folder-scoped concern owns its own contract, so this lives in `src/Conflict/Contracts/`, not in the top-level `src/Contracts/` and not beside `Resolver`. Matches `Notices\Contracts\Queue_Interface` from Task 10.
   - `Conflict\Resolver::redirect_destination( $referrer )` — `protected`, returns `string|false`
   - `Loader::resolver(): Resolver_Interface`
   - `Loader::run_conflict_resolution(): void`
@@ -2922,7 +2951,7 @@ class ResolverTest extends WPTestCase {
 Run: `slic run unit`
 Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict\Resolver" not found`.
 
-- [ ] **Step 4: Write `src/Conflict/Resolver_Interface.php`**
+- [ ] **Step 4: Write `src/Conflict/Contracts/Resolver_Interface.php`**
 
 ```php
 <?php
@@ -2930,7 +2959,7 @@ Expected: FAIL — `Class "Nexcess\PluginAbsorber\Conflict\Resolver" not found`.
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Conflict;
+namespace Nexcess\PluginAbsorber\Conflict\Contracts;
 
 /**
  * Decides what happens when a sub-plugin's standalone counterpart is still active.
@@ -2961,6 +2990,7 @@ interface Resolver_Interface {
 
 namespace Nexcess\PluginAbsorber\Conflict;
 
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
@@ -3085,7 +3115,7 @@ class Resolver implements Resolver_Interface {
 
 - [ ] **Step 6: Add the resolver accessor and the @1 hook to `src/Loader.php`**
 
-Add `use Nexcess\PluginAbsorber\Conflict\Resolver_Interface;` and `use Nexcess\PluginAbsorber\Conflict\Resolver;` to the imports, then:
+Add `use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;` and `use Nexcess\PluginAbsorber\Conflict\Resolver;` to the imports, then:
 
 ```php
 	/**
@@ -3219,8 +3249,15 @@ production calls `exit` while leaving a failing test free to report as failing.'
 - Modify: `src/Loader.php` (add `activation()` and call it from `load()`), `README.md`
 
 **Interfaces:**
-- Consumes: `Config::get_hook_prefix()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
+- Consumes: `Config::get_option_name()` (Task 4), `Sub_Plugin::get_activation_callback()` / `get_slug()` (Task 7), the `WithSubPlugins` trait (Task 7) for its fixtures, `Loader::resolve()` (Task 9).
 - Produces: `Activation_Interface` with `maybe_run( Sub_Plugin $sub_plugin ): void`, and `Loader::activation(): Activation_Interface`.
+
+**Design note:** the option key comes from `Config::get_option_name( 'activations' )`, never from
+concatenating `Config::get_hook_prefix()`. The prefix validator admits `A-Z` and `-`, so a host
+registering `Give-Core` would otherwise write to `Give-Core_plugin_absorber_activations`;
+`get_option_name()` normalises that to `give_core_plugin_absorber_activations` while
+`get_hook_name()` leaves filter names byte-for-byte as the host wrote them. `Notices\Store` uses the
+same helper, so the two storage keys cannot drift apart.
 
 **Why this exists:** `register_activation_hook()` never fires for a `require_once`'d file, so the absorbed plugin's original activation routine would otherwise never run. Tracked per slug in one option, run exactly once ever. It is **not** a place for ongoing upgrade logic — a merged sub-plugin handles version upgrades with its own idempotent, version-gated migrations on load.
 
@@ -3453,7 +3490,7 @@ class Activation implements Activation_Interface {
 	 * @return string
 	 */
 	private function option_name(): string {
-		return Config::get_hook_prefix() . '_plugin_absorber_activations';
+		return Config::get_option_name( 'activations' );
 	}
 }
 ```
@@ -3585,13 +3622,13 @@ generic *"Plugin could not be activated because it triggered a fatal error."* �
 completely unhelpful. Swap in the sub-plugin's own explanation.
 
 **Files:**
-- Modify: `src/Notices/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Loader.php`, `README.md`
+- Modify: `src/Notices/Contracts/Queue_Interface.php`, `src/Notices/Queue.php`, `src/Loader.php`, `README.md`
 - Create: `tests/unit/NoticesActivationErrorTest.php`
 
 **Interfaces:**
 - Consumes: `Loader::all()` (Task 9), `Sub_Plugin::get_standalone_plugin_basename()` / `get_conflict_notice_message()` (Task 7).
 - Produces:
-  - `Notices\Queue_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
+  - `Notices\Contracts\Queue_Interface::filter_activation_error_markup( string $markup ): string` — **an addition to the interface shipped in Task 10**
   - `Loader::filter_activation_error_markup( $markup ): string`
 
 **Design note (amendment A):** the engineering plan prescribed `ob_start()` on `admin_head-plugins.php`, copied from Kadence. The newer LearnDash reference (`Course_Grid/Legacy/Loader::update_legacy_plugin_activation_notice()`) uses the `wp_admin_notice_markup` filter instead. Same nonce check, same `str_replace`, but no buffering and no risk of mangling unrelated admin output — and it is testable by calling the filter directly. This is why the library requires WordPress 6.4+.
@@ -3732,12 +3769,18 @@ class NoticesActivationErrorTest extends WPTestCase {
 		);
 	}
 
-	public function test_it_escapes_the_replacement(): void {
-		$this->register( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] );
+	public function test_it_strips_unsafe_markup_from_the_replacement_but_keeps_a_link(): void {
+		$this->register(
+			[ 'conflict_notice_message' => '<script>alert(1)</script><a href="https://example.com/kb">Read more</a>' ]
+		);
 
 		$result = ( new Notices() )->filter_activation_error_markup( $this->wordpress_markup );
 
 		$this->assertStringNotContainsString( '<script>', $result );
+
+		// The replacement goes through wp_kses_post(), not esc_html(), so the host's own link
+		// reaches the screen instead of arriving as visible angle brackets.
+		$this->assertStringContainsString( '<a href="https://example.com/kb">Read more</a>', $result );
 	}
 
 	public function test_the_loader_trampoline_delegates(): void {
@@ -3756,7 +3799,7 @@ class NoticesActivationErrorTest extends WPTestCase {
 Run: `slic run unit`
 Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::filter_activation_error_markup()`.
 
-- [ ] **Step 4: Add the method to `src/Notices/Queue_Interface.php`**
+- [ ] **Step 4: Add the method to `src/Notices/Contracts/Queue_Interface.php`**
 
 ```php
 	/**
@@ -3827,6 +3870,15 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 			)
 		);
 
+		// wp_kses_post(), matching Notices\Renderer: the message comes from the host's own config
+		// or filter, never from user input, so a knowledge-base link has to survive. Same message,
+		// same screen -- the two rendering paths must not sanitise differently.
+		//
+		// Sanitising before the emptiness check, not after, is what makes the check hold: a
+		// message that is nothing but disallowed markup filters down to '', and replacing
+		// WordPress's wording with an empty string leaves the user staring at a blank notice.
+		$message = trim( wp_kses_post( $message ) );
+
 		if ( $message === '' ) {
 			return $markup;
 		}
@@ -3834,7 +3886,7 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Notices::fil
 		// phpcs:ignore WordPress.WP.I18n.TextDomainMismatch -- deliberately matching WordPress's own string.
 		$wordpress_text = __( 'Plugin could not be activated because it triggered a <strong>fatal error</strong>.', 'default' );
 
-		return str_replace( $wordpress_text, esc_html( $message ), $markup );
+		return str_replace( $wordpress_text, $message, $markup );
 	}
 
 	/**
@@ -3908,7 +3960,7 @@ Requires WordPress 6.4+ for the `wp_admin_notice_markup` filter.
 - [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Notices/Queue.php src/Notices/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
+git add src/Notices/Queue.php src/Notices/Contracts/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
 git commit -m "Replace WordPress fatal-activation text for absorbed standalones"
 git push -u origin 14-activation-error-notice
 gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: replaces WordPress generic "triggered a fatal error" notice with the sub-plugin own
@@ -3929,9 +3981,10 @@ registered standalone basename, and a valid `plugin-activation-error_{basename}`
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
+This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no consumers.
 
-Verify: `slic run unit` — 8 tests, one per gate plus escaping and the Loader trampoline.'
+Verify: `slic run unit` — 8 tests, one per gate plus `wp_kses_post()` sanitising and the Loader
+trampoline.'
 ```
 
 ---
@@ -4554,7 +4607,7 @@ Checked against `docs/superpowers/specs/2026-07-31-plugin-absorber-design.md`:
   (`is_standalone_plugin_network_active()`) + Task 12 (the `$network_wide` argument); D → Task 7
   (`get_dependency_notice_message()`) + Task 10 (rendering). Deferred B/E/F are recorded above and
   in the PR bodies that touch them. Every spec test bullet has a corresponding test method.
-- **Interface consistency.** `Notices\Queue_Interface` grows one method in Task 14 — flagged in both the
+- **Interface consistency.** `Notices\Contracts\Queue_Interface` grows one method in Task 14 — flagged in both the
   task and the PR body rather than left implicit. `Loader_State::reset()` is written once in Task 9 and
   extended once in Task 11 (`$booted`), shown in full both times. `redirect_destination()` is
   `protected`, matching how the Task 12 tests subclass it.

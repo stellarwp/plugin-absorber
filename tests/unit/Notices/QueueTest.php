@@ -9,8 +9,8 @@ use Codeception\TestCase\WPTestCase;
 use Generator;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Notices\Queue;
-use Nexcess\PluginAbsorber\Notices\Queue_Interface;
 use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -26,6 +26,10 @@ class QueueTest extends WPTestCase {
 	use WithSubPlugins;
 
 	private const OPTION = 'give_plugin_absorber_notices';
+
+	// The option the queue moves to once the hook prefix changes, which is what proves the name is
+	// derived from the prefix rather than fixed.
+	private const OPTION_FOR_OTHER_PREFIX = 'woo_plugin_absorber_notices';
 
 	public function setUp(): void {
 		parent::setUp();
@@ -49,7 +53,7 @@ class QueueTest extends WPTestCase {
 
 	public function tearDown(): void {
 		$this->clear_queue();
-		delete_site_option( 'woo_plugin_absorber_notices' );
+		delete_site_option( self::OPTION_FOR_OTHER_PREFIX );
 		Config_State::reset();
 		parent::tearDown();
 	}
@@ -238,31 +242,35 @@ class QueueTest extends WPTestCase {
 		yield 'dependency' => [ 'queue_dependency_notice', 'notice-error' ];
 	}
 
-	public function test_render_escapes_the_message(): void {
+	public function test_render_strips_a_script_from_the_message(): void {
 		$notices = new Queue();
-		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => '<script>alert(1)</script>' ] ) );
+		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'conflict_notice_message' => 'Careful.<script>alert(1)</script>' ] ) );
 
 		$output = $this->render_to_string( $notices );
 
-		$this->assertStringNotContainsString( '<script>', $output );
-		$this->assertStringContainsString( '&lt;script&gt;', $output );
+		// `wp_kses_post()` drops the disallowed tag and keeps the text it wrapped, so the payload
+		// survives as inert text rather than as markup the browser would run.
+		$this->assertStringNotContainsString( '<script', $output );
+		$this->assertStringContainsString( 'alert(1)', $output );
 	}
 
 	/**
-	 * Escaping is `esc_html()` on purpose, so a message is plain text and a host that ships a
-	 * link gets literal angle brackets. Pinned here because loosening it later is safe and
-	 * tightening it later is not.
+	 * Messages come from the host's own configuration or filters rather than from user input, so a
+	 * message is allowed to carry a link — to the knowledge-base article explaining the merge,
+	 * typically — while the event handler a message must never be able to ship is stripped.
 	 */
-	public function test_render_does_not_allow_markup_in_a_message(): void {
+	public function test_render_keeps_a_link_but_not_an_event_handler(): void {
 		$notices = new Queue();
 		$notices->queue_merge_notice(
-			$this->make_sub_plugin( [ 'conflict_notice_message' => 'See <a href="https://example.com">the docs</a>.' ] )
+			$this->make_sub_plugin(
+				[ 'conflict_notice_message' => 'See <a href="https://example.com" onclick="alert(1)">the docs</a>.' ]
+			)
 		);
 
 		$output = $this->render_to_string( $notices );
 
-		$this->assertStringNotContainsString( '<a href', $output );
-		$this->assertStringContainsString( '&lt;a href=', $output );
+		$this->assertStringContainsString( '<a href="https://example.com">the docs</a>', $output );
+		$this->assertStringNotContainsString( 'onclick', $output );
 	}
 
 	public function test_render_clears_the_queue(): void {
@@ -525,11 +533,11 @@ class QueueTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( 'woo_plugin_absorber_notices', Queue::option_name() );
+		$this->assertSame( self::OPTION_FOR_OTHER_PREFIX, Queue::option_name() );
 
 		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
 
-		$this->assertIsArray( get_site_option( 'woo_plugin_absorber_notices', false ) );
+		$this->assertIsArray( get_site_option( self::OPTION_FOR_OTHER_PREFIX, false ) );
 		$this->assertFalse( $this->queue_exists() );
 	}
 

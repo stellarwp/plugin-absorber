@@ -25,8 +25,9 @@ administrator, not the site administrator who installed the plugin, who sees the
 
 `Notices\Queue::option_name()` is public, so you can render the queue yourself without replacing
 anything. The value is an `array<string,string>` keyed `slug:type` — `give-recurring:merge`, for
-example — and the messages are plain text; the default rendering escapes them with `esc_html()`, so
-a link in a message comes out as literal angle brackets.
+example — and the messages may contain markup; the default rendering passes them through
+`wp_kses_post()`, so a link, emphasis or a list survives while scripts and event handlers are
+stripped.
 
 The queue is three classes: `Notices\Queue` decides what a notice says and who may consume it,
 `Notices\Store` keeps it, `Notices\Renderer` draws it. Both collaborators are constructor arguments,

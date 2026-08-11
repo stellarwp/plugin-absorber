@@ -38,8 +38,9 @@ class Renderer {
 	/**
 	 * Print every message in the queue.
 	 *
-	 * Messages are printed through `esc_html()`, so they are plain text: markup a host puts in a
-	 * message renders as literal angle brackets rather than as a link.
+	 * Messages go through `wp_kses_post()`, the standard WordPress post-content allowlist, so a
+	 * link to a knowledge-base article, emphasis or a list survives, while a script or an event
+	 * handler attribute does not.
 	 *
 	 * @since 1.0.0
 	 *
@@ -49,9 +50,12 @@ class Renderer {
 	 */
 	public function render( array $queue ): void {
 		foreach ( $queue as $key => $message ) {
-			$message = trim( $message );
+			// Filtered before the emptiness check rather than after it, because filtering can
+			// empty a message on its own: `wp_kses_post( '<script></script>' )` is the empty
+			// string. Either that or a whitespace-only message would print an empty notice box,
+			// which reads as a bug.
+			$message = trim( wp_kses_post( $message ) );
 
-			// A whitespace-only message would print an empty notice box, which reads as a bug.
 			if ( $message === '' ) {
 				continue;
 			}
@@ -59,7 +63,9 @@ class Renderer {
 			printf(
 				'<div class="notice %s is-dismissible"><p>%s</p></div>',
 				esc_attr( $this->notice_class( (string) $key ) ),
-				esc_html( $message )
+				// Already filtered: escaping it again here would undo the whole point and print a
+				// link as literal angle brackets.
+				$message
 			);
 		}
 	}

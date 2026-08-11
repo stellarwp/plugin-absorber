@@ -71,10 +71,12 @@ interface Queue_Interface {
 	 * network-wide on multisite, where the queue is one network option. An implementation that
 	 * wants every administrator to see it has to track consumption per user itself.
 	 *
-	 * Messages are plain text. The default implementation prints them through `esc_html()`, so a
-	 * message containing a link renders as literal angle brackets rather than as an anchor. That
-	 * is deliberate for 1.0: escaping can be loosened later without breaking anyone, but it
-	 * cannot be tightened.
+	 * Messages may carry markup. They come from the host's own configuration or from its filters
+	 * rather than from user input, so the default implementation prints them through
+	 * `wp_kses_post()` — the standard WordPress post-content allowlist — and a link to a
+	 * knowledge-base article, emphasis or a list reaches the screen intact while a script or an
+	 * event handler attribute is stripped. An implementation bound in place of the default owns
+	 * its own escaping.
 	 *
 	 * @since 1.0.0
 	 *

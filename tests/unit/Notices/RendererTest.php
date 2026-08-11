@@ -66,23 +66,39 @@ class RendererTest extends WPTestCase {
 		);
 	}
 
-	public function test_it_escapes_the_message(): void {
-		$output = $this->render( [ 'a:merge' => '<script>alert(1)</script>' ] );
+	/**
+	 * `wp_kses_post()` drops a disallowed tag but keeps the text it wrapped, so the payload lands
+	 * on the page as inert text rather than as markup the browser would run.
+	 */
+	public function test_it_strips_a_script_from_a_message(): void {
+		$output = $this->render( [ 'a:merge' => 'Careful.<script>alert(1)</script>' ] );
 
-		$this->assertStringNotContainsString( '<script>', $output );
-		$this->assertStringContainsString( '&lt;script&gt;', $output );
+		$this->assertStringNotContainsString( '<script', $output );
+		$this->assertStringContainsString( 'alert(1)', $output );
 	}
 
 	/**
-	 * Escaping is `esc_html()` on purpose, so a message is plain text and a host that ships a link
-	 * gets literal angle brackets. Pinned here because loosening it later is safe and tightening it
-	 * later is not.
+	 * Messages come from the host's own configuration or filters rather than from user input, so a
+	 * message is allowed to carry a link — to the knowledge-base article explaining the merge,
+	 * typically — and it has to reach the screen as an anchor.
 	 */
-	public function test_it_does_not_allow_markup_in_a_message(): void {
+	public function test_it_keeps_a_link_in_a_message(): void {
 		$output = $this->render( [ 'a:merge' => 'See <a href="https://example.com">the docs</a>.' ] );
 
-		$this->assertStringNotContainsString( '<a href', $output );
-		$this->assertStringContainsString( '&lt;a href=', $output );
+		$this->assertStringContainsString( '<a href="https://example.com">the docs</a>', $output );
+	}
+
+	/**
+	 * The allowlist is per attribute, not per tag: the anchor a host wants survives while the event
+	 * handler it must never be able to ship does not. That split is what makes allowing markup safe.
+	 */
+	public function test_it_strips_an_event_handler_from_a_link(): void {
+		$output = $this->render(
+			[ 'a:merge' => 'See <a href="https://example.com" onclick="alert(1)">the docs</a>.' ]
+		);
+
+		$this->assertStringNotContainsString( 'onclick', $output );
+		$this->assertStringContainsString( '<a href="https://example.com">the docs</a>', $output );
 	}
 
 	/**
@@ -102,6 +118,10 @@ class RendererTest extends WPTestCase {
 
 		// Whitespace would otherwise print an empty notice box, which reads as a bug.
 		yield 'a whitespace-only message' => [ "  \n\t" ];
+
+		// So would a message that filtering empties: `wp_kses_post()` keeps the text a disallowed
+		// tag wrapped, and here there is none.
+		yield 'a message that is only disallowed markup' => [ '<script></script>' ];
 	}
 
 	public function test_an_empty_queue_prints_nothing(): void {
