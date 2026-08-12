@@ -22,6 +22,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use RuntimeException;
 
 /**
  * The load loop and its gate chain.
@@ -136,6 +137,63 @@ class LoaderTest extends WPTestCase {
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 		$this->assertTrue( defined( $constant ) );
+	}
+
+	/**
+	 * A host callable is arbitrary code, and this one runs inside `plugins_loaded` on every request a
+	 * site serves. Letting a throw out would white-screen the whole site — front end included — over
+	 * one sub-plugin's mistake, and take every sub-plugin behind it in the registration order down
+	 * with it. Reported to the developer, and the loop carries on.
+	 */
+	public function test_a_sub_plugin_that_throws_does_not_stop_the_others(): void {
+		$this->expect_incorrect_usage();
+
+		$this->register(
+			[
+				'slug'    => 'give-recurring',
+				'enabled' => static function (): bool {
+					throw new RuntimeException( 'the licence server was unreachable' );
+				},
+			]
+		);
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame(
+			1,
+			$this->bundled_plugin_loads(),
+			'The sub-plugin behind the one that threw still has to load.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * The bundled file is host code too, and a `require` of a file that throws — or one with a syntax
+	 * error, which is a catchable ParseError on an include — must not be the end of the request.
+	 */
+	public function test_a_bundled_file_that_throws_does_not_stop_the_others(): void {
+		$this->expect_incorrect_usage();
+
+		$constant = $this->make_guard_constant();
+		$path     = $this->make_throwing_bundled_plugin_file();
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => $path,
+				'plugin_loaded_constant' => $constant,
+			]
+		);
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		// Two: the throwing fixture counts its own load before it throws, and the sub-plugin behind
+		// it still loaded. One would mean the require never happened; without the guard neither
+		// number is ever read, because the throw ends the request.
+		$this->assertSame( 2, $this->bundled_plugin_loads() );
+		$this->assert_the_library_reported_incorrect_usage();
 	}
 
 	public function test_it_requires_the_bundled_file_exactly_once(): void {

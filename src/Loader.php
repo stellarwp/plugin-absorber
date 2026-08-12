@@ -8,6 +8,7 @@ namespace Nexcess\PluginAbsorber;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Throwable;
 
 /**
  * The load pass: every registered sub-plugin, in registration order, gated one at a time.
@@ -88,7 +89,29 @@ class Loader {
 		}
 
 		foreach ( $sub_plugins as $sub_plugin ) {
-			$this->load( $sub_plugin );
+			// Everything past this line is somebody else's code: the enabled and dependency_check
+			// callables, the host's should_load filter, and the bundled file itself, which a require
+			// runs from top to bottom. Any of it may throw, and this loop runs inside plugins_loaded
+			// on every request a site serves -- so an escaping throw is a white screen on the front
+			// end and in wp-admin alike, over one sub-plugin, and it takes every sub-plugin behind it
+			// in the registration order with it. The developer is told which sub-plugin, and the
+			// loop carries on with the next.
+			//
+			// A re-declaration is the one failure this cannot catch, because PHP does not raise it as
+			// a Throwable -- which is what the guard constant, checked before any of this, is for.
+			try {
+				$this->load( $sub_plugin );
+			} catch ( Throwable $thrown ) {
+				_doing_it_wrong(
+					self::class,
+					sprintf(
+						'The sub-plugin "%s" threw while loading, so it was abandoned: %s',
+						$sub_plugin->get_slug(),
+						$thrown->getMessage()
+					),
+					'1.0.0'
+				);
+			}
 		}
 	}
 

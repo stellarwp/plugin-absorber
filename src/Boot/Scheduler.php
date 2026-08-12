@@ -8,6 +8,7 @@ namespace Nexcess\PluginAbsorber\Boot;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
+use Throwable;
 use WP_Hook;
 
 /**
@@ -118,10 +119,53 @@ class Scheduler {
 			[
 				'priority' => self::LOAD_PRIORITY,
 				'run'      => static function () use ( $container ): void {
-					$container->get( Loader::class )->load_all();
+					self::load( $container );
 				},
 			],
 		];
+	}
+
+	/**
+	 * The load step.
+	 *
+	 * Static, and handed the container rather than reading one, so the closure in sequence() stays a
+	 * closure over the container.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param ContainerInterface $container Container the load pass is resolved from.
+	 *
+	 * @return void
+	 */
+	private static function load( ContainerInterface $container ): void {
+		// plugins_loaded fires on every request a site serves, so a throw out of this step is a white
+		// screen on all of them. `Loader::load_all()` already reports per sub-plugin and carries on,
+		// so what is left for this to catch is the pass itself -- a container that cannot build it
+		// above all, which is the shape a host's own broken binding takes.
+		try {
+			$container->get( Loader::class )->load_all();
+		} catch ( Throwable $thrown ) {
+			self::report_a_step_that_threw( 'load pass', 'no sub-plugin was loaded', $thrown );
+		}
+	}
+
+	/**
+	 * Tell the developer which step was abandoned, and why.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string    $step        Step that threw, named as the sequence names it.
+	 * @param string    $consequence What the site got instead.
+	 * @param Throwable $thrown      What came out of the step.
+	 *
+	 * @return void
+	 */
+	private static function report_a_step_that_threw( string $step, string $consequence, Throwable $thrown ): void {
+		_doing_it_wrong(
+			self::class,
+			sprintf( 'The %s threw, so %s: %s', $step, $consequence, $thrown->getMessage() ),
+			'1.0.0'
+		);
 	}
 
 	/**
