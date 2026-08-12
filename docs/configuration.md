@@ -134,7 +134,9 @@ The record lives in the `{option_prefix}_plugin_absorber_activations` option, a 
 multisite for the same reason the [notice queue](notices.md) is one: `deactivate_plugins()` is
 network-wide, so a merge that happened network-wide must not re-run the callback on every site. The
 slug is recorded *after* the callback returns, so a callback that fails is retried on the next
-request rather than marked done and silently skipped forever.
+request rather than marked done and silently skipped forever. A callback that throws cannot take the
+site down with it: the load pass reports it with `_doing_it_wrong()`, loads the sub-plugins behind it
+as usual, and leaves the record unwritten.
 
 One record for the network also means one *run* for the network, in whichever site's request reached
 the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is the callback's

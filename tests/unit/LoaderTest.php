@@ -507,6 +507,33 @@ class LoaderTest extends WPTestCase {
 		$this->assertSame( [], $this->activation_record(), 'The default activator must not have run too.' );
 	}
 
+	/**
+	 * The activation callback is the one piece of host code that runs *after* a successful require, so
+	 * a throw from it leaves the sub-plugin loaded with its migration half-done. Unguarded it would
+	 * take the site with it on every request — the sub-plugin loads, the callback throws, the record
+	 * is never written, and the next request does it all again. Reported instead, and the record still
+	 * goes unwritten, so a fixed callback is retried rather than skipped forever.
+	 */
+	public function test_a_throwing_activation_callback_does_not_stop_the_others(): void {
+		$this->expect_incorrect_usage();
+
+		$this->register(
+			[
+				'slug'                => 'give-recurring',
+				'activation_callback' => static function (): void {
+					throw new RuntimeException( 'the migration could not run' );
+				},
+			]
+		);
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 2, $this->bundled_plugin_loads(), 'Both files loaded; the callback threw after one of them.' );
+		$this->assertSame( [], $this->activation_record(), 'A callback that threw must not be recorded as done.' );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
 	public function test_it_loads_every_registered_sub_plugin(): void {
 		$this->register( [ 'slug' => 'give-recurring' ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
