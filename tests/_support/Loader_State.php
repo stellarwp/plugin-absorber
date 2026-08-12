@@ -33,9 +33,8 @@ class Loader_State {
 	 * @var array<string,mixed>
 	 */
 	protected const DEFAULTS = [
-		'resolved' => [],
-		'pending'  => [],
-		'booted'   => false,
+		'pending' => [],
+		'booted'  => false,
 	];
 
 	/**
@@ -53,21 +52,33 @@ class Loader_State {
 	public static function reset(): void {
 		$reflection = new ReflectionClass( Loader::class );
 
-		// Read rather than restated, so the helper cannot go on removing a hook from a priority
-		// the Loader no longer wires -- which would leave the real callback attached and every
-		// later test loading sub-plugins it never registered.
-		$load_priority = $reflection->getConstant( 'LOAD_PRIORITY' );
+		// The memo lives on Container\Resolution now, but every test in the suite resets through
+		// this one call, so it is dropped from here rather than making each of them reset twice.
+		Resolution_State::reset();
 
-		// Refused rather than coerced. A default priority here would take the load hook off some
-		// other number, leave the real callback attached, and load sub-plugins into every later
-		// test in the process.
-		if ( ! is_int( $load_priority ) ) {
+		// Read rather than restated, so the helper unwires exactly what boot() wired -- including
+		// any step the Loader grows later. Restating it would go on removing a callback from a
+		// priority the Loader no longer uses, leaving the real one attached and every later test
+		// loading sub-plugins it never registered.
+		$sequence = $reflection->getConstant( 'SEQUENCE' );
+
+		// Refused rather than coerced, for the same reason.
+		if ( ! is_array( $sequence ) ) {
 			throw new LogicException(
-				sprintf( 'Loader::LOAD_PRIORITY must be an int for %s to unwire the load hook.', self::class )
+				sprintf( 'Loader::SEQUENCE must be an array for %s to unwire the hooks boot() added.', self::class )
 			);
 		}
 
-		remove_action( 'plugins_loaded', [ Loader::class, 'load_all' ], $load_priority );
+		foreach ( $sequence as $method => $priority ) {
+			if ( ! is_string( $method ) || ! is_int( $priority ) ) {
+				throw new LogicException(
+					sprintf( 'Loader::SEQUENCE must map method names to int priorities for %s to unwire them.', self::class )
+				);
+			}
+
+			remove_action( 'plugins_loaded', [ Loader::class, $method ], $priority );
+		}
+
 		remove_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] );
 
 		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {

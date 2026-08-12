@@ -5,19 +5,25 @@
 
 namespace Nexcess\PluginAbsorber;
 
+use Nexcess\PluginAbsorber\Container\Resolution;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
-use Nexcess\PluginAbsorber\Notices\Queue;
-use Throwable;
 use WP_Hook;
 
 /**
- * Static facade: collaborator resolution, registration, hook wiring, and the load loop.
+ * Static facade: registration, hook wiring, and the load loop.
+ *
+ * Resolving an interface to its implementation lives in `Container\Resolution`; the accessors here
+ * are one-line delegations, so a host calls `Loader::notices()` and never has to know that.
+ *
+ * `final` because it cannot usefully be extended: every member is private static and every internal
+ * call is `self::`, so a subclass would inherit the API, be unable to override any of it, and change
+ * nothing — which is the silent no-op this class reports on everywhere else.
  *
  * @since 1.0.0
  */
-class Loader {
+final class Loader {
 	/**
 	 * plugins_loaded priority the load loop runs at.
 	 *
@@ -31,11 +37,20 @@ class Loader {
 	private const LOAD_PRIORITY = 2;
 
 	/**
-	 * Resolved collaborators, memoized by interface name.
+	 * The plugins_loaded steps, in run order, as [ method, priority ] pairs.
 	 *
-	 * @var array<string,object>
+	 * Stated once because boot() expresses this order twice — as hook priorities when it can still
+	 * wire, and as straight calls when it is too late to and has to run them inline. Those two are
+	 * the same sequence, and a comment is the only thing that could hold them in agreement.
+	 * Iterating one list cannot drift.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var array<string,int>
 	 */
-	private static $resolved = [];
+	private const SEQUENCE = [
+		'load_all' => self::LOAD_PRIORITY,
+	];
 
 	/**
 	 * Sub-plugins registered but not yet handed to the registrar.
@@ -59,7 +74,7 @@ class Loader {
 	 * @return Registrar_Interface
 	 */
 	public static function registrar(): Registrar_Interface {
-		return self::resolve( Registrar_Interface::class, Registrar::class );
+		return Resolution::registrar();
 	}
 
 	/**
@@ -70,7 +85,7 @@ class Loader {
 	 * @return Queue_Interface
 	 */
 	public static function notices(): Queue_Interface {
-		return self::resolve( Queue_Interface::class, Queue::class );
+		return Resolution::notices();
 	}
 
 	/**
@@ -110,7 +125,18 @@ class Loader {
 	public static function all(): array {
 		self::flush();
 
-		return self::registrar()->all();
+		// Registrar_Interface::all() can only declare `array` — PHP 7.4 has no way to say
+		// array<string,Sub_Plugin> in a signature — so a host binding its own registrar may return
+		// anything at all. Narrowed once here, where the untrusted value crosses into the library,
+		// rather than at each call site: a consumer that forgot the check would fatal inside
+		// plugins_loaded on its first predicate call, which is the exact failure this library
+		// exists to prevent, and every future consumer would have to remember it too.
+		return array_filter(
+			self::registrar()->all(),
+			static function ( $sub_plugin ): bool {
+				return $sub_plugin instanceof Sub_Plugin;
+			}
+		);
 	}
 
 	/**
@@ -150,12 +176,17 @@ class Loader {
 				'1.0.0'
 			);
 
-			self::load_all();
+			// In the order the hooks would have run them.
+			foreach ( array_keys( self::SEQUENCE ) as $method ) {
+				call_user_func( [ self::class, $method ] );
+			}
 
 			return;
 		}
 
-		add_action( 'plugins_loaded', [ self::class, 'load_all' ], self::LOAD_PRIORITY );
+		foreach ( self::SEQUENCE as $method => $priority ) {
+			add_action( 'plugins_loaded', [ self::class, $method ], $priority );
+		}
 	}
 
 	/**
@@ -172,13 +203,6 @@ class Loader {
 		}
 
 		foreach ( self::all() as $sub_plugin ) {
-			// Registrar_Interface::all() only declares `array`. A host binding its own registrar
-			// that returns anything else would otherwise fatal inside plugins_loaded on the first
-			// predicate call -- the exact failure this library exists to prevent.
-			if ( ! $sub_plugin instanceof Sub_Plugin ) {
-				continue;
-			}
-
 			self::load( $sub_plugin );
 		}
 	}
@@ -228,83 +252,6 @@ class Loader {
 		foreach ( $pending as $sub_plugin ) {
 			$registrar->register( $sub_plugin );
 		}
-	}
-
-	/**
-	 * Resolve an interface from the container when bound, else construct the default.
-	 *
-	 * The container is never required — with none set, every collaborator is a plain `new`, so
-	 * every default class must be constructible with no arguments. Resolution is memoized, and
-	 * nothing resolves until the first read, which is boot: that is what lets a host set its
-	 * container at any point beforehand. Swapping a collaborator after that would be the worse
-	 * behaviour, since anything already holding the old instance would keep it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @template T of object
-	 *
-	 * @param class-string<T> $interface     Interface to resolve.
-	 * @param class-string<T> $default_class Concrete class to build when nothing is bound.
-	 *
-	 * @throws Config_Exception When the container throws while building the binding, or returns
-	 *                          something that does not implement the interface it was asked for.
-	 *
-	 * @return T
-	 */
-	private static function resolve( string $interface, string $default_class ): object {
-		if ( isset( self::$resolved[ $interface ] ) ) {
-			// The map holds a different type per key, so it cannot be typed as T as a whole. The
-			// entry found here still implements $interface: a container binding is only memoized
-			// once it passes the instanceof below, and the fallback is built from the class-string.
-			/** @var T $memoized */
-			$memoized = self::$resolved[ $interface ];
-
-			return $memoized;
-		}
-
-		$container = Config::get_container();
-
-		if ( $container !== null && $container->has( $interface ) ) {
-			// has() true only promises the binding exists, not that it can be built: a host factory
-			// closure is free to throw, and a container asked for a class with an unsatisfiable
-			// dependency throws its own exception type. Uncaught, either one leaves the host's
-			// plugins_loaded with a fatal from a vendor namespace that names neither this library
-			// nor the binding at fault, so both are reported the same way as a binding of the wrong
-			// type. The original is kept as the previous exception; nothing is memoized.
-			try {
-				$instance = $container->get( $interface );
-			} catch ( Throwable $thrown ) {
-				throw new Config_Exception(
-					sprintf(
-						'The container failed to build the binding for %s: %s',
-						$interface,
-						$thrown->getMessage()
-					),
-					0,
-					$thrown
-				);
-			}
-
-			// Checked before it is memoized. Without this the bad instance is cached, and every
-			// accessor throws a TypeError blaming this library rather than the binding.
-			if ( ! $instance instanceof $interface ) {
-				throw new Config_Exception(
-					sprintf(
-						'The container binding for %s must implement it. Got %s.',
-						$interface,
-						is_object( $instance ) ? get_class( $instance ) : gettype( $instance )
-					)
-				);
-			}
-
-			self::$resolved[ $interface ] = $instance;
-
-			return $instance;
-		}
-
-		self::$resolved[ $interface ] = new $default_class();
-
-		return self::$resolved[ $interface ];
 	}
 
 	/**

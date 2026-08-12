@@ -55,8 +55,10 @@ declarations).
 ### Public surface
 
 A two-class static facade — `Config` (hook prefix + optional container) and `Loader`
-(resolve/register/boot/load) — matching the shape of `stellarwp/assets` and
-`stellarwp/admin-notices`. Everything else is an implementation detail behind it.
+(register/boot/load, plus accessors) — matching the shape of `stellarwp/assets` and
+`stellarwp/admin-notices`. Everything else is an implementation detail behind it. `Loader` is
+`final`: every member is private static and every internal call is `self::`, so a subclass could
+override nothing and would silently change nothing.
 
 ### Collaborators
 
@@ -73,11 +75,17 @@ An interface belonging to a folder-scoped concern lives in that folder's `Contra
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
 implementations sit at the root — `Registrar`, `Plugin_State`, `Activation`.
 
-All four come through one generic helper — `Loader::resolve( string $interface, string
+All four come through one generic helper — `Container\Resolution::get( string $interface, string
 $default_class ): object` — which returns the container binding when `$container->has()`, otherwise
 `new $default_class()`, memoized either way. Collaborators reach each other through the accessors
-(`Loader::registrar()`, `resolver()`, `notices()`, `activation()`), so rebinding one in the host's
-container flows everywhere.
+(`Resolution::registrar()`, `notices()`, …), so rebinding one in the host's container flows
+everywhere.
+
+**Resolution is its own class, not a private static on `Loader`.** It shares nothing with the
+facade — no hooks, no registration buffer, no load loop — and while it lived there it was the only
+way for a collaborator to reach a peer, so every collaborator had to depend on the whole facade to
+get at one interface. `Loader::registrar()` and `Loader::notices()` remain as one-line delegations,
+so the public surface a host sees is unchanged; what changed is what a *collaborator* depends on.
 
 The container is **never** used to wire hooks. Hooks stay plain static trampolines, which is what
 keeps the container genuinely optional.
@@ -116,9 +124,18 @@ all_admin_notices      → Loader::render_notices()                 [is_admin() 
 wp_admin_notice_markup → Loader::filter_activation_error_markup() [is_admin() only]
 ```
 
-`load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → dependencies
-met → not already loaded → file exists → `should_load` filter → `require_once` → activation
+`load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
+loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
 callback (only after a *successful* require).
+
+The guard constant is checked **before** the dependency check, not after. It is one `defined()`, it
+carries the whole re-declaration guarantee, and it is the only gate meaning "this plugin is already
+running" — warning that requirements are unmet for a plugin the admin can watch working would send
+them after the wrong problem. `docs/filters.md` and the spec agree.
+
+`Loader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
+may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
+the interface signature — so it is filtered once where the untrusted value enters.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects.
