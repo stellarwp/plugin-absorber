@@ -291,7 +291,7 @@ level 9, so most breakage surfaces from `composer test:analysis` without standin
 
 ### Task 14 — `14-activation-error-rewrite`
 
-- [ ] Rebase; de-null any collaborator constructor the branch adds; keep `wp_admin_notice_markup` wiring in `Boot\Scheduler`.
+- [x] Rebase; de-null any collaborator constructor the branch adds; keep `wp_admin_notice_markup` wiring in `Boot\Scheduler`.
 
 ### Task 15 — `15-e2e-suite`
 

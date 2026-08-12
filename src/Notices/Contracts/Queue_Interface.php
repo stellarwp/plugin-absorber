@@ -85,4 +85,26 @@ interface Queue_Interface {
 	 * @return void
 	 */
 	public function render(): void;
+
+	/**
+	 * Replace WordPress's generic fatal-activation text with the sub-plugin's own explanation.
+	 *
+	 * Filters `wp_admin_notice_markup`. This is the one conflict the load guard cannot prevent:
+	 * WordPress includes a plugin being activated after the bundled copy has already loaded, so
+	 * the re-declaration is a real fatal, caught in core's activation sandbox and reported as
+	 * "the plugin triggered a fatal error" — true, and useless to whoever pressed the button.
+	 *
+	 * An implementation must return the markup untouched unless the request really is a
+	 * nonce-verified activation error, on the plugins screen, for a standalone this library
+	 * knows about.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $markup Notice markup WordPress is about to print.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 *
+	 * @return string
+	 */
+	public function filter_activation_error_markup( string $markup ): string;
 }

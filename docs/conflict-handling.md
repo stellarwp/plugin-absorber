@@ -96,7 +96,26 @@ jobs. The cost is a missed detection; the alternative costs the guarantee the gu
 
 ## What the guard cannot do
 
-The guard cannot help on the request that *activates* the standalone: WordPress includes it after
-the bundled copy has already loaded, so that re-declaration is a real fatal. WordPress catches it
-in its activation sandbox, and this library rewrites the resulting error screen into an
-explanation.
+The guard cannot help on the request that *activates* the standalone: WordPress includes the plugin
+being activated **after** the bundled copy has already loaded, so that re-declaration is a real
+fatal. Core catches it in its activation sandbox and prints *"Plugin could not be activated because
+it triggered a fatal error."* — true, and useless to whoever pressed the button.
+
+So the library filters `wp_admin_notice_markup` and swaps that sentence for the sub-plugin's
+`conflict_notice_message`, falling back to a generic one naming the slug. This is what puts the
+WordPress floor at 6.4: the filter does not exist before it.
+
+It touches nothing else. The markup comes back unchanged unless all three hold — the screen is
+`plugins`, the `plugin` query arg names a standalone this library has registered, and `_error_nonce`
+verifies against `plugin-activation-error_{basename}`. Another plugin's fatal is another plugin's
+business.
+
+The replacement runs through `wp_kses_post()`, so a knowledge-base link survives, and it is
+sanitised *before* it is checked for emptiness: a message that filters down to nothing leaves core's
+wording in place rather than blanking the notice.
+
+The filter is wired by `Boot\Scheduler` under `is_admin()`, as
+`[ Loader::class, 'filter_activation_error_markup' ]` — a named callback, so a host that would
+rather keep core's wording can `remove_filter()` it. The rewriting itself is
+`Notices\Queue::filter_activation_error_markup()`, so a host that binds its own `Queue_Interface`
+owns this screen along with the rest of the notices.

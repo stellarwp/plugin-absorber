@@ -318,6 +318,54 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
+	 * The activation-error rewrite is wired next to the notice step and under the same guard: both
+	 * only ever have work to do on an admin screen. It is a named static callback rather than a
+	 * closure, so unlike the plugins_loaded steps it can be asserted on by identity — and, for the
+	 * same reason, taken back off by a host that wants core's wording.
+	 */
+	public function test_it_wires_the_activation_error_filter_in_the_admin(): void {
+		set_current_screen( 'plugins' );
+
+		$notices = $this->bind_spy_queue();
+
+		Loader::boot();
+
+		$this->assertNotFalse(
+			has_filter( 'wp_admin_notice_markup', [ Loader::class, 'filter_activation_error_markup' ] )
+		);
+		$this->assertSame(
+			$notices->filtered_markup,
+			apply_filters( 'wp_admin_notice_markup', '<p>Core.</p>', '', [] ),
+			'The wired filter has to reach the bound queue.'
+		);
+	}
+
+	/**
+	 * `wp_admin_notice_markup` is a general-purpose hook another plugin is free to apply anywhere,
+	 * and the rewrite only ever has work to do on an activation-error request in wp-admin.
+	 */
+	public function test_it_does_not_wire_the_activation_error_filter_on_the_front_end(): void {
+		set_current_screen( 'front' );
+
+		Loader::boot();
+
+		$observed = [ has_filter( 'wp_admin_notice_markup', [ Loader::class, 'filter_activation_error_markup' ] ) ];
+
+		// Wired by hand and read a second time. Without that reading, a probe that could never
+		// report this callback at all — a renamed method, a mistyped hook name — would satisfy the
+		// assertion below however boot() had behaved.
+		$this->add_tracked_filter( 'wp_admin_notice_markup', [ Loader::class, 'filter_activation_error_markup' ] );
+
+		$observed[] = has_filter( 'wp_admin_notice_markup', [ Loader::class, 'filter_activation_error_markup' ] );
+
+		$this->assertSame(
+			[ false, 10 ],
+			$observed,
+			'The filter must be admin-only, and the probe must be able to see a registration.'
+		);
+	}
+
+	/**
 	 * Adding an action at a priority the running dispatch has already passed is accepted and then
 	 * never fires. Booting from plugins_loaded at the default priority instead of 0 would otherwise
 	 * load nothing at all, on a site that looks completely healthy.
@@ -421,14 +469,16 @@ class SchedulerTest extends WPTestCase {
 	public function test_the_state_helper_unwires_the_hooks_boot_added(): void {
 		set_current_screen( 'dashboard' );
 
-		$load_step   = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
-		$notice_step = $this->callbacks_at( 'all_admin_notices' );
+		$load_step        = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$notice_step      = $this->callbacks_at( 'all_admin_notices' );
+		$activation_error = $this->callbacks_at( 'wp_admin_notice_markup' );
 
 		Loader::boot();
 		Loader_State::reset();
 
 		$this->assertSame( $load_step, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
 		$this->assertSame( $notice_step, $this->callbacks_at( 'all_admin_notices' ) );
+		$this->assertSame( $activation_error, $this->callbacks_at( 'wp_admin_notice_markup' ) );
 	}
 
 	/**
@@ -679,5 +729,22 @@ class SchedulerTest extends WPTestCase {
 		$this->added_actions[] = [ $hook, $callback, $priority ];
 
 		add_action( $hook, $callback, $priority );
+	}
+
+	/**
+	 * The same, for a filter. Spelled separately from add_tracked_action() even though WordPress
+	 * keeps actions and filters in one registry, so a reader is never left wondering whether a
+	 * filter was wired by an add_action() on purpose.
+	 *
+	 * @param string   $hook     Hook to add to.
+	 * @param callable $callback Callback to add.
+	 * @param int      $priority Priority to add it at.
+	 *
+	 * @return void
+	 */
+	private function add_tracked_filter( string $hook, callable $callback, int $priority = 10 ): void {
+		$this->added_actions[] = [ $hook, $callback, $priority ];
+
+		add_filter( $hook, $callback, $priority );
 	}
 }

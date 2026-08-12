@@ -24,10 +24,11 @@ use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use RuntimeException;
+use stdClass;
 use Throwable;
 
 /**
- * The public surface: the accessors, registration, and the notice trampoline.
+ * The public surface: the accessors, registration, and the two notice trampolines.
  *
  * Boot timing lives in `Boot\SchedulerTest` and the load loop in `Load\RunnerTest`, which is where
  * those behaviours moved. What is left here is what a host actually calls.
@@ -326,15 +327,8 @@ class LoaderTest extends WPTestCase {
 	}
 
 	public function test_render_notices_delegates_to_the_bound_queue(): void {
-		$notices   = new Spy_Queue();
-		$container = new Test_Container();
-		$container->singleton(
-			Queue_Interface::class,
-			static function () use ( $notices ): Queue_Interface {
-				return $notices;
-			}
-		);
-		$this->set_up_container( $container );
+		$notices = new Spy_Queue();
+		$this->bind_queue( $notices );
 
 		Loader::render_notices();
 
@@ -360,6 +354,97 @@ class LoaderTest extends WPTestCase {
 
 		$this->assertSame( '', $output );
 		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * The trampoline is a named static method rather than a closure over the container, so that a
+	 * host can take the filter back off — but it still has to reach whatever the host bound, or a
+	 * replacement queue would be handed every other notice and never the activation error.
+	 */
+	public function test_the_activation_error_trampoline_delegates_to_the_bound_queue(): void {
+		$notices = new Spy_Queue();
+		$this->bind_queue( $notices );
+
+		$this->assertSame(
+			$notices->filtered_markup,
+			Loader::filter_activation_error_markup( '<p>Core.</p>' )
+		);
+		$this->assertSame( [ '<p>Core.</p>' ], $notices->filtered );
+	}
+
+	/**
+	 * Reported and handed back untouched rather than thrown out of: this runs while WordPress is
+	 * drawing an error screen, and a second fatal there would replace the one the user came to read.
+	 */
+	public function test_the_activation_error_trampoline_does_nothing_without_a_hook_prefix(): void {
+		$notices = new Spy_Queue();
+		$this->bind_queue( $notices );
+
+		// The prefix goes, the container stays: this is about the missing prefix, and a trampoline
+		// that reached the container first would pass this test for the other reason.
+		$container = $this->container();
+		Config_State::reset();
+		Config::set_container( $container );
+		$this->expect_incorrect_usage();
+
+		$this->assertSame( '<p>Core.</p>', Loader::filter_activation_error_markup( '<p>Core.</p>' ) );
+		$this->assertSame( [], $notices->filtered, 'The queue must not be reached at all.' );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * A filter receives whatever the filter before it returned, so the trampoline takes an untyped
+	 * argument and coerces it. Declaring `string` there would turn another plugin's sloppy return
+	 * into a TypeError raised from this library, on the screen least able to afford one.
+	 *
+	 * The queue still sees the coerced value: the guard is about what crosses the boundary, not
+	 * about standing the rewrite down, and a trampoline that returned early would leave the
+	 * interface's `string` promise resting on an untested path.
+	 *
+	 * @dataProvider non_string_markup
+	 *
+	 * @param mixed $markup Whatever the previous filter returned.
+	 */
+	public function test_the_activation_error_trampoline_coerces_a_non_string( $markup ): void {
+		$notices = new Spy_Queue();
+		$this->bind_queue( $notices );
+
+		$this->assertSame( $notices->filtered_markup, Loader::filter_activation_error_markup( $markup ) );
+		$this->assertSame( [ '' ], $notices->filtered );
+	}
+
+	/**
+	 * An integer earns its place alongside the two that would fatal: `42` casts cleanly to `"42"`,
+	 * so it is the case a missing guard would pass rather than crash on.
+	 *
+	 * @return Generator<string,array{0:mixed}>
+	 */
+	public static function non_string_markup(): Generator {
+		yield 'null'       => [ null ];
+		yield 'an array'   => [ [ '<p>Core.</p>' ] ];
+		yield 'an object'  => [ new stdClass() ];
+		yield 'an integer' => [ 42 ];
+		yield 'false'      => [ false ];
+	}
+
+	/**
+	 * Bind a recording queue, in the order a host binds one: before the provider fills in what is
+	 * missing.
+	 *
+	 * @param Spy_Queue $notices Queue to bind.
+	 *
+	 * @return void
+	 */
+	private function bind_queue( Spy_Queue $notices ): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Queue_Interface::class,
+			static function () use ( $notices ): Queue_Interface {
+				return $notices;
+			}
+		);
+
+		$this->set_up_container( $container );
 	}
 
 	/**

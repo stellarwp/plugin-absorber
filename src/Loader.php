@@ -180,6 +180,33 @@ final class Loader {
 	}
 
 	/**
+	 * Rewrite the activation-error notice for a standalone this library has absorbed.
+	 *
+	 * The parameter is untyped because a filter receives whatever the filter before it returned,
+	 * and a `string` declaration would turn another plugin's sloppy return into a TypeError raised
+	 * from here.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param mixed $markup Notice markup WordPress is about to print.
+	 *
+	 * @throws Config_Exception When no container has been set, or a container binding is unusable.
+	 *
+	 * @return string
+	 */
+	public static function filter_activation_error_markup( $markup ): string {
+		$markup = is_string( $markup ) ? $markup : '';
+
+		// Returned unchanged rather than thrown out of: this runs while WordPress is drawing an
+		// error screen, and a second fatal there would replace the one the user came to read.
+		if ( ! self::has_hook_prefix() ) {
+			return $markup;
+		}
+
+		return self::notices()->filter_activation_error_markup( $markup );
+	}
+
+	/**
 	 * The object bound to a collaborator interface, checked before it is handed on.
 	 *
 	 * The container's own return type promises nothing, so a host that bound the wrong class -- a

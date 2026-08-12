@@ -50,6 +50,23 @@ class Spy_Queue implements Queue_Interface {
 	public $render_calls = 0;
 
 	/**
+	 * Markup handed to filter_activation_error_markup(), in order.
+	 *
+	 * @var string[]
+	 */
+	public $filtered = [];
+
+	/**
+	 * What filter_activation_error_markup() hands back.
+	 *
+	 * Deliberately not the argument: a trampoline that returned its own input instead of the
+	 * queue's answer would be indistinguishable from one that delegated properly.
+	 *
+	 * @var string
+	 */
+	public $filtered_markup = '<p>Rewritten by the queue.</p>';
+
+	/**
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
 	 *
 	 * @return void
@@ -81,5 +98,16 @@ class Spy_Queue implements Queue_Interface {
 	 */
 	public function render(): void {
 		++$this->render_calls;
+	}
+
+	/**
+	 * @param string $markup Notice markup WordPress is about to print.
+	 *
+	 * @return string
+	 */
+	public function filter_activation_error_markup( string $markup ): string {
+		$this->filtered[] = $markup;
+
+		return $this->filtered_markup;
 	}
 }

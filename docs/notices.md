@@ -21,6 +21,13 @@ only warning an administrator was ever going to get.
 On multisite `activate_plugins` maps through `manage_network_plugins`, so it is a network
 administrator, not the site administrator who installed the plugin, who sees these.
 
+## `conflict_notice_message` is used twice
+
+The same message backs the queued notice raised when the standalone is deactivated *and* the
+rewritten activation-error screen a user meets if they try to re-activate it — see
+[conflict handling](conflict-handling.md). Write one sentence that reads sensibly both as a report of
+something already done and as the explanation standing in for a fatal-error warning.
+
 ## Rendering them yourself
 
 `Notices\Queue::option_name()` is public, so you can render the queue yourself without replacing

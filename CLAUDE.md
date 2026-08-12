@@ -133,13 +133,13 @@ the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-The re-activation rewrite — `Loader::filter_activation_error_markup()` on `wp_admin_notice_markup` —
-is not built yet. Currently:
+Every behaviour described above is built; nothing in `src/` is still owed. What is left in the plan
+is the end-to-end suite and the release pass.
 
 | Path | What |
 |---|---|
 | `src/Config.php` | Static facade: hook prefix + container. |
-| `src/Loader.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
+| `src/Loader.php` | Static facade: the registration buffer, `boot()`, the accessors, and the two notice trampolines. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
 | `src/Load/Runner.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
@@ -150,7 +150,7 @@ is not built yet. Currently:
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Resolver` (which policy branch to take), `Gatekeeper` (which requests may take one), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
-| `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
+| `src/Notices/` | `Queue` (what a notice says, who may consume it, and the activation-error rewrite), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
@@ -208,10 +208,11 @@ them after the wrong problem. `docs/filters.md` and the spec agree.
 
 `Loader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
 may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
-the interface signature — so it is filtered once where the untrusted value enters. Both passes read
-through `Loader::all()` rather than through the registrar they could resolve for themselves, because
-it flushes the pending registrations before it reads and a registrar asked directly would miss
-anything registered since the last flush.
+the interface signature — so it is filtered once where the untrusted value enters. All three readers
+— the load pass, the conflict pass and the activation-error rewrite — go through `Loader::all()`
+rather than through the registrar they could resolve for themselves, because it flushes the pending
+registrations before it reads and a registrar asked directly would miss anything registered since
+the last flush.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
@@ -246,6 +247,26 @@ until a capable admin arrives.
 An unknown policy must be handled as its own case via `Conflict_Policy::is_valid()`, never left to
 a `default:` fallthrough — a typo like `'defered'` would otherwise deactivate a plugin the site
 owner deliberately turned on.
+
+**The activation-error rewrite lives on `Notices\Queue`, not on a class of its own.** It is the one
+conflict the load guard cannot prevent — core includes the plugin being activated *after* the
+bundled copy is in memory, so the re-declaration really does fatal — and all this library gets to do
+about it is reword the sentence core's sandbox prints. That sentence is
+`conflict_notice_message`, the same message the merge notice carries, so wording it belongs where
+every other notice is worded; a host that binds its own `Queue_Interface` owns the error screen
+along with the rest. `Loader::filter_activation_error_markup()` is the trampoline, and it takes an
+**untyped** argument: a filter receives whatever the filter before it returned, and a `string`
+declaration would turn another plugin's sloppy return into a TypeError raised from here, on the
+screen least able to afford a second one. The rewrite refuses unless the screen is `plugins`, the
+`plugin` query arg names a registered standalone and `_error_nonce` verifies — and it sanitises with
+`wp_kses_post()` *before* testing for emptiness, since a message that filters down to nothing must
+leave core's wording standing rather than blank the notice box.
+
+**`Boot\Scheduler` wires `wp_admin_notice_markup` as a named static callback, not a closure.** Both
+admin-only hooks are `[ Loader::class, … ]` pairs that resolve the queue when they fire, so neither
+builds anything at boot; what the name buys on this one is `remove_filter()`, which a host wanting
+core's wording back has no other way to reach. The `plugins_loaded` steps are closures for a reason
+these two do not share — that sequence has to be runnable inline as well as wirable.
 
 ### Keys
 
