@@ -86,7 +86,7 @@ registering them instantiates nothing and a request that triggers none builds no
 | `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. |
 | `conflict_notice_message` | `callable` | | Shown on auto-deactivation and on a re-activation attempt. Empty by default. |
 | `dependency_notice_message` | `callable` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
-| `activation_callback` | `callable( Sub_Plugin )` | | Runs **exactly once, ever**, per slug. |
+| `activation_callback` | `callable( Sub_Plugin )` | | Runs **once, ever**, per slug, after a successful load. Make it idempotent. |
 | `dependency_check` | `callable( Sub_Plugin ): bool` | | Skips the load and queues a notice when it returns false. |
 
 The load guard and the standalone basename are deliberately two separate keys. No constant does
@@ -120,16 +120,26 @@ happen at all. [`activation_callback`](#sub-plugin-keys) fills that gap:
 },
 ```
 
-It runs exactly once ever per slug, is passed the `Sub_Plugin`, and runs only after a require that
-actually happened — never for a sub-plugin whose load was skipped, because a schema appearing for a
-plugin that is not loaded is worse than no schema at all.
+It runs once ever per slug, is passed the `Sub_Plugin`, and runs only after a require that actually
+happened — never for a sub-plugin whose load was skipped, because a schema appearing for a plugin
+that is not loaded is worse than no schema at all.
+
+**Write it to be idempotent.** "Once, ever" is bookkeeping, not a lock: the record is read, the
+callback runs, and the record is written, so two requests arriving together on a site that has never
+run it can both pass the check, and a callback that fails is deliberately left unrecorded to be
+retried. A `dbDelta()` migration or a `CREATE TABLE IF NOT EXISTS` already survives both; a blind
+`INSERT` of seed rows does not.
 
 The record lives in the `{option_prefix}_plugin_absorber_activations` option, a network option on
 multisite for the same reason the [notice queue](notices.md) is one: `deactivate_plugins()` is
 network-wide, so a merge that happened network-wide must not re-run the callback on every site. The
 slug is recorded *after* the callback returns, so a callback that fails is retried on the next
-request rather than marked done and silently skipped forever. Bind `Activator_Interface` to record
-"once, ever" somewhere else — your own migration table, say.
+request rather than marked done and silently skipped forever.
+
+One record for the network also means one *run* for the network, in whichever site's request reached
+the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is the callback's
+own job to loop over `get_sites()` for, or bind `Activator_Interface` and record "once, ever"
+somewhere else: your own migration table, or a per-site option.
 
 ## The bundled file is included from a function, not from global scope
 
