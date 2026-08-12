@@ -12,7 +12,7 @@ namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
  *
  * `setExpectedIncorrectUsage()` matches the first argument of `_doing_it_wrong()` exactly, which for a
  * report made with `__METHOD__` means restating a private method name in the test. That name is an
- * implementation detail of where a gate happens to live: moving the inline-boot fallback from `Loader`
+ * implementation detail of where a gate happens to live: moving the inline-boot fallback from `Absorber`
  * to `Boot\Scheduler` changes it without changing anything a host can observe. What a host *can*
  * observe — that the mistake is reported at all, and reported against this library rather than
  * swallowed or blamed on WordPress — is what these assertions pin.

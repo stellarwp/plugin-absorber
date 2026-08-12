@@ -54,9 +54,9 @@ declarations).
 
 ### Public surface
 
-A two-class static facade — `Config` (hook prefix + container) and `Loader` (register/boot, plus
+A two-class static facade — `Config` (hook prefix + container) and `Absorber` (register/boot, plus
 accessors) — matching the shape of `stellarwp/assets` and `stellarwp/admin-notices`. Everything
-else is an implementation detail behind it. `Loader` is
+else is an implementation detail behind it. `Absorber` is
 `final`: every member is private static and every internal call is `self::`, so a subclass could
 override nothing and would silently change nothing.
 
@@ -74,7 +74,7 @@ seams a host may rebind:
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
-The rest — `Boot\Scheduler`, `Load\Runner`, `Conflict\Gatekeeper`, `Conflict\Redirector`,
+The rest — `Boot\Scheduler`, `Loader`, `Conflict\Gatekeeper`, `Conflict\Redirector`,
 `Notices\Store`, `Notices\Renderer` — are bound as concrete classes. A host that wants one of them
 different rebinds the class name; there is no interface because nothing in the library dispatches on
 one.
@@ -111,14 +111,14 @@ would hold a second, emptier list — or a stateless worker with nothing to gain
 
 The container is **never** used to wire hooks, and the reason is no longer that it is optional.
 `Boot\Scheduler` wires callbacks that resolve *inside* the callback — a closure over the container,
-or a static trampoline reading `Loader::notices()` — so wiring instantiates nothing, a host may
+or a static trampoline reading `Absorber::notices()` — so wiring instantiates nothing, a host may
 rebind right up until the hook fires, and a request that reaches none of them builds none of them.
 `$container->callback()` reads better and is what the hand-rolled copies in `learndash-core` use, but
 it is di52-only: `stellarwp/container-contract` declares `bind`, `get`, `has` and `singleton`, and
 nothing else. `[ $resolved_object, 'method' ]` is the other wrong answer — it forces every
 collaborator to be built at boot.
 
-`Loader` keeps the public surface. `registrar()` and `notices()` are one-line delegations to
+`Absorber` keeps the public surface. `registrar()` and `notices()` are one-line delegations to
 `$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
 depends on the peer it was handed rather than on the facade.
 
@@ -127,7 +127,7 @@ container-bound collaborator** (`is_enabled()`, `is_already_loaded()`, `has_stan
 `get_conflict_policy()`, …). Note that this is not the same as "config alone": `is_already_loaded()`
 reads the global constant table and `is_enabled()` may invoke a host callable that queries anything
 it likes. The line is about *dependency direction* — anything needing `Plugin_Checker_Interface` or
-the notice queue would drag a container resolution into `Loader::register()`, which deliberately
+the notice queue would drag a container resolution into `Absorber::register()`, which deliberately
 resolves nothing so the container can arrive at any point before boot. So `Sub_Plugin` only *names*
 the plugin to ask about, and the collaborator does the asking.
 
@@ -139,10 +139,10 @@ Currently:
 | Path | What |
 |---|---|
 | `src/Config.php` | Static facade: hook prefix + container. |
-| `src/Loader.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
+| `src/Absorber.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
-| `src/Load/Runner.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
+| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
@@ -156,15 +156,15 @@ Currently:
 ```
 Config::set_hook_prefix( 'give' );
 Config::set_container( $container );          // required
-Loader::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
-Loader::boot();                               // idempotent
+Absorber::register( [ …config… ] );           // once per sub-plugin; a duplicate slug throws
+Absorber::boot();                             // idempotent
     → Provider::register()                    // every binding
     → Boot\Scheduler                          // every hook, as a closure over the container
 
 plugins_loaded @1      → Conflict\Resolver::resolve_all()   [gated by Conflict\Gatekeeper]
-plugins_loaded @2      → Load\Runner::load_all()
-all_admin_notices      → Loader::render_notices()           [is_admin() only]
-wp_admin_notice_markup → Loader::filter_activation_error_markup() [is_admin() only]
+plugins_loaded @2      → Loader::load_all()
+all_admin_notices      → Absorber::render_notices()         [is_admin() only]
+wp_admin_notice_markup → Absorber::filter_activation_error_markup() [is_admin() only]
 ```
 
 **A host calls `Config::set_container()` at `plugins_loaded` priority 0, from its own container
@@ -173,7 +173,7 @@ WordPress silently ignores a callback added at or past the priority it is alread
 LearnDash and MemberDash both wire Harbor's `set_container()` at priority 1, so a host copying that
 habit races us. Its own block, because LearnDash's `App::container()` builds a container lazily when
 none is set and the plugin then *replaces* it at priority 0: anything that grabbed the container
-earlier holds an orphan whose bindings are discarded. This is also why `Loader::register()` buffers
+earlier holds an orphan whose bindings are discarded. This is also why `Absorber::register()` buffers
 and resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
 register into the throwaway.
 
@@ -186,7 +186,7 @@ carries the whole re-declaration guarantee, and it is the only gate meaning "thi
 running" — warning that requirements are unmet for a plugin the admin can watch working would send
 them after the wrong problem. `docs/filters.md` and the spec agree.
 
-`Loader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
+`Absorber::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
 may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
 the interface signature — so it is filtered once where the untrusted value enters.
 
@@ -257,8 +257,8 @@ Tabs for PHP, 4 spaces for yml/yaml/json/md (see `.editorconfig`).
 
 Production classes do not get a `reset()` for the suite's benefit — that becomes API the library
 supports forever. Tests clear static state by reflection through a helper under `tests/_support/`.
-`Config` is served by `Tests\Support\Config_State::reset()`; `Registrar` and `Loader` get the same
-treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means the support helper.
+`Config` is served by `Tests\Support\Config_State::reset()`; `Registrar` and `Absorber` get the same
+treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` means the support helper.
 
 ### Testing rules
 
@@ -343,7 +343,7 @@ treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means
   `?Peer $peer = null` constructor parameter and no `?? new X()` fallback — a nullable dependency
   instantiating its own default is a service locator wearing a constructor signature, and it is what
   made every default class owe a no-argument constructor. `new Sub_Plugin( $config )` in
-  `Loader::register()` and `throw new Config_Exception( … )` stay: one value object per host-supplied
+  `Absorber::register()` and `throw new Config_Exception( … )` stay: one value object per host-supplied
   array, built in the call the host can see in its own stack trace, which is what lets registration
   validate eagerly while resolving nothing. A `Sub_Plugin_Factory` would put a container resolution
   in front of the one method that deliberately performs none.

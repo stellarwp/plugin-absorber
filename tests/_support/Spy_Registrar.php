@@ -9,7 +9,7 @@ use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
- * A registrar that records what was done to it, for tests about who the Loader talks to.
+ * A registrar that records what was done to it, for tests about who the Absorber talks to.
  *
  * A named class rather than an anonymous one: a test that reads `$spy->register_calls` off a value
  * typed as `Registrar_Interface` is reading a property the interface does not declare, and static

@@ -5,7 +5,7 @@
 
 namespace Nexcess\PluginAbsorber\Boot;
 
-use Nexcess\PluginAbsorber\Load\Runner;
+use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
 use WP_Hook;
@@ -67,7 +67,7 @@ class Scheduler {
 			// network_admin_notices and user_admin_notices as mutually exclusive branches, so a
 			// superadmin working in the network admin -- exactly where a network-wide
 			// deactivation gets noticed -- would never see the queue rendered.
-			add_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] );
+			add_action( 'all_admin_notices', [ Absorber::class, 'render_notices' ] );
 		}
 
 		// Adding an action at a priority the current dispatch has already passed is accepted and
@@ -76,8 +76,8 @@ class Scheduler {
 		// no warning and a site that looks entirely healthy.
 		if ( $this->wiring_window_has_closed() ) {
 			_doing_it_wrong(
-				Loader::class . '::boot',
-				'Loader::boot() must run before plugins_loaded priority 2. Loading inline instead.',
+				Absorber::class . '::boot',
+				'Absorber::boot() must run before plugins_loaded priority 2. Loading inline instead.',
 				'1.0.0'
 			);
 
@@ -118,7 +118,7 @@ class Scheduler {
 			[
 				'priority' => self::LOAD_PRIORITY,
 				'run'      => static function () use ( $container ): void {
-					$container->get( Runner::class )->load_all();
+					$container->get( Loader::class )->load_all();
 				},
 			],
 		];

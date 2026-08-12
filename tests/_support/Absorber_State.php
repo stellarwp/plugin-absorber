@@ -7,16 +7,16 @@ namespace Nexcess\PluginAbsorber\Tests\Support;
 
 use Closure;
 use LogicException;
-use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Absorber;
 use ReflectionClass;
 use ReflectionFunction;
 use ReflectionProperty;
 use WP_Hook;
 
 /**
- * Restores `Loader`'s static state between tests, and unwires the hooks boot() added.
+ * Restores `Absorber`'s static state between tests, and unwires the hooks boot() added.
  *
- * `Loader` has no public way to clear itself, and deliberately so: a reset method would be API the
+ * `Absorber` has no public way to clear itself, and deliberately so: a reset method would be API the
  * library then has to support forever for the sake of its own test suite, and a host that reached for
  * it mid-request would discard the registrations the load loop is about to read. Reflection keeps that
  * seam on this side of the fence.
@@ -24,9 +24,9 @@ use WP_Hook;
  * Collaborators are the container's now, so there is no memo here to drop: a test gets a fresh set by
  * standing up a fresh container, which `Traits\WithContainer` does in one line.
  */
-class Loader_State {
+class Absorber_State {
 	/**
-	 * The value each of `Loader`'s static properties starts life with.
+	 * The value each of `Absorber`'s static properties starts life with.
 	 *
 	 * Spelled out rather than read from `ReflectionClass::getDefaultProperties()`, which reports a
 	 * static property's *current* value on PHP below 8.3 — a reset built on it is a silent no-op on
@@ -58,13 +58,13 @@ class Loader_State {
 	protected const NAMESPACE_PREFIX = 'Nexcess\\PluginAbsorber\\';
 
 	/**
-	 * Return every static property of `Loader` to its default, and unwire the hooks it added.
+	 * Return every static property of `Absorber` to its default, and unwire the hooks it added.
 	 *
-	 * Clearing the boot flag without unwiring would leave a `Loader` that reports itself unbooted
+	 * Clearing the boot flag without unwiring would leave an `Absorber` that reports itself unbooted
 	 * while its callbacks are still attached: the next `boot()` would wire nothing, and still look
 	 * like it had worked.
 	 *
-	 * @throws LogicException When `Loader` has grown a static property this helper does not know
+	 * @throws LogicException When `Absorber` has grown a static property this helper does not know
 	 *                        about, rather than leaving it to leak between tests.
 	 *
 	 * @return void
@@ -72,14 +72,14 @@ class Loader_State {
 	public static function reset(): void {
 		self::unwire();
 
-		$reflection = new ReflectionClass( Loader::class );
+		$reflection = new ReflectionClass( Absorber::class );
 
 		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
 			$name = $property->getName();
 
 			if ( ! array_key_exists( $name, self::DEFAULTS ) ) {
 				throw new LogicException(
-					sprintf( 'Loader::$%s has no default in %s. Add one.', $name, self::class )
+					sprintf( 'Absorber::$%s has no default in %s. Add one.', $name, self::class )
 				);
 			}
 
@@ -93,7 +93,7 @@ class Loader_State {
 	 *
 	 * Identified by where the callback comes from rather than by restating what boot() wires. The
 	 * steps are closures over the container now, so there is no name to match on and no
-	 * `has_action( $hook, [ Loader::class, 'load_all' ] )` to remove them by; and
+	 * `has_action( $hook, [ Absorber::class, 'load_all' ] )` to remove them by; and
 	 * `remove_all_actions()` would strip the hook bare, discarding every callback WordPress and the
 	 * rest of the suite have on it for the remainder of the process.
 	 *
@@ -164,7 +164,7 @@ class Loader_State {
 	 * @return string
 	 */
 	protected static function source_directory(): string {
-		$file = ( new ReflectionClass( Loader::class ) )->getFileName();
+		$file = ( new ReflectionClass( Absorber::class ) )->getFileName();
 
 		if ( ! is_string( $file ) || $file === '' ) {
 			throw new LogicException( sprintf( 'Could not locate the library source from %s.', self::class ) );

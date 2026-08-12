@@ -19,20 +19,20 @@ plugins shipping different versions of this library will collide otherwise. See
 
 ```php
 use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Absorber;
 
 add_action( 'plugins_loaded', function () {
     Config::set_hook_prefix( 'give' );            // required — keys the hooks and options
     Config::set_container( give()->container );   // required — every collaborator resolves from it
 
-    Loader::register( [
+    Absorber::register( [
         'slug'                       => 'give-recurring',
         'bundled_plugin_file'        => __DIR__ . '/sub-plugins/recurring/give-recurring.php',
         'plugin_loaded_constant'     => 'GIVE_RECURRING_VERSION',
         'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
     ] );
 
-    Loader::boot();
+    Absorber::boot();
 }, 0 );
 ```
 

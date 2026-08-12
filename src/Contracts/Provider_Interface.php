@@ -18,7 +18,7 @@ interface Provider_Interface {
 	/**
 	 * Bind this library's collaborators.
 	 *
-	 * Called once, from `Loader::boot()`, and expected to be safe to call again: boot() is
+	 * Called once, from `Absorber::boot()`, and expected to be safe to call again: boot() is
 	 * idempotent and a host may bind its own provider that another code path also registers.
 	 *
 	 * @since 1.0.0

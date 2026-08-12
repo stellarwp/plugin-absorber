@@ -31,7 +31,7 @@ happens and we hold an orphan whose bindings were discarded.
 
 ## Rebinding a collaborator
 
-`Loader::boot()` binds the defaults, and skips any id your container already has — so your binding
+`Absorber::boot()` binds the defaults, and skips any id your container already has — so your binding
 wins whether you make it before boot or after, and nothing is resolved until `plugins_loaded`
 priority 1 in any case:
 
@@ -53,7 +53,7 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 `is_plugin_active()` then does not report what is in the database.
 
 `set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
-the configuration calls: it may come before or after your `Loader::register()` calls, so long as it
+the configuration calls: it may come before or after your `Absorber::register()` calls, so long as it
 comes before boot. Registering buffers the sub-plugin and resolves nothing, so nothing is decided
 until the first read.
 

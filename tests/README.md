@@ -28,7 +28,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 public function setUp(): void {
 	parent::setUp();
 
-	Loader_State::reset();
+	Absorber_State::reset();
 	Config_State::reset();
 	Config::set_hook_prefix( 'give' );
 	$this->set_up_container();
@@ -257,7 +257,7 @@ helper reports it when one does not.
 `setExpectedIncorrectUsage()` matches the first argument exactly, which for a
 report made with `__METHOD__` means restating a private method name in the test.
 That name is an implementation detail of where a gate happens to live — moving
-the inline-boot fallback from `Loader` to `Boot\Scheduler` changed it without
+the inline-boot fallback from `Absorber` to `Boot\Scheduler` changed it without
 changing anything a host can observe.
 
 `WithIncorrectUsage` registers the expectation from the report itself and
@@ -266,7 +266,7 @@ asserts over what was reported instead:
 ```php
 $this->expect_incorrect_usage();
 
-$runner->load_all();
+$loader->load_all();
 
 $this->assert_the_library_reported_incorrect_usage();
 ```

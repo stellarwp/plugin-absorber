@@ -1,0 +1,475 @@
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Unit;
+
+use Codeception\TestCase\WPTestCase;
+use Generator;
+use Nexcess\PluginAbsorber\Absorber;
+use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Registrar;
+use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
+use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use RuntimeException;
+use Throwable;
+
+/**
+ * The public surface: the accessors, registration, and the notice trampoline.
+ *
+ * Boot timing lives in `Boot\SchedulerTest` and the load loop in `LoaderTest`, which is where
+ * those behaviours moved. What is left here is what a host actually calls.
+ *
+ * @since 1.0.0
+ */
+class AbsorberTest extends WPTestCase {
+	use WithContainer;
+	use WithIncorrectUsage;
+
+	public function setUp(): void {
+		parent::setUp();
+
+		Absorber_State::reset();
+		Config_State::reset();
+		Config::set_hook_prefix( 'give' );
+	}
+
+	public function tearDown(): void {
+		$this->stop_expecting_incorrect_usage();
+		Absorber_State::reset();
+		Config_State::reset();
+		$this->tear_down_container();
+		parent::tearDown();
+	}
+
+	/**
+	 * @dataProvider collaborator_accessors
+	 *
+	 * @param string       $accessor Static method on Absorber.
+	 * @param class-string $expected Class the provider's default binding builds.
+	 */
+	public function test_the_accessors_read_from_the_container( string $accessor, string $expected ): void {
+		$this->set_up_container();
+
+		$this->assertInstanceOf( $expected, Absorber::{$accessor}() );
+	}
+
+	/**
+	 * A host binds the wrong class far more easily than it binds none at all, and the container
+	 * hands back whatever it was told to without checking. Left to PHP's own return-type check the
+	 * failure is a TypeError naming this library's method, raised inside plugins_loaded, which
+	 * reads as a bug here rather than as the typo it is.
+	 */
+	public function test_a_binding_that_does_not_implement_its_interface_is_reported(): void {
+		$container = new Test_Container();
+
+		$container->singleton( Registrar_Interface::class, static function (): object {
+			return new class() {
+				// Anything at all, so long as it is not a registrar.
+			};
+		} );
+
+		Config::set_container( $container );
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+			$this->assertStringContainsString(
+				'does not implement',
+				$exception->getMessage(),
+				'A binding that built fine and is simply the wrong type must not be reported as one '
+					. 'the container could not build: the two send the host to different files.'
+			);
+		}
+	}
+
+	/**
+	 * A bound factory may throw, and a container asked for something it cannot build throws its own
+	 * exception type; the contract is explicit that has() true does not promise get() succeeds.
+	 * Left uncaught, the host gets a fatal from a vendor namespace at plugins_loaded that names
+	 * neither this library nor the binding at fault.
+	 */
+	public function test_it_reports_a_container_that_throws_as_a_configuration_error(): void {
+		$failure   = new RuntimeException( 'the host factory needed a database connection' );
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function () use ( $failure ): Registrar_Interface {
+				throw $failure;
+			}
+		);
+		$this->set_up_container( $container );
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString(
+				Registrar_Interface::class,
+				$exception->getMessage(),
+				'The message has to name the binding that could not be built.'
+			);
+			$this->assertContains(
+				$failure,
+				$this->previous_chain( $exception ),
+				'The original failure has to stay reachable, or the real cause is lost.'
+			);
+		}
+	}
+
+	/**
+	 * The missing-container report is this library's own sentence, in its own words. Wrapping it in
+	 * the build-failure message would bury it a level deeper and name an interface the host never
+	 * bound anything to, when what it has to hear is that it set no container at all.
+	 */
+	public function test_a_missing_container_is_not_reported_as_a_failed_binding(): void {
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringNotContainsString( 'failed to build', $exception->getMessage() );
+			$this->assertNull( $exception->getPrevious(), 'There is no earlier failure to point at.' );
+		}
+	}
+
+	/**
+	 * The accessors are the host's own way in, so each one has to survive the container becoming
+	 * required rather than only the paths the library happens to take.
+	 *
+	 * @return Generator<string,array{0:string,1:class-string}>
+	 */
+	public static function collaborator_accessors(): Generator {
+		yield 'the registrar'    => [ 'registrar', Registrar::class ];
+		yield 'the notice queue' => [ 'notices', Queue::class ];
+	}
+
+	/**
+	 * Nothing falls back to `new` any more. A host that never set a container gets a
+	 * Config_Exception naming the mistake, not a default collaborator that quietly ignores the
+	 * bindings it was going to make.
+	 *
+	 * @dataProvider accessor_names
+	 *
+	 * @param string $accessor Static method on Absorber.
+	 */
+	public function test_an_accessor_without_a_container_is_a_configuration_error( string $accessor ): void {
+		$this->expectException( Config_Exception::class );
+
+		Absorber::{$accessor}();
+	}
+
+	/**
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function accessor_names(): Generator {
+		yield 'the registrar'    => [ 'registrar' ];
+		yield 'the notice queue' => [ 'notices' ];
+	}
+
+	/**
+	 * Whichever way the host bound it. `bind()` rebuilds per call where `singleton()` does not, and
+	 * the accessor hands back the host's object either way — a library that cached the first resolve
+	 * itself would make the difference invisible and the rebinding untestable.
+	 *
+	 * @dataProvider container_binding_methods
+	 *
+	 * @param string $binding_method Container method the host bound the registrar with.
+	 */
+	public function test_it_resolves_a_bound_registrar_from_the_container( string $binding_method ): void {
+		$bound     = new Spy_Registrar();
+		$container = new Test_Container();
+		$container->{$binding_method}(
+			Registrar_Interface::class,
+			static function () use ( $bound ): Registrar_Interface {
+				return $bound;
+			}
+		);
+		$this->set_up_container( $container );
+
+		$this->assertSame( $bound, Absorber::registrar() );
+		$this->assertSame( $bound, Absorber::registrar() );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function container_binding_methods(): Generator {
+		yield 'singleton' => [ 'singleton' ];
+		yield 'bind'      => [ 'bind' ];
+	}
+
+	public function test_register_builds_a_sub_plugin_and_stores_it(): void {
+		$this->set_up_container();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$all = Absorber::all();
+
+		$this->assertCount( 1, $all );
+		$this->assertInstanceOf( Sub_Plugin::class, $all['give-recurring'] );
+		$this->assertSame( 'give-recurring', $all['give-recurring']->get_slug() );
+	}
+
+	public function test_register_rejects_an_invalid_config(): void {
+		$this->set_up_container();
+
+		$this->expectException( Config_Exception::class );
+
+		Absorber::register( [ 'slug' => 'give-recurring' ] );
+	}
+
+	/**
+	 * Registering must resolve nothing at all — not even the container. The host container LearnDash
+	 * hands us is *replaced* at plugins_loaded 0, so anything that touched a container before that
+	 * point holds an orphan whose bindings were thrown away.
+	 */
+	public function test_register_needs_no_container(): void {
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$this->set_up_container();
+
+		$this->assertArrayHasKey( 'give-recurring', Absorber::all() );
+	}
+
+	/**
+	 * The other half of the same guarantee: with a container set, the first register() must still not
+	 * reach into it, or it would pin the registrar before the host finished binding.
+	 */
+	public function test_register_resolves_nothing_until_the_first_read(): void {
+		$builds    = 0;
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function () use ( &$builds ): Registrar_Interface {
+				++$builds;
+
+				return new Spy_Registrar();
+			}
+		);
+		$this->set_up_container( $container );
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$this->assertSame( 0, $builds, 'register() must not reach the container.' );
+
+		Absorber::all();
+
+		$this->assertSame( 1, $builds, 'The first read is what resolves the registrar.' );
+	}
+
+	public function test_register_delegates_to_a_bound_registrar(): void {
+		$bound = $this->bind_registrar();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+		Absorber::all();
+
+		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
+	}
+
+	/**
+	 * The buffer is emptied as it drains. Left full, the second read hands the registrar a slug it
+	 * already holds and the duplicate guard fires on a registration the host only made once.
+	 */
+	public function test_reading_twice_does_not_register_twice(): void {
+		$bound = $this->bind_registrar();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		Absorber::all();
+		Absorber::all();
+
+		$this->assertSame( 1, $bound->register_calls );
+	}
+
+	/**
+	 * Deferring registration moves the duplicate-slug report from the second register() call to the
+	 * first read. It still names both bundled files, which is what the host needs to find them.
+	 */
+	public function test_a_duplicate_slug_is_refused_at_the_first_read(): void {
+		$this->set_up_container();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => '/tmp/other/other.php',
+				'plugin_loaded_constant' => 'OTHER_VERSION_FIXTURE',
+			]
+		);
+
+		try {
+			Absorber::all();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
+			$this->assertStringContainsString( '/tmp/other/other.php', $exception->getMessage() );
+		}
+	}
+
+	public function test_all_is_empty_before_anything_is_registered(): void {
+		$this->set_up_container();
+
+		$this->assertSame( [], Absorber::all() );
+	}
+
+	/**
+	 * A binding that cannot be built leaves the registrations buffered, so the read that comes after
+	 * the host fixes its container still has them. Emptying the buffer before the registrar resolved
+	 * would drop them silently and load nothing.
+	 */
+	public function test_registrations_survive_a_registrar_the_container_cannot_build(): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function (): Registrar_Interface {
+				throw new RuntimeException( 'the host factory needed a database connection' );
+			}
+		);
+		$this->set_up_container( $container );
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$failed = false;
+
+		try {
+			Absorber::all();
+		} catch ( Config_Exception $exception ) {
+			$failed = true;
+		}
+
+		$this->assertTrue( $failed, 'A registrar that cannot be built has to surface, not be swallowed.' );
+
+		$this->set_up_container();
+
+		$this->assertArrayHasKey(
+			'give-recurring',
+			Absorber::all(),
+			'The buffered registration must still be there once the container is usable.'
+		);
+	}
+
+	/**
+	 * The buffer is static state, so the suite's reset helper has to reach it: a registration left
+	 * buffered by one test drains into the next test's registrar.
+	 */
+	public function test_the_state_helper_clears_buffered_registrations(): void {
+		$this->set_up_container();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		Absorber_State::reset();
+
+		$this->assertSame( [], Absorber::all() );
+	}
+
+	public function test_render_notices_delegates_to_the_bound_queue(): void {
+		$notices   = new Spy_Queue();
+		$container = new Test_Container();
+		$container->singleton(
+			Queue_Interface::class,
+			static function () use ( $notices ): Queue_Interface {
+				return $notices;
+			}
+		);
+		$this->set_up_container( $container );
+
+		Absorber::render_notices();
+
+		$this->assertSame( 1, $notices->render_calls );
+	}
+
+	public function test_render_notices_does_nothing_without_a_hook_prefix(): void {
+		$container = $this->set_up_container();
+
+		Config_State::reset();
+		Config::set_container( $container );
+		$this->expect_incorrect_usage();
+
+		ob_start();
+
+		try {
+			Absorber::render_notices();
+		} finally {
+			// In a finally block so a throw cannot leave the suite's own output trapped in an
+			// abandoned buffer.
+			$output = (string) ob_get_clean();
+		}
+
+		$this->assertSame( '', $output );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * Bind a recording registrar, in the order a host binds one: before the provider fills in what is
+	 * missing.
+	 *
+	 * @return Spy_Registrar
+	 */
+	private function bind_registrar(): Spy_Registrar {
+		$bound     = new Spy_Registrar();
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function () use ( $bound ): Registrar_Interface {
+				return $bound;
+			}
+		);
+
+		$this->set_up_container( $container );
+
+		return $bound;
+	}
+
+	/**
+	 * Build the raw configuration array a host writes.
+	 *
+	 * The shared WithSubPlugins trait builds `Sub_Plugin` objects; `Absorber::register()` takes the
+	 * array instead, because building that object is the part of registration under test here. The
+	 * derived values follow the trait's: a per-slug bundled file, and a guard constant carrying the
+	 * `_FIXTURE` suffix nothing ever defines, since a define() lasts for the whole PHP process.
+	 *
+	 * @param string $slug Sub-plugin slug.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function sub_plugin_config( string $slug ): array {
+		return [
+			'slug'                   => $slug,
+			'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
+			'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION_FIXTURE',
+		];
+	}
+
+	/**
+	 * Every exception behind the given one, nearest first.
+	 *
+	 * Walked rather than read a single level deep: a container is entitled to wrap what a factory
+	 * threw in its own exception type before it reaches us, and it does.
+	 *
+	 * @param Throwable $exception Exception to walk.
+	 *
+	 * @return Throwable[]
+	 */
+	private function previous_chain( Throwable $exception ): array {
+		$chain = [];
+
+		for ( $previous = $exception->getPrevious(); $previous !== null; $previous = $previous->getPrevious() ) {
+			$chain[] = $previous;
+		}
+
+		return $chain;
+	}
+}

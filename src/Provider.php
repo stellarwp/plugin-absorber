@@ -10,7 +10,6 @@ use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
-use Nexcess\PluginAbsorber\Load\Runner;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Notices\Queue;
 use Nexcess\PluginAbsorber\Notices\Renderer;
@@ -76,9 +75,9 @@ final class Provider implements Provider_Interface {
 		);
 
 		$this->bind_once(
-			Runner::class,
-			static function () use ( $container ): Runner {
-				return new Runner( $container->get( Queue_Interface::class ) );
+			Loader::class,
+			static function () use ( $container ): Loader {
+				return new Loader( $container->get( Queue_Interface::class ) );
 			}
 		);
 

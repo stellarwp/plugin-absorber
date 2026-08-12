@@ -12,7 +12,7 @@ use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
-use Nexcess\PluginAbsorber\Load\Runner;
+use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Notices\Queue;
 use Nexcess\PluginAbsorber\Notices\Renderer;
@@ -77,7 +77,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the notice renderer'   => [ Renderer::class, Renderer::class ];
 		yield 'the plugin checker'    => [ Plugin_Checker_Interface::class, Plugin_Checker::class ];
 		yield 'the deactivator'       => [ Plugin_Deactivator_Interface::class, Plugin_Deactivator::class ];
-		yield 'the load runner'       => [ Runner::class, Runner::class ];
+		yield 'the loader'            => [ Loader::class, Loader::class ];
 		yield 'the boot scheduler'    => [ Scheduler::class, Scheduler::class ];
 	}
 
@@ -105,7 +105,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the notice queue'    => [ Queue_Interface::class ];
 		yield 'the notice store'    => [ Store::class ];
 		yield 'the notice renderer' => [ Renderer::class ];
-		yield 'the load runner'     => [ Runner::class ];
+		yield 'the loader'          => [ Loader::class ];
 		yield 'the boot scheduler'  => [ Scheduler::class ];
 	}
 
@@ -137,7 +137,7 @@ class ProviderTest extends WPTestCase {
 	public static function class_id_bindings(): Generator {
 		yield 'the notice store'    => [ Store::class ];
 		yield 'the notice renderer' => [ Renderer::class ];
-		yield 'the load runner'     => [ Runner::class ];
+		yield 'the loader'          => [ Loader::class ];
 		yield 'the boot scheduler'  => [ Scheduler::class ];
 	}
 
@@ -169,7 +169,7 @@ class ProviderTest extends WPTestCase {
 	 * unprompted, so `has()` is true there only where a binding exists and the host's object
 	 * survives. A class id cannot be covered: di52 answers `has()` for one with the same true
 	 * whether or not anything was bound, so the provider cannot see the host's binding and
-	 * replaces it — a host rebinding `Store`, `Renderer`, `Load\Runner` or `Boot\Scheduler` has to
+	 * replaces it — a host rebinding `Store`, `Renderer`, `Loader` or `Boot\Scheduler` has to
 	 * do it after boot.
 	 *
 	 * @return Generator<string,array{0:string,1:object}>
