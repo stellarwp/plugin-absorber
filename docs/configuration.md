@@ -6,7 +6,7 @@
 use Nexcess\PluginAbsorber\Config;
 
 Config::set_hook_prefix( 'give' );          // required — keys hooks and options
-Config::set_container( give()->container ); // optional — lets you rebind collaborators
+Config::set_container( give()->container ); // required — every collaborator resolves from it
 ```
 
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
@@ -14,35 +14,55 @@ The hook prefix accepts letters, numbers, hyphens, and underscores. Anything els
 option names lowercase it and turn hyphens into underscores, so `Give-Core` hooks
 `Give-Core/plugin_absorber/should_load` and stores `give_core_plugin_absorber_notices`.
 
-The container is optional. Without one, the library instantiates its own collaborators; with one,
-a host can rebind them.
+## The container
+
+Both calls are required, and both belong at `plugins_loaded` priority 0, in your own container
+block rather than in a service provider.
+
+Any implementation of StellarWP's `ContainerInterface` will do — the one your plugin already hands
+to Telemetry, Uplink or Harbor. `Config::get_container()` throws `Config_Exception` when none is
+set; `Config::has_container()` is the probe if you need to ask.
+
+Priority matters twice. Conflict resolution runs at `plugins_loaded` priority 1 and the load at
+priority 2, and WordPress silently ignores a callback added at or past the priority it is already
+dispatching — so configuring us from a provider that itself runs at priority 1 races us. And a host
+that builds its container lazily may *replace* it at priority 0; hand us the container before that
+happens and we hold an orphan whose bindings were discarded.
 
 ## Rebinding a collaborator
 
-Every collaborator is interface-backed. With a container set, bind one to override the library
-globally; with no container, the defaults are used and nothing is required.
+`Loader::boot()` binds the defaults, and skips any id your container already has — so your binding
+wins whether you make it before boot or after, and nothing is resolved until `plugins_loaded`
+priority 1 in any case:
 
 ```php
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 
 $container->singleton( Registrar_Interface::class, My_Registrar::class );
-Config::set_container( $container );
 ```
 
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
+| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
+| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
+| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
 
-`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter: it may
-come before or after your `Loader::register()` calls, so long as it comes before boot. Registering
-buffers the sub-plugin and resolves nothing, so nothing is decided until the first read.
+`Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
+`site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
+`is_plugin_active()` then does not report what is in the database.
+
+`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
+the configuration calls: it may come before or after your `Loader::register()` calls, so long as it
+comes before boot. Registering buffers the sub-plugin and resolves nothing, so nothing is decided
+until the first read.
 
 A binding that does not implement the interface it is bound to throws `Config_Exception` when it is
 resolved, rather than being cached and failing later somewhere less obvious. So does a binding whose
 factory throws — with the original failure kept as the previous exception.
 
-The container is **not** used to wire hooks — those stay plain static callbacks, so the container
-stays genuinely optional.
+The container is **not** used to wire hooks. Those are closures that resolve when they fire, so
+registering them instantiates nothing and a request that triggers none builds none.
 
 ## Sub-plugin keys
 
@@ -70,10 +90,29 @@ at include time.
 Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
 activation record, so a second registration under the same slug is refused with a
 `Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Because registrations are buffered until boot, that collision is reported at boot rather than
-at the second `register()` call; a config array the library cannot use is still rejected on the spot.
+load. Registrations are buffered and nothing reads them until the load pass at `plugins_loaded`
+priority 2, so that is where the collision surfaces — not at the second `register()` call and not at
+`boot()`. It is reported with `_doing_it_wrong()` and that request loads no sub-plugin at all, rather
+than thrown out of a core hook. A config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+
+## The bundled file is included from a function, not from global scope
+
+WordPress includes plugins from `wp-settings.php` at global scope; this library includes them from
+inside a method. Variables assigned at the top level of the bundled file are therefore function-local
+and do not become globals:
+
+```php
+// In the bundled plugin's main file.
+$my_plugin = new My_Plugin();             // Not a global. `global $my_plugin;` elsewhere sees null.
+$GLOBALS['my_plugin'] = new My_Plugin();  // Works.
+```
+
+Everything else — function and class declarations, `define()`, hook registration, `__FILE__` — is
+unaffected. Bundle a plugin that publishes its instance through `$GLOBALS`, a singleton or a
+container, which is what plugins written in the last decade do anyway. No amount of wrapping on this
+side can hand a required file the global scope it would have had.
 
 ## Messages are callables, never strings
 

@@ -12,7 +12,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  *
  * Deliberately not a window onto WordPress. Asking whether the standalone counterpart is active is
  * a question about the site rather than about this configuration, and it belongs to
- * Plugin_State_Interface; this object only names the plugin to ask about.
+ * Plugin_Checker_Interface; this object only names the plugin to ask about.
  *
  * @since 1.0.0
  *

@@ -152,7 +152,30 @@ class ConfigTest extends WPTestCase {
 
 	public function test_it_reports_no_container_by_default(): void {
 		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
+	}
+
+	/**
+	 * The container is required, so reading it without one is a configuration error rather than a
+	 * null every caller then has to test for. Every collaborator comes from the container now: a
+	 * silent null would surface as a TypeError from somewhere inside plugins_loaded, naming this
+	 * library rather than the bootstrap that skipped a step.
+	 */
+	public function test_reading_a_container_that_was_never_set_is_a_configuration_error(): void {
+		$this->expectException( Config_Exception::class );
+
+		Config::get_container();
+	}
+
+	/**
+	 * The probe stays, and answers without throwing — it is how a host asks whether it has already
+	 * configured the library.
+	 */
+	public function test_the_probe_answers_without_throwing(): void {
+		$this->assertFalse( Config::has_container() );
+
+		Config::set_container( new Test_Container() );
+
+		$this->assertTrue( Config::has_container() );
 	}
 
 	public function test_it_stores_and_returns_a_container(): void {
@@ -171,9 +194,14 @@ class ConfigTest extends WPTestCase {
 		Config_State::reset();
 
 		$this->assertFalse( Config::has_container() );
-		$this->assertNull( Config::get_container() );
 
-		$this->expectException( Config_Exception::class );
-		Config::get_hook_prefix();
+		foreach ( [ 'get_container', 'get_hook_prefix' ] as $accessor ) {
+			try {
+				Config::{$accessor}();
+				$this->fail( sprintf( 'Config::%s() must throw once the state helper has run.', $accessor ) );
+			} catch ( Config_Exception $exception ) {
+				$this->assertNotSame( '', $exception->getMessage(), 'The host has to be told what is missing.' );
+			}
+		}
 	}
 }

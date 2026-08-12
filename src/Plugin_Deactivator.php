@@ -5,32 +5,16 @@
 
 namespace Nexcess\PluginAbsorber;
 
-use Nexcess\PluginAbsorber\Contracts\Plugin_State_Interface;
+use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
+use Nexcess\PluginAbsorber\Traits\Loads_Plugin_Functions;
 
 /**
- * Plugin state, straight from WordPress.
- *
- * The single place in this library that touches WordPress's plugin functions, so it is also the
- * single place that has to load them.
+ * Turns a plugin off, the way WordPress's own unattended paths do.
  *
  * @since 1.0.0
  */
-class Plugin_State implements Plugin_State_Interface {
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param string $basename Plugin basename.
-	 *
-	 * @return bool
-	 */
-	public function is_active( string $basename ): bool {
-		$this->load_plugin_functions();
-
-		// WordPress's own is_plugin_active() already ORs in the network check, so asking
-		// is_plugin_active_for_network() as well would only buy a second get_site_option() per
-		// sub-plugin per request.
-		return is_plugin_active( $basename );
-	}
+class Plugin_Deactivator implements Plugin_Deactivator_Interface {
+	use Loads_Plugin_Functions;
 
 	/**
 	 * @since 1.0.0
@@ -57,22 +41,5 @@ class Plugin_State implements Plugin_State_Interface {
 		// the blog branch, stranding an entry for a plugin that is active in both, which then takes
 		// a second request and a second deactivation hook to clear.
 		deactivate_plugins( $basename, true );
-	}
-
-	/**
-	 * WordPress only loads these in the admin, and we run at plugins_loaded on every request.
-	 *
-	 * Guarded on deactivate_plugins() rather than is_plugin_active(), because the latter is a
-	 * common third-party shim: something else defining it would short-circuit this and leave the
-	 * rest of the file unloaded, so the first call that needs a function nobody shimmed fatals.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return void
-	 */
-	private function load_plugin_functions(): void {
-		if ( ! function_exists( 'deactivate_plugins' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		}
 	}
 }

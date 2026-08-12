@@ -20,16 +20,19 @@ Every task's requirements implicitly include this section.
 - **Storage keys:** option `"{$option_prefix}_plugin_absorber_activations"`, option `"{$option_prefix}_plugin_absorber_notices"`. Both are assembled by `Config::get_option_name( string $name )` and nowhere else, alongside `Config::get_hook_name()` for filters. **Amended 2026-08-11:** `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, so `Give-Core` yields the option `give_core_plugin_absorber_notices` while still yielding the filter `Give-Core/plugin_absorber/should_load` — the prefix validator admits `A-Z` and `-`, and a hook-naming value should not reach a storage key verbatim. The two normalisations stay separate: folding case into the hook side would silently rename the host's own filters. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
 - **Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only. No other StellarWP library.
 - **PR size cap:** ≤10 files per PR, tests and test infrastructure excluded. No logic-bearing PR exceeds 4 source files.
-- **PR body format** — exactly four parts, nothing else. No boilerplate headings, no restating the diff, no checklists:
+- **PR body format** — exactly three parts, nothing else. No boilerplate headings, no restating the diff, no checklists, and no `Verify` section (dropped 2026-08-12: the commands live in `CLAUDE.md` and the coverage is in the diff, so restating them per PR is filler a reviewer learns to scroll past):
   ```
-  What: one line.
+  What: one line, naming every hook or entry point the PR wires.
 
   Usage: the snippet this PR makes possible.
 
-  Why this way: the trade-off taken, and against what.
+  Why this way:
 
-  Verify: the command, and what is deliberately not covered.
+  **The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+  **The next claim.** Same again.
   ```
+  `Why this way` is one bold-led block per decision, never a single paragraph running several arguments together — a reviewer reads the bold leads and stops at the one they doubt. Cut the connective throat-clearing between claims, never the claims.
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
@@ -659,24 +662,39 @@ that throws, a binding of the wrong type, and the registration order cases. Not 
 
 ## Task 11: `Loader` boot and load path
 
-**PR 11** · branch `11-loader-load-path` from `10-notices-queue` · 2 source files
+**PR 11** · branch `11-loader-load-path` from `10-notices-queue` · 1 source file
 
 **Files:**
-- Modify: `src/Loader.php`, `tests/_support/Loader_State.php` (the new `$booted` property needs a default), `README.md`
-- Create: `tests/unit/LoaderLoadTest.php`, `tests/unit/LoaderBootTest.php`
+- Modify: `src/Loader.php`, `tests/_support/Loader_State.php` (the new `$booted` property needs a
+  default, and the hooks `boot()` added need unwiring), `README.md`, `docs/filters.md`,
+  `docs/configuration.md`, `docs/conflict-handling.md`
+- Create: `tests/unit/LoaderBootTest.php`, `tests/unit/LoaderLoadTest.php`
 
 **Interfaces:**
-- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::notices()` (Task 10), `Config::get_hook_name()` (Task 4).
+- Consumes: `Sub_Plugin` predicates (Task 7), `Loader::all()` and its buffer drain (Task 9),
+  `Loader::notices()` → `Notices\Contracts\Queue_Interface`, default `Notices\Queue` (Task 10),
+  `Config::get_hook_name()` and `Config::get_hook_prefix()` (Task 4).
 - Produces:
   - `Loader::boot(): void` — idempotent
   - `Loader::load_all(): void`
   - `Loader::render_notices(): void`
   - `Loader::load( Sub_Plugin ): void` — private
+  - `Loader::wiring_window_has_closed(): bool` — private
+  - `Loader::has_hook_prefix(): bool` — private
+  - `Loader::LOAD_PRIORITY` — private const, the `plugins_loaded` priority the load loop runs at
   - the `"{$prefix}/plugin_absorber/should_load"` filter, args `(bool $should_load, Sub_Plugin $sub_plugin)`
 
   Task 12 adds the `plugins_loaded` @1 hook to `boot()`; Task 13 adds the activation call to `load()`.
 
-**Design note:** `boot()` wires only the @2 load hook and `all_admin_notices` in this PR. The @1 conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline to a collaborator that does not exist yet would not run.
+**Design note:** `boot()` wires only the @2 load hook and `all_admin_notices` in this PR. The @1
+conflict-resolution hook arrives in Task 12 with the resolver it delegates to — wiring a trampoline
+to a collaborator that does not exist yet would not run.
+
+**The boot barrier needs no flush of its own.** `register()` buffers and `all()` flushes, which
+landed in Task 9, so `load_all()` just iterates `self::all()` and the drain happens transparently on
+the first read. That read is at `plugins_loaded` priority 2, which is after the host's own bootstrap
+at priority 0 — so the container is set before anything resolves, and a registration made before
+`Config::set_container()` still reaches the bound registrar.
 
 - [ ] **Step 1: Cut the branch**
 
@@ -684,264 +702,46 @@ that throws, a binding of the wrong type, and the registration order cases. Not 
 git checkout 10-notices-queue && git checkout -b 11-loader-load-path
 ```
 
-- [ ] **Step 2: Write the failing load-path test**
+- [ ] **Step 2: Write the failing boot test**
 
-Each test writes its own fixture file. `require_once` caches by resolved path for the whole PHP process, so a shared fixture would make the second test in the run silently pass.
+`tests/unit/LoaderBootTest.php`, a `WPTestCase` that calls `Loader_State::reset()` and
+`Config_State::reset()` in `tearDown()`. Behaviours to cover:
 
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
+- `boot()` wires `load_all` to `plugins_loaded` at `LOAD_PRIORITY`, and `render_notices` to
+  `all_admin_notices` — the latter only under `is_admin()`, so both branches need a case. Asserting
+  the front-end branch does *not* wire needs a working recorder, per the testing rules: assert the
+  hook is absent, then wire it by hand and assert the same read finds it.
+- Calling `boot()` twice wires each hook exactly once — read
+  `$GLOBALS['wp_filter']['plugins_loaded']->callbacks` at the priority and count, since `has_action()`
+  cannot tell one callback from two.
+- Booting too late is reported and recovered from. With `plugins_loaded` already dispatched, or
+  dispatching at a priority at or past `LOAD_PRIORITY`, `boot()` triggers `_doing_it_wrong()` and
+  loads inline instead of wiring a hook that would never fire. The inclusive comparison — booting
+  *from* `plugins_loaded` @2 — is its own case, because that is the near miss a host actually hits.
+- Booting from `plugins_loaded` at a priority *before* `LOAD_PRIORITY` still wires normally.
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+- [ ] **Step 3: Write the failing load-path test**
 
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
+`tests/unit/LoaderLoadTest.php`. Each test writes its own fixture file: `require_once` caches by
+resolved path for the whole PHP process, so a shared fixture would make the second test in the run
+silently pass. A fixture counts its own loads into a global and defines its guard constant inside a
+`defined()` check; `tearDown()` unlinks the fixtures, drops the global, deletes the notices option
+and resets both facades. Behaviours to cover:
 
-/**
- * @since 1.0.0
- */
-class LoaderLoadTest extends WPTestCase {
-	/**
-	 * @var array<int,string>
-	 */
-	private $fixtures = [];
-
-	public function setUp(): void {
-		parent::setUp();
-
-		Config::set_hook_prefix( 'give' );
-		$GLOBALS['absorber_loads'] = 0;
-	}
-
-	public function tearDown(): void {
-		foreach ( $this->fixtures as $fixture ) {
-			if ( file_exists( $fixture ) ) {
-				unlink( $fixture );
-			}
-		}
-		$this->fixtures = [];
-
-		unset( $GLOBALS['absorber_loads'] );
-		delete_transient( 'give_plugin_absorber_notices' );
-		Loader_State::reset();
-		Config::reset();
-		parent::tearDown();
-	}
-
-	/**
-	 * Write a throwaway bundled plugin that counts its own loads and defines its guard constant.
-	 *
-	 * A unique path per test is required: require_once caches by resolved path for the lifetime of
-	 * the PHP process, so a shared fixture would make later tests pass without loading anything.
-	 *
-	 * @param string $constant Guard constant to define.
-	 */
-	private function make_fixture( string $constant ): string {
-		$path = sys_get_temp_dir() . '/absorber-' . uniqid( '', true ) . '.php';
-
-		file_put_contents(
-			$path,
-			'<?php' . PHP_EOL
-			. '$GLOBALS["absorber_loads"] = ( $GLOBALS["absorber_loads"] ?? 0 ) + 1;' . PHP_EOL
-			. 'if ( ! defined( "' . $constant . '" ) ) { define( "' . $constant . '", "1.0.0" ); }' . PHP_EOL
-		);
-
-		$this->fixtures[] = $path;
-
-		return $path;
-	}
-
-	/**
-	 * @param array<string,mixed> $overrides Config overrides.
-	 */
-	private function register( array $overrides = [], ?string $constant = null ): string {
-		$constant = $constant ?? 'ABSORBER_FIXTURE_' . strtoupper( bin2hex( random_bytes( 4 ) ) );
-		$path     = $this->make_fixture( $constant );
-
-		Loader::register(
-			array_merge(
-				[
-					'slug'                   => 'give-recurring',
-					'bundled_plugin_file'    => $path,
-					'plugin_loaded_constant' => $constant,
-				],
-				$overrides
-			)
-		);
-
-		return $constant;
-	}
-
-	public function test_it_requires_the_bundled_file(): void {
-		$constant = $this->register();
-
-		Loader::load_all();
-
-		$this->assertSame( 1, $GLOBALS['absorber_loads'] );
-		$this->assertTrue( defined( $constant ) );
-	}
-
-	public function test_it_requires_the_bundled_file_exactly_once(): void {
-		$this->register();
-
-		Loader::load_all();
-		Loader::load_all();
-
-		$this->assertSame( 1, $GLOBALS['absorber_loads'] );
-	}
-
-	public function test_it_skips_a_disabled_sub_plugin(): void {
-		$this->register( [ 'enabled' => false ] );
-
-		Loader::load_all();
-
-		$this->assertSame( 0, $GLOBALS['absorber_loads'] );
-	}
-
-	public function test_it_skips_when_dependencies_are_unmet_and_queues_a_notice(): void {
-		$this->register( [ 'dependency_check' => static fn() => false ] );
-
-		Loader::load_all();
-
-		$this->assertSame( 0, $GLOBALS['absorber_loads'] );
-		$this->assertArrayHasKey(
-			'give-recurring:dependency',
-			get_transient( 'give_plugin_absorber_notices' )
-		);
-	}
-
-	public function test_it_skips_when_the_guard_constant_is_already_defined(): void {
-		define( 'ABSORBER_ALREADY_LOADED_GUARD', '1.0.0' );
-
-		$this->register( [], 'ABSORBER_ALREADY_LOADED_GUARD' );
-
-		Loader::load_all();
-
-		$this->assertSame( 0, $GLOBALS['absorber_loads'], 'A defined constant means the code is already present.' );
-	}
-
-	public function test_it_skips_when_the_bundled_file_is_missing(): void {
-		Loader::register(
-			[
-				'slug'                   => 'give-recurring',
-				'bundled_plugin_file'    => '/tmp/absorber-does-not-exist-' . uniqid( '', true ) . '.php',
-				'plugin_loaded_constant' => 'ABSORBER_MISSING_FILE_GUARD',
-			]
-		);
-
-		Loader::load_all();
-
-		$this->assertSame( 0, $GLOBALS['absorber_loads'] );
-	}
-
-	public function test_the_should_load_filter_can_veto_the_load(): void {
-		$this->register();
-
-		add_filter( 'give/plugin_absorber/should_load', '__return_false' );
-
-		Loader::load_all();
-
-		$this->assertSame( 0, $GLOBALS['absorber_loads'] );
-	}
-
-	public function test_the_should_load_filter_receives_the_sub_plugin(): void {
-		$this->register();
-
-		$received = null;
-		add_filter(
-			'give/plugin_absorber/should_load',
-			static function ( $should_load, $sub_plugin ) use ( &$received ) {
-				$received = $sub_plugin;
-
-				return $should_load;
-			},
-			10,
-			2
-		);
-
-		Loader::load_all();
-
-		$this->assertInstanceOf( \Nexcess\PluginAbsorber\Sub_Plugin::class, $received );
-		$this->assertSame( 'give-recurring', $received->get_slug() );
-	}
-
-	public function test_it_loads_every_registered_sub_plugin(): void {
-		$this->register( [ 'slug' => 'give-recurring' ] );
-		$this->register( [ 'slug' => 'give-fee-recovery' ] );
-
-		Loader::load_all();
-
-		$this->assertSame( 2, $GLOBALS['absorber_loads'] );
-	}
-}
-```
-
-- [ ] **Step 3: Write the failing boot test**
-
-```php
-<?php
-/**
- * @package Nexcess\PluginAbsorber
- */
-
-namespace Nexcess\PluginAbsorber\Tests\Unit;
-
-use Codeception\TestCase\WPTestCase;
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
-
-/**
- * @since 1.0.0
- */
-class LoaderBootTest extends WPTestCase {
-	public function setUp(): void {
-		parent::setUp();
-
-		Config::set_hook_prefix( 'give' );
-	}
-
-	public function tearDown(): void {
-		remove_all_actions( 'plugins_loaded' );
-		remove_all_actions( 'all_admin_notices' );
-		Loader_State::reset();
-		Config::reset();
-		parent::tearDown();
-	}
-
-	public function test_it_wires_the_load_hook_at_priority_two(): void {
-		Loader::boot();
-
-		$this->assertSame(
-			2,
-			has_action( 'plugins_loaded', [ Loader::class, 'load_all' ] )
-		);
-	}
-
-	public function test_booting_twice_wires_the_hook_only_once(): void {
-		Loader::boot();
-		Loader::boot();
-
-		$callbacks = $GLOBALS['wp_filter']['plugins_loaded']->callbacks[2] ?? [];
-
-		$this->assertCount( 1, $callbacks, 'boot() must be idempotent.' );
-	}
-
-	public function test_it_wires_the_admin_notices_hook_in_the_admin(): void {
-		set_current_screen( 'dashboard' );
-
-		Loader::boot();
-
-		$this->assertNotFalse( has_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] ) );
-
-		set_current_screen( 'front' );
-	}
-}
-```
+- A registered, enabled sub-plugin with a readable file is required exactly once, and its guard
+  constant is defined afterwards. Calling `load_all()` twice still loads once.
+- Every registered sub-plugin loads, in registration order.
+- Each gate skips: disabled; guard constant already defined; dependencies unmet — which also queues
+  the dependency notice through `Loader::notices()`; bundled file missing, unreadable, or a
+  directory, which reports through `_doing_it_wrong()` and queues *nothing*.
+- The `should_load` filter is applied under the name `Config::get_hook_name( 'should_load' )`,
+  receives the `Sub_Plugin` as its second argument, and vetoes the load when it returns falsy.
+- The gate order is itself asserted: with the guard constant defined *and* an unmet dependency, no
+  dependency notice is queued — the already-loaded check runs first.
+- `load_all()` and `render_notices()` with no hook prefix set report through `_doing_it_wrong()` and
+  return, rather than throwing out of a core action.
+- A registrar bound in the container that returns a non-`Sub_Plugin` entry is skipped rather than
+  fataling.
 
 - [ ] **Step 4: Run both to verify they fail**
 
@@ -950,16 +750,30 @@ Expected: FAIL — `Call to undefined method Nexcess\PluginAbsorber\Loader::boot
 
 - [ ] **Step 5: Add boot and the load path to `src/Loader.php`**
 
-Add the `$booted` property beside `$resolved`:
+Add the priority constant and the `$booted` property beside `$resolved` and `$pending`:
 
 ```php
 	/**
+	 * plugins_loaded priority the load loop runs at.
+	 *
+	 * Ahead of the default priority, so a bundled plugin is in memory before the plugins that
+	 * expect it start their own work, and low enough to leave room for earlier wiring.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var int
+	 */
+	private const LOAD_PRIORITY = 2;
+
+	/**
+	 * Whether the hooks have been wired.
+	 *
 	 * @var bool
 	 */
 	private static $booted = false;
 ```
 
-Append these methods:
+Then the public methods:
 
 ```php
 	/**
@@ -980,8 +794,6 @@ Append these methods:
 
 		self::$booted = true;
 
-		add_action( 'plugins_loaded', [ self::class, 'load_all' ], 2 );
-
 		if ( is_admin() ) {
 			// all_admin_notices, not admin_notices. WordPress dispatches admin_notices,
 			// network_admin_notices and user_admin_notices as mutually exclusive branches, so a
@@ -989,6 +801,24 @@ Append these methods:
 			// deactivation gets noticed -- would never see the queue rendered.
 			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
 		}
+
+		// Adding an action at a priority the current dispatch has already passed is accepted and
+		// then never fires. Booting from plugins_loaded at the default priority instead of 0 --
+		// the commonest hook mistake there is -- would otherwise mean nothing loads at all, with
+		// no warning and a site that looks entirely healthy.
+		if ( self::wiring_window_has_closed() ) {
+			_doing_it_wrong(
+				__METHOD__,
+				'Loader::boot() must run before plugins_loaded priority 2. Loading inline instead.',
+				'1.0.0'
+			);
+
+			self::load_all();
+
+			return;
+		}
+
+		add_action( 'plugins_loaded', [ self::class, 'load_all' ], self::LOAD_PRIORITY );
 	}
 
 	/**
@@ -997,6 +827,13 @@ Append these methods:
 	 * @return void
 	 */
 	public static function load_all(): void {
+		// The load path needs the prefix for the should_load filter and for the notice store.
+		// Throwing out of a core action would take the whole site down over a bootstrap mistake,
+		// so it is reported where a developer will see it and the load is abandoned instead.
+		if ( ! self::has_hook_prefix() ) {
+			return;
+		}
+
 		foreach ( self::all() as $sub_plugin ) {
 			// Registrar_Interface::all() only declares `array`. A host binding its own registrar
 			// that returns anything else would otherwise fatal inside plugins_loaded on the first
@@ -1015,20 +852,39 @@ Append these methods:
 	 * @return void
 	 */
 	public static function render_notices(): void {
+		if ( ! self::has_hook_prefix() ) {
+			return;
+		}
+
 		self::notices()->render();
 	}
+```
 
+And the private ones, below `flush()` and `resolve()` — public, then private, and no helper above
+the API it serves:
+
+```php
 	/**
-	 * Load one sub-plugin, in the order the checks are cheapest and most decisive.
+	 * Load one sub-plugin, cheapest and most decisive check first.
 	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin to load.
 	 *
+	 * @throws Config_Exception When a collaborator binding is unusable.
+	 *
 	 * @return void
 	 */
 	private static function load( Sub_Plugin $sub_plugin ): void {
 		if ( ! $sub_plugin->is_enabled() ) {
+			return;
+		}
+
+		// Ahead of the dependency check, which calls an arbitrary host callable. This is one
+		// defined(), it carries the whole re-declaration guarantee, and it is the only gate that
+		// means "the plugin is already running" -- warning that requirements are unmet for a
+		// plugin the admin can see working would be worse than useless.
+		if ( $sub_plugin->is_already_loaded() ) {
 			return;
 		}
 
@@ -1038,125 +894,239 @@ Append these methods:
 			return;
 		}
 
-		// The constant is defined => the code is already present, from either copy. Loading the
-		// bundled file now would be a re-declaration fatal.
-		if ( $sub_plugin->is_already_loaded() ) {
+		// Not file_exists(): that is true for a directory and for a file with no read permission,
+		// and require_once fatals on both. A missing file is a broken build in the host plugin
+		// rather than anything a site owner can act on, so it goes to the developer instead of
+		// into the notice queue, where it would have displayed the host's own
+		// dependency_notice_message and sent the owner after the wrong problem entirely.
+		$file = $sub_plugin->get_bundled_plugin_file();
+
+		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
+			_doing_it_wrong(
+				'Nexcess\PluginAbsorber\Loader',
+				sprintf(
+					'The bundled plugin file for "%s" is missing or unreadable: %s',
+					$sub_plugin->get_slug(),
+					$file
+				),
+				'1.0.0'
+			);
+
 			return;
 		}
 
-		if ( ! file_exists( $sub_plugin->get_bundled_plugin_file() ) ) {
-			return;
-		}
-
-		$should_load = apply_filters(
-			Config::get_hook_name( 'should_load' ),
-			true,
-			$sub_plugin
-		);
+		// No type guard on the return, unlike the conflict_policy filter: there is no cast here,
+		// and every unexpected value is falsy-or-truthy without fataling. Anything odd skips the
+		// load, which is the safe direction.
+		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
 
 		if ( ! $should_load ) {
 			return;
 		}
 
-		require_once $sub_plugin->get_bundled_plugin_file();
+		// An include takes the scope of the line it sits on, and this one is inside a method, where
+		// wp-settings.php includes plugins at global scope. Top-level assignments in the bundled
+		// file are function-local as a result -- documented for hosts, because no amount of
+		// wrapping here can hand a required file the global scope it would have had.
+		require_once $file;
+	}
+
+	/**
+	 * Whether it is already too late to wire the load hook.
+	 *
+	 * The comparison is inclusive. A callback added to the priority currently being dispatched is
+	 * accepted and never reached either: WP_Hook::apply_filters() walks `$this->callbacks[$priority]`
+	 * with a by-value foreach, so the append lands on an array the running loop has already copied.
+	 * Booting from plugins_loaded at priority 2 is the case a host is likeliest to hit by accident,
+	 * and an exclusive comparison would let exactly that one through unreported.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	private static function wiring_window_has_closed(): bool {
+		if ( ! did_action( 'plugins_loaded' ) ) {
+			return false;
+		}
+
+		if ( ! doing_action( 'plugins_loaded' ) ) {
+			return true;
+		}
+
+		$hook = $GLOBALS['wp_filter']['plugins_loaded'] ?? null;
+
+		return $hook instanceof WP_Hook && $hook->current_priority() >= self::LOAD_PRIORITY;
+	}
+
+	/**
+	 * Whether a hook prefix has been set, reporting to the developer when it has not.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	private static function has_hook_prefix(): bool {
+		try {
+			Config::get_hook_prefix();
+		} catch ( Config_Exception $exception ) {
+			_doing_it_wrong( 'Nexcess\PluginAbsorber\Loader', $exception->getMessage(), '1.0.0' );
+
+			return false;
+		}
+
+		return true;
 	}
 ```
 
-- [ ] **Step 6: Teach `tests/_support/Loader_State.php` about the boot flag**
+The filter name is built with `Config::get_hook_name( 'should_load' )` and never by concatenating
+`Config::get_hook_prefix()` with the rest: `Config` owns the segment between the host's prefix and
+the key's own name, and nothing else assembles it.
 
-`Loader_State::reset()` walks `Loader`'s static properties and refuses one it has no default for,
-so until `$booted` is listed every test that resets throws a `LogicException` naming it. That is
-the helper doing its job: a boot flag left standing would wire the hooks once and then let every
-later test's `boot()` no-op.
+- [ ] **Step 6: Teach `tests/_support/Loader_State.php` about the boot flag and the hooks**
+
+`Loader_State::reset()` walks `Loader`'s static properties and refuses one it has no default for, so
+until `$booted` is listed every test that resets throws a `LogicException` naming it. That is the
+helper doing its job: a boot flag left standing would wire the hooks once and then let every later
+test's `boot()` no-op.
+
+Clearing the flag is not enough on its own. A `Loader` that reports itself unbooted while its
+callbacks are still attached is the worse of the two states: the next `boot()` wires nothing and
+still looks like it worked, and the stranded callback goes on loading sub-plugins into tests that
+never registered any. So the helper unwires both hooks as well — and reads `LOAD_PRIORITY` off the
+class by reflection rather than restating `2`, so it cannot go on removing a hook from a priority the
+`Loader` no longer wires.
 
 ```php
 	protected const DEFAULTS = [
 		'resolved' => [],
+		'pending'  => [],
 		'booted'   => false,
 	];
+
+	public static function reset(): void {
+		$reflection = new ReflectionClass( Loader::class );
+
+		// Read rather than restated, so the helper cannot go on removing a hook from a priority
+		// the Loader no longer wires -- which would leave the real callback attached and every
+		// later test loading sub-plugins it never registered.
+		$load_priority = $reflection->getConstant( 'LOAD_PRIORITY' );
+
+		remove_action( 'plugins_loaded', [ Loader::class, 'load_all' ], (int) $load_priority );
+		remove_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] );
+
+		// ... the property walk from Task 9, unchanged.
+	}
 ```
+
+There is still no `Loader::reset()`, and nothing in this PR adds one. The seam stays in
+`tests/_support/`.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `slic run unit`
-Expected: PASS — 9 load tests + 3 boot tests.
+Run: `slic run unit`, then `slic run unit --env multisite`.
 
 - [ ] **Step 8: Confirm static analysis is still clean**
 
 Run: `composer test:analysis`
+Expected: `[OK] No errors`.
 
-- [ ] **Step 9: Append to the README**
+- [ ] **Step 9: Document it, in four places and not in one**
+
+The human docs are split out of the README and are not to grow back, so each piece goes where its
+subject already lives. The README gets only the bootstrap, short:
 
 ```markdown
-### Bootstrap
-
-```php
-use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
-
-add_action( 'plugins_loaded', function () {
-    Config::set_hook_prefix( 'give' );
-
-    Loader::register( [
-        'slug'                   => 'give-recurring',
-        'bundled_plugin_file'    => GIVE_PLUGIN_DIR . 'subs/give-recurring/give-recurring.php',
-        'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION',
-    ] );
-
-    Loader::boot();
-}, 0 ); // priority 0 — before the absorber's own @1 and @2 hooks fire
+Loader::register( [ ... ] );
+Loader::boot();
 ```
 
-The bundled file must define its guard constant inside a `defined()` check:
+wrapped in `add_action( 'plugins_loaded', ..., 0 )`, with a line on why the `, 0` matters: `boot()`
+wires the load at priority 2, WordPress silently ignores a callback added at or past the priority it
+is already dispatching, and booting later is reported and loaded inline but with weaker ordering
+guarantees.
 
-```php
-if ( ! defined( 'GIVE_RECURRING_VERSION' ) ) {
-    define( 'GIVE_RECURRING_VERSION', '2.4.0' );
-}
-```
+`docs/filters.md` gets the load gate — the filter's arguments, the `add_filter()` snippet, and the
+order it sits in: consulted only for a sub-plugin that would otherwise have loaded, so returning
+`true` cannot force a load past the guard constant.
 
-### Load gate
+`docs/configuration.md` gets two things: the `Notices\Contracts\Queue_Interface` → `Notices\Queue`
+row in the collaborator table, and the global-scope caveat — top-level assignments in a bundled file
+are function-local, `$GLOBALS['my_plugin'] = ...` works, and declarations, `define()`, hooks and
+`__FILE__` are unaffected.
 
-Applied immediately before `require_once`:
+`docs/conflict-handling.md` gets the `defined()` snippet the bundled file must wrap its guard
+constant in, next to the paragraph that already says the constant must be defined at file scope.
 
-```php
-add_filter( 'give/plugin_absorber/should_load', function ( $should_load, $sub_plugin ) {
-    return $sub_plugin->get_slug() === 'give-recurring' ? false : $should_load;
-}, 10, 2 );
-```
-
-A sub-plugin is skipped when it is disabled, its dependencies are unmet, its guard constant is
-already defined, its bundled file is missing, or this filter returns false.
-```
+> **Design notes.**
+>
+> *The already-loaded check moved ahead of the dependency check.* The first sketch had the two the
+> other way round, cheapest-first. `is_already_loaded()` is one `defined()` and the dependency check
+> calls an arbitrary host callable, so cheapest-first argues the same way — but the deciding reason
+> is what each gate means. A defined guard constant means the plugin is running right now; telling a
+> site owner its requirements are unmet, for a plugin they can see working, sends them after a
+> problem that does not exist.
+>
+> *The file check is `is_file()` and `is_readable()`, not `file_exists()`.* `file_exists()` is true
+> for a directory and for a file the process cannot read, and `require_once` fatals on both — which
+> is the exact failure this library exists to prevent. A missing bundled file is a broken build in
+> the host plugin, so it is reported through `_doing_it_wrong()` and queues nothing: the notice queue
+> would have shown the host's own `dependency_notice_message` and sent a site owner after the wrong
+> problem.
+>
+> *Booting too late is reported and recovered from, not ignored.* `add_action()` accepts a callback
+> at a priority the current dispatch has already passed and then never fires it, so a host that boots
+> from `plugins_loaded` at the default priority would load nothing at all, silently, on a site that
+> looks healthy. `wiring_window_has_closed()` compares inclusively, because booting from
+> `plugins_loaded` @2 is the near miss a host actually hits and an exclusive comparison lets exactly
+> that one through unreported. The recovery is an inline `load_all()`: weaker ordering, but the
+> sub-plugins load.
+>
+> *A missing hook prefix returns instead of throwing.* Both `load_all()` and `render_notices()` run
+> from core actions, and an exception out of `plugins_loaded` takes the whole site down over a
+> bootstrap mistake. `_doing_it_wrong()` puts it in front of the developer who made it and the load
+> is abandoned.
+>
+> *`Loader` still has no `reset()`.* `boot()` adds a third piece of static state and the temptation
+> with it, and the answer has not changed: a public reset is API the library supports forever, and a
+> host that called it mid-request would drop the registrations the load loop is about to read.
+> `Tests\Support\Loader_State::reset()` clears the memo, the buffer and the boot flag by reflection,
+> and unwires the two hooks in the same pass — a reset that cleared the flag alone would leave a
+> `Loader` that reports itself unbooted with its callbacks still attached.
 
 - [ ] **Step 10: Commit, push, open the PR**
 
 ```bash
-git add src/Loader.php tests/_support/Loader_State.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md
+git add src/Loader.php tests/_support/Loader_State.php tests/unit/LoaderLoadTest.php tests/unit/LoaderBootTest.php README.md docs/filters.md docs/configuration.md docs/conflict-handling.md
 git commit -m "Add Loader boot and the load path"
 git push -u origin 11-loader-load-path
 gh pr create --base 10-notices-queue --title "Loader boot and load path" --body 'What: `boot()`, `load_all()`, the five-gate load path, and the `should_load` filter.
 
 Usage:
 
-    Loader::register( [ ... ] );
-    Loader::boot();   // wires plugins_loaded @2 and all_admin_notices
+    add_action( "plugins_loaded", function () {
+        Config::set_hook_prefix( "give" );
+        Loader::register( [ ... ] );
+        Loader::boot();   // wires plugins_loaded @2 and all_admin_notices
+    }, 0 );
 
     add_filter( "give/plugin_absorber/should_load", function ( $should_load, $sub_plugin ) {
         return $should_load;
     }, 10, 2 );
 
-Why this way: gate order is deliberate — `is_enabled()` and `are_dependencies_met()` are cheap
-config checks, `is_already_loaded()` is the one that actually prevents the fatal, and the filter
-runs last so a host override cannot accidentally re-introduce a re-declaration. The
-already-loaded check sits before `file_exists()` because it is both cheaper and more important.
+Why this way: the guard constant is checked before the dependency check rather than after it. A
+defined constant means the plugin is running right now, and warning that requirements are unmet for
+a plugin the admin can see working sends them after a problem that does not exist. The file check is
+`is_file()` plus `is_readable()`, not `file_exists()`, which is true for a directory and for an
+unreadable file and lets `require_once` fatal on both. Booting past `plugins_loaded` @2 is reported
+through `_doing_it_wrong()` and loaded inline instead of wiring a hook that would never fire —
+against silently loading nothing on a site that looks healthy. `boot()` wires only the @2 hook here;
+the @1 conflict-resolution hook lands with the resolver it delegates to.
 
-`boot()` wires only the @2 hook here; the @1 conflict-resolution hook lands with the resolver it
-delegates to, since a trampoline pointing at a collaborator that does not exist yet would not run.
-
-Verify: `slic run unit` — 12 tests. Each writes its own fixture file, because `require_once` caches
-by resolved path for the whole PHP process and a shared fixture would make later tests pass without
-loading anything.'
+Verify: `slic run unit` on both envs, and `composer test:analysis`. Covered: every gate and its
+order, the boot window including the inclusive near miss at @2, and the missing-prefix path. Each
+load test writes its own fixture, because `require_once` caches by resolved path for the whole PHP
+process. Not covered here: conflict resolution and the activation callback, which land in Tasks 12
+and 13.'
 ```
 
 ---
@@ -1757,22 +1727,27 @@ Usage:
             : Conflict_Policy::DEACTIVATE;
     },
 
-Why this way: `deactivate_plugins()` receives `$network_wide` — a change from the engineering plan,
-which detects network activation and then drops the flag. Without it the call silently no-ops
-against a network-activated plugin, so every admin request deactivates nothing and redirects again.
-That is an infinite redirect loop on multisite, and it is exactly what the plan is own E2E
-criterion ("reloading the plugins page does not loop") was meant to catch.
+Why this way:
 
-`redirect_destination()` returns false on a plugins.php referrer so an inline update is never
-interrupted, and rewrites update.php / update-core.php referrers so the user is not bounced back
+**`deactivate_plugins()` receives `$network_wide`** — a change from the engineering plan, which
+detects network activation and then drops the flag. Without it the call silently no-ops against a
+network-activated plugin, so every admin request deactivates nothing and redirects again: an
+infinite redirect loop on multisite, and exactly what the plan is own E2E criterion ("reloading the
+plugins page does not loop") was meant to catch.
+
+**An unknown policy is its own case, never a `default:` fallthrough.** A typo like `defered` would
+otherwise land on the deactivate branch and turn off a plugin the site owner deliberately enabled.
+
+**`redirect_destination()` returns false on a plugins.php referrer**, so an inline update is never
+interrupted. update.php and update-core.php referrers are rewritten so the user is not bounced back
 into an update screen.
 
-Known limitation, deliberate: `resolve_all()` runs on front-end requests too, matching both
-reference implementations. Tracked as issue B in the spec.
+**`exit` is never mocked.** The stubbed `wp_safe_redirect()` throws `TestException`, halting the
+resolver exactly where production calls `exit` while leaving a failing test free to report as
+failing.
 
-Verify: `slic run unit` and `slic run unit --env multisite` — 15 tests. `exit` is never mocked: the
-stubbed `wp_safe_redirect()` throws `TestException`, which halts the resolver exactly where
-production calls `exit` while leaving a failing test free to report as failing.'
+**Known limitation, deliberate:** `resolve_all()` runs on front-end requests too, matching both
+reference implementations. Tracked as issue B in the spec.'
 ```
 
 ---
@@ -2125,7 +2100,8 @@ idempotent, version-gated migrations — not here.
 git add src/Activation.php src/Contracts/Activation_Interface.php src/Loader.php tests/unit/ActivationTest.php tests/unit/LoaderLoadTest.php README.md
 git commit -m "Add run-once activation tracking"
 git push -u origin 13-activation
-gh pr create --base 12-conflict-resolver --title "Activation" --body 'What: run-once-ever activation tracking, wired into the load path.
+gh pr create --base 12-conflict-resolver --title "Activation" --body 'What: `Activation` and `Activation_Interface`, reachable as `Loader::activation()`, wired into the
+load path as the last step after a successful require.
 
 Usage:
 
@@ -2133,19 +2109,20 @@ Usage:
         \Give\Recurring\Install::create_tables();
     },
 
-Why this way: `register_activation_hook()` never fires for a `require_once`d file, so a plugin
-absorbed into a host would never run its original install routine. One option holds a per-slug
-flag, and the callback fires after a successful require — never when the load was skipped, which
+Why this way:
+
+**`register_activation_hook()` never fires for a `require_once`d file**, so a plugin absorbed into
+a host would never run its original install routine. One option holds a per-slug flag instead.
+
+**The callback fires only after a successful require** — never when the load was skipped, which
 would otherwise create tables for code that is not loaded.
 
-A single option rather than one per slug keeps this to one autoloaded row no matter how many
+**A single option rather than one per slug** keeps this to one autoloaded row no matter how many
 sub-plugins a host bundles.
 
-Known limitation, deliberate: read-then-write is not atomic, so two simultaneous first requests can
-both run the callback. Tracked as issue E in the spec; `add_option()` as a claim would close it.
-
-Verify: `slic run unit` — 11 tests, including a corrupted-option recovery and hook-prefix
-namespacing.'
+**Known limitation, deliberate:** read-then-write is not atomic, so two simultaneous first requests
+can both run the callback. Tracked as issue E in the spec; `add_option()` as a claim would close
+it.'
 ```
 
 ---
@@ -2500,29 +2477,28 @@ Requires WordPress 6.4+ for the `wp_admin_notice_markup` filter.
 git add src/Notices/Queue.php src/Notices/Contracts/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
 git commit -m "Replace WordPress fatal-activation text for absorbed standalones"
 git push -u origin 14-activation-error-notice
-gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: replaces WordPress generic "triggered a fatal error" notice with the sub-plugin own
-explanation when a user re-activates an absorbed standalone.
+gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: the `wp_admin_notice_markup` filter and its Loader trampoline, replacing WordPress generic
+"triggered a fatal error" notice with the sub-plugin own explanation when a user re-activates an
+absorbed standalone.
 
 Usage:
 
     "conflict_notice_message" => static fn() => __( "Now bundled with Give.", "give" ),
 
-Why this way: a change from the engineering plan, which specified `ob_start()` on
-`admin_head-plugins.php` copied from Kadence. The newer LearnDash reference uses the
-`wp_admin_notice_markup` filter — same nonce check, same str_replace, but no output buffering, no
-risk of mangling unrelated admin output, and directly unit-testable. The cost is a WordPress 6.4
-floor, which is when that filter landed.
+Why this way:
 
-Three gates before touching anything: the plugins screen, a `plugin` parameter matching a
+**The `wp_admin_notice_markup` filter, not `ob_start()`.** The engineering plan specified output
+buffering on `admin_head-plugins.php`, copied from Kadence. The filter does the same nonce check
+and the same str_replace with no buffering, no risk of mangling unrelated admin output, and is
+directly unit-testable. The cost is the WordPress 6.4 floor, which is when the filter landed.
+
+**Three gates before touching the markup:** the plugins screen, a `plugin` parameter matching a
 registered standalone basename, and a valid `plugin-activation-error_{basename}` nonce. Failing any
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no
-consumers.
-
-Verify: `slic run unit` — 8 tests, one per gate plus `wp_kses_post()` sanitising and the Loader
-trampoline.'
+**This adds a method to `Notices\Contracts\Queue_Interface`,** which shipped in PR 10. Pre-1.0 with
+no consumers.'
 ```
 
 ---
@@ -2964,20 +2940,23 @@ gh pr create --base 14-activation-error-notice --title "End-to-end suite" --body
 Usage: `tests/_data/plugins/absorber-host/absorber-host.php` is the worked consumer example —
 register, set a policy, supply an activation callback, boot.
 
-Why this way: these drive the real `active_plugins` option and let `deactivate_plugins()` actually
-run, rather than stubbing it as the unit tests do. Only `wp_safe_redirect` and `wp_get_referer` are
-stubbed; the redirect throws `TestException` so the request halts where production calls `exit`,
-without mocking `exit` itself. That makes this a genuine integration check of the load guard,
-the three policies, and the run-once activation working together.
+Why this way:
 
-Bundled fixtures are generated per test rather than committed: `require_once` caches by resolved
+**These drive real WordPress state.** The real `active_plugins` option, a real
+`deactivate_plugins()` call, rather than the stubs the unit tests use — a genuine integration check
+of the load guard, the three policies, and the run-once activation working together.
+
+**Only `wp_safe_redirect` and `wp_get_referer` are stubbed.** The redirect throws `TestException`,
+so the request halts where production calls `exit` without mocking `exit` itself.
+
+**Bundled fixtures are generated per test, never committed.** `require_once` caches by resolved
 path for the whole PHP process, so a committed bundled file would execute once for the entire suite
 and every later test would pass without loading anything. The generator moved into a shared
 `WithBundledPlugins` trait — the on-disk counterpart to `WithSubPlugins` from PR 7 — and
 `LoaderLoadTest` now uses it too.
 
-Verify: `slic run unit` and `slic run unit --env multisite` — 9 end-to-end tests. Not covered: real
-HTTP requests and a real browser; the redirect is asserted as a call, not followed.'
+**Out of scope:** real HTTP requests and a real browser. The redirect is asserted as a call, not
+followed.'
 ```
 
 ---
@@ -3100,12 +3079,15 @@ gh pr create --base 15-e2e-fixtures --title "README pass and 1.0.0" --body 'What
 
 Usage: see the complete worked example at the end of the README.
 
-Why this way: the README was built up section by section as each PR landed, so it never drifted
-from what actually shipped. This pass removes the duplication that approach leaves behind and
-checks the ordering reads for a newcomer rather than in merge order.
+Why this way:
 
-Verify: `git archive --format=tar HEAD | tar -t` shows only src/, composer.json, LICENSE, README,
-CHANGELOG — no tests, docs, or CI config in a consumer install. Both suites and PHPStan green.'
+**The README was built up section by section as each PR landed,** so it never drifted from what
+actually shipped. This pass removes the duplication that approach leaves behind and checks the
+ordering reads for a newcomer rather than in merge order.
+
+**`.gitattributes` keeps the dev files out of a consumer install.** `git archive` yields `src/`,
+`composer.json`, `LICENSE`, `README.md` and `CHANGELOG.md` — no tests, docs, or CI config reaching
+a consumer vendor directory.'
 ```
 
 - [ ] **Step 9: Merge the stack and tag**

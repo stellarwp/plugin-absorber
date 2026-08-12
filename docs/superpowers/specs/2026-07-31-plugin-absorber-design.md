@@ -146,9 +146,9 @@ Hooks wired by boot():
 
 load_all() per sub-plugin, in order:
   is_enabled()?                       skip if false
-  are_dependencies_met()?             skip + queue dependency notice
   is_already_loaded()?                skip — constant defined, avoids re-declaration fatal
-  file_exists( bundled_plugin_file )? skip
+  are_dependencies_met()?             skip + queue dependency notice
+  is_file() && is_readable()?         skip + _doing_it_wrong()
   …/plugin_absorber/should_load?      skip if false
   require_once bundled_plugin_file
   activation()->maybe_run( $sub_plugin )
@@ -156,8 +156,8 @@ load_all() per sub-plugin, in order:
 
 ### Collaborators
 
-Each is interface-backed and container-resolvable through one `Loader::resolve( $interface,
-$default_class )` helper: container binding if present, otherwise `new $default_class()`, memoized
+Each is interface-backed and container-resolvable through one `Container\Resolution::get(
+$interface, $default_class )` helper: container binding if present, otherwise `new $default_class()`, memoized
 either way. The container is optional and is **not** used to wire hooks — those stay plain static
 trampolines, per the `admin-notices` precedent.
 
@@ -222,7 +222,7 @@ Dependency-forced, not arbitrary:
 - `Loader::load()` calls `notices()->queue_dependency_notice()`, and `Conflict\Resolver` calls
   `Loader::notices()`. Notices (10) therefore precedes the load path (11) and the Resolver (12).
 - Each `Contracts\*` interface ships **with** its default implementation and its tests, rather
-  than all four landing up front. `Loader::resolve()` is generic — `(interface, default_class)` —
+  than all four landing up front. `Container\Resolution::get()` is generic — `(interface, default_class)` —
   so it never needs the other interfaces to exist; only the accessors do, and each accessor lands
   with its pair.
 - `Conflict_Policy` (6) is split from `Sub_Plugin` (7) so PR 7 is purely predicate logic, which is
@@ -266,7 +266,7 @@ message. This is documented in `tests/README.md`.
   rejecting a string of any kind.
 - **8 — `Registrar`.** register; `all()`; a duplicate slug throws `Config_Exception` naming both
   bundled files and leaves the registry untouched; `reset()` clears the guard with the registry.
-- **9 — `Loader::resolve()`.** No container → default instance; di52 container binding a custom
+- **9 — `Container\Resolution::get()`.** No container → default instance; di52 container binding a custom
   `Registrar_Interface` → bound instance returned; memoized (identical instance twice);
   `Loader::reset()` clears both the memo and the registry.
 - **10 — `Notices\Queue`.** Each queue method writes the option; the same slug and type queued twice
@@ -327,19 +327,28 @@ a method signature already visible in the table.
 
 ## 7. PR body template
 
-Four parts, nothing else:
+Three parts, nothing else:
 
 ```
-What: one line.
+What: one line, naming every hook or entry point the PR wires.
 
 Usage: the snippet this PR makes possible.
 
-Why this way: the trade-off taken, and against what.
+Why this way:
 
-Verify: the command, and what is deliberately not covered.
+**The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+**The next claim.** Same again.
 ```
 
 No boilerplate headings, no restating the diff, no checklists.
+
+There is no `Verify` section (dropped 2026-08-12). The test commands live in `CLAUDE.md` and the
+coverage is in the diff; repeating both in every PR is filler a reviewer learns to scroll past.
+
+`Why this way` is one bold-led block per decision, never a single paragraph running several
+arguments together — a reviewer reads the bold leads and stops at the one they doubt. Cut the
+connective throat-clearing between claims, never the claims.
 
 ---
 

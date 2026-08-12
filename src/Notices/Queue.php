@@ -16,8 +16,9 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * queue is kept is Store's job and how it is drawn is Renderer's, so a host can replace either one
  * without inheriting the other, and neither has to be understood to reword a message.
  *
- * Both collaborators are constructor arguments with defaults, so `new Queue()` still gives the
- * standard behaviour — which is what `Loader::resolve()` builds when the container has no binding.
+ * Both collaborators are required constructor arguments, and `Provider` is what hands them over.
+ * No defaults: a class that can build its own dependencies has a second way to be constructed that
+ * bypasses every binding a host made, and it is the one a test or a stray `new` reaches for.
  *
  * A host already using stellarwp/admin-notices can bind its own implementation of Queue_Interface
  * and read the same option, whose name is `self::option_name()`.
@@ -79,12 +80,12 @@ class Queue implements Queue_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Store|null    $store    Where the queue is kept.
-	 * @param Renderer|null $renderer How a queued notice is drawn.
+	 * @param Store    $store    Where the queue is kept.
+	 * @param Renderer $renderer How a queued notice is drawn.
 	 */
-	public function __construct( ?Store $store = null, ?Renderer $renderer = null ) {
-		$this->store    = $store ?? new Store();
-		$this->renderer = $renderer ?? new Renderer();
+	public function __construct( Store $store, Renderer $renderer ) {
+		$this->store    = $store;
+		$this->renderer = $renderer;
 	}
 
 	/**

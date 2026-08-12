@@ -9,6 +9,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 
 /**
@@ -16,6 +17,7 @@ use lucatume\WPBrowser\Traits\UopzFunctions;
  */
 class SmokeTest extends WPTestCase {
 	use UopzFunctions;
+	use WithHaltedRedirects;
 
 	/**
 	 * Message carried by the exception that stands in for exit().
@@ -75,6 +77,30 @@ class SmokeTest extends WPTestCase {
 		}
 
 		$this->assertTrue( $halted, 'A stubbed function must be able to throw in place of exit().' );
+	}
+
+	/**
+	 * The shared form of the same mechanism, proven here rather than on its first real caller.
+	 *
+	 * `capture_redirect()` is what every test of a redirecting branch uses, so a fault in it would
+	 * show up as a failure in whatever code path happened to be under test — and the two parts of it
+	 * that matter most, the fail() when nothing halted and the message match, are exactly the parts
+	 * whose absence is silent.
+	 *
+	 * @since 1.0.0
+	 */
+	public function test_the_shared_helper_captures_a_halted_redirect(): void {
+		$location = $this->capture_redirect(
+			static function (): void {
+				wp_safe_redirect( 'https://example.test/wp-admin/plugins.php' );
+
+				// Never reached: the stub throws first, which is the whole point. Production really
+				// does end the request here.
+				exit;
+			}
+		);
+
+		$this->assertSame( 'https://example.test/wp-admin/plugins.php', $location );
 	}
 
 	/**

@@ -54,76 +54,157 @@ declarations).
 
 ### Public surface
 
-A two-class static facade — `Config` (hook prefix + optional container) and `Loader`
-(resolve/register/boot/load) — matching the shape of `stellarwp/assets` and
-`stellarwp/admin-notices`. Everything else is an implementation detail behind it.
+A two-class static facade — `Config` (hook prefix + container) and `Loader` (register/boot, plus
+accessors) — matching the shape of `stellarwp/assets` and `stellarwp/admin-notices`. Everything
+else is an implementation detail behind it. `Loader` is
+`final`: every member is private static and every internal call is `self::`, so a subclass could
+override nothing and would silently change nothing.
 
 ### Collaborators
 
-Four interface-backed collaborators, each with a default implementation:
+Every collaborator is constructed by the container and injected. The interface-backed ones are the
+seams a host may rebind:
 
-| Interface | Default | Responsibility |
+| Interface | Bound to | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
 | `Notices\Contracts\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | standalone detection, deactivation, redirect |
-| `Contracts\Activation_Interface` | `Activation` | run-once activation-callback tracking |
+| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | deactivates the standalone, network-aware |
+| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
+| `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
+
+The rest — `Boot\Scheduler`, `Load\Runner`, `Conflict\Gatekeeper`, `Conflict\Redirector`,
+`Notices\Store`, `Notices\Renderer` — are bound as concrete classes. A host that wants one of them
+different rebinds the class name; there is no interface because nothing in the library dispatches on
+one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
-implementations sit at the root — `Registrar`, `Plugin_State`, `Activation`.
+implementations sit at the root — `Registrar`, `Plugin_Deactivator`, `Plugin_Checker`, `Activator` —
+plus `Provider_Interface`.
 
-All four come through one generic helper — `Loader::resolve( string $interface, string
-$default_class ): object` — which returns the container binding when `$container->has()`, otherwise
-`new $default_class()`, memoized either way. Collaborators reach each other through the accessors
-(`Loader::registrar()`, `resolver()`, `notices()`, `activation()`), so rebinding one in the host's
-container flows everywhere.
+**The container is required.** `Config::get_container()` throws `Config_Exception` when unset, which
+is what `uplink`, `telemetry`, `schema` and `harbor` all do; `has_container()` stays as the probe.
+Optional was the outlier — of nineteen vendored StellarWP packages exactly one falls back to `new`,
+and we had modelled ourselves on it. One requirement is what that outlier costs. "Container binding
+when bound, `new $default_class` otherwise" forces every default class to be constructible with no
+arguments, which forces `?Peer $peer = null` constructor parameters, which forces a `protected`
+accessor per peer falling back to a static. `Container\Resolution` was the class holding that chain
+together, and the chain is deleted with it. The hosts qualify: `learndash-core` ships a container
+implementing this very contract, exposes it as `App::container()`, and already hands it to Telemetry,
+Validation and Harbor. The plugins with no container are the add-ons being absorbed, not the hosts
+doing the absorbing.
 
-The container is **never** used to wire hooks. Hooks stay plain static trampolines, which is what
-keeps the container genuinely optional.
+**One provider, one method.** `Provider::register()` performs every binding, behind a
+`Contracts\Provider_Interface` declaring `register(): void` and nothing else — Harbor's shape, not
+`stellarwp/foundation`'s. Foundation floors at PHP 8.3 against our 7.4, hard-depends on
+`lucatume/di52` against our container-contract-only rule, and its `deferred`/`provides()` API is a
+fatal `TypeError` in practice, because di52 type-hints its own `ServiceProvider` base class which
+Foundation's abstract does not extend.
 
-`Sub_Plugin` is a value object holding the per-sub-plugin predicates that its *configuration alone*
-decides (`is_enabled()`, `is_already_loaded()`, `has_standalone_plugin()`, `get_conflict_policy()`,
-…). Questions about the site rather than the config — whether the standalone is actually active —
-belong to `Plugin_State_Interface`; `Sub_Plugin` only names the plugin to ask about. Keeping the
-config predicates there is what lets collaborators stay thin and lets them be tested without hooks.
+**`Provider` never overwrites a binding.** It binds only what the container does not already have, so
+a host that bound its own implementation wins, and the order in which the host calls
+`set_container()` and `boot()` stops deciding which implementation it gets. Everything is a
+singleton: each binding is either a registry whose contents are the point — a second `Registrar`
+would hold a second, emptier list — or a stateless worker with nothing to gain from a second copy.
+
+The container is **never** used to wire hooks, and the reason is no longer that it is optional.
+`Boot\Scheduler` wires callbacks that resolve *inside* the callback — a closure over the container,
+or a static trampoline reading `Loader::notices()` — so wiring instantiates nothing, a host may
+rebind right up until the hook fires, and a request that reaches none of them builds none of them.
+`$container->callback()` reads better and is what the hand-rolled copies in `learndash-core` use, but
+it is di52-only: `stellarwp/container-contract` declares `bind`, `get`, `has` and `singleton`, and
+nothing else. `[ $resolved_object, 'method' ]` is the other wrong answer — it forces every
+collaborator to be built at boot.
+
+`Loader` keeps the public surface. `registrar()` and `notices()` are one-line delegations to
+`$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
+depends on the peer it was handed rather than on the facade.
+
+`Sub_Plugin` is a value object answering the per-sub-plugin questions it can answer **without a
+container-bound collaborator** (`is_enabled()`, `is_already_loaded()`, `has_standalone_plugin()`,
+`get_conflict_policy()`, …). Note that this is not the same as "config alone": `is_already_loaded()`
+reads the global constant table and `is_enabled()` may invoke a host callable that queries anything
+it likes. The line is about *dependency direction* — anything needing `Plugin_Checker_Interface` or
+the notice queue would drag a container resolution into `Loader::register()`, which deliberately
+resolves nothing so the container can arrive at any point before boot. So `Sub_Plugin` only *names*
+the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-`Loader`, `Conflict\Resolver` and `Activation` are not built yet. Currently:
+`src/Conflict/` — `Resolver`, `Gatekeeper`, `Redirector` — and `Activator` are not built yet.
+Currently:
 
 | Path | What |
 |---|---|
-| `src/Config.php` | Static facade: hook prefix + optional container. |
-| `src/Sub_Plugin.php` | Value object; validates config and answers everything config alone decides. |
+| `src/Config.php` | Static facade: hook prefix + container. |
+| `src/Loader.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
+| `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
+| `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
+| `src/Load/Runner.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
+| `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
-| `src/Plugin_State.php` | The only file that touches WordPress plugin functions. |
+| `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
 | `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
+| `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
-| `src/Contracts/`, `src/Exceptions/` | `Plugin_State_Interface`, `Registrar_Interface`, `Config_Exception`. |
+| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
 
 ```
 Config::set_hook_prefix( 'give' );
-Config::set_container( $container );          // optional
+Config::set_container( $container );          // required
 Loader::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
 Loader::boot();                               // idempotent
+    → Provider::register()                    // every binding
+    → Boot\Scheduler                          // every hook, as a closure over the container
 
-plugins_loaded @1      → Conflict\Resolver::resolve_all()
-plugins_loaded @2      → Loader::load_all()
-all_admin_notices      → Loader::render_notices()                 [is_admin() only]
+plugins_loaded @1      → Conflict\Resolver::resolve_all()   [gated by Conflict\Gatekeeper]
+plugins_loaded @2      → Load\Runner::load_all()
+all_admin_notices      → Loader::render_notices()           [is_admin() only]
 wp_admin_notice_markup → Loader::filter_activation_error_markup() [is_admin() only]
 ```
 
-`load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → dependencies
-met → not already loaded → file exists → `should_load` filter → `require_once` → activation
+**A host calls `Config::set_container()` at `plugins_loaded` priority 0, from its own container
+block and not from a service provider.** Priority, because conflict resolution runs at priority 1 and
+WordPress silently ignores a callback added at or past the priority it is already dispatching —
+LearnDash and MemberDash both wire Harbor's `set_container()` at priority 1, so a host copying that
+habit races us. Its own block, because LearnDash's `App::container()` builds a container lazily when
+none is set and the plugin then *replaces* it at priority 0: anything that grabbed the container
+earlier holds an orphan whose bindings are discarded. This is also why `Loader::register()` buffers
+and resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
+register into the throwaway.
+
+`load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
+loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
 callback (only after a *successful* require).
+
+The guard constant is checked **before** the dependency check, not after. It is one `defined()`, it
+carries the whole re-declaration guarantee, and it is the only gate meaning "this plugin is already
+running" — warning that requirements are unmet for a plugin the admin can watch working would send
+them after the wrong problem. `docs/filters.md` and the spec agree.
+
+`Loader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
+may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
+the interface signature — so it is filtered once where the untrusted value enters.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects.
-`redirect_destination()` returns `false` when the referrer is already `plugins.php`, so an inline
-update is never interrupted.
+`Conflict\Redirector` decides where to; it returns `false` when the referrer is already `plugins.php`,
+so an inline update is never interrupted. It decides and never navigates — `wp_safe_redirect()` and
+`exit` stay in the resolver, so the policy action and the admin-URL knowledge change for separate
+reasons.
+
+**Who may have a conflict resolved is `Conflict\Gatekeeper`'s business, not the resolver's.** It
+gates on an interactive admin `GET` (`plugins_loaded` fires on every request) *and* on
+`current_user_can( 'activate_plugins' )` (`plugins_loaded` runs before `auth_redirect()`, so an
+unauthenticated GET of an admin URL gets that far). The hook resolves the gatekeeper rather than the
+resolver, so a host binding its own `Resolver_Interface` cannot drop either gate by omission. The
+capability gate covers every policy, not just the destructive one, and that is free: the other
+branches only queue a notice, and `Notices\Queue::render()` refuses to render *or clear* for a user
+without the same capability, so queuing earlier would only park it until a capable admin arrives.
 
 An unknown policy must be handled as its own case via `Conflict_Policy::is_valid()`, never left to
 a `default:` fallthrough — a typo like `'defered'` would otherwise deactivate a plugin the site
@@ -199,7 +280,8 @@ treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means
 - **Asserting a call did *not* happen needs a working recorder.** Record calls into an array, assert
   it is empty, then invoke the stubbed function once and assert the recorder caught it — otherwise a
   hook that failed to install passes the test for the wrong reason.
-- **Container tests must use `Tests\Support\Test_Container`.** `lucatume\DI52\Container` implements
+- **Every test that touches a collaborator sets a container**, since there is no longer a fallback to
+  fall back to — and it must be `Tests\Support\Test_Container`. `lucatume\DI52\Container` implements
   PSR-11's `ContainerInterface`, not StellarWP's, so passing it to `Config::set_container()` is a
   `TypeError`.
 - **Each load-path test writes its own bundled fixture file.** `require_once` caches by resolved
@@ -247,10 +329,33 @@ treatment. Any older sketch showing `Config::reset()` or `Loader::reset()` means
 - **`deactivate_plugins()` is called silent, with no `$network_wide` argument.** Silent because a
   `flush_rewrite_rules()` in the standalone's deactivation hook at `plugins_loaded` 404s the site.
   The `null` default takes both the network and blog branches; a computed `true` strands an entry.
-- **`Plugin_State::load_plugin_functions()` guards on `deactivate_plugins()`**, not
-  `is_plugin_active()` — the latter is a common third-party shim.
+- **`Traits\Loads_Plugin_Functions` guards on `deactivate_plugins()`**, not `is_plugin_active()` —
+  the latter is a common third-party shim.
 - **Strauss must not rewrite `plugin_loaded_constant` values.** They are shared runtime constants;
   prefixing them defeats the entire mechanism.
+- **Never write a literal guard-constant *name* in `src/`.** Hosts run Strauss with a
+  `constant_prefix` — `learndash-core` uses `LEARNDASH_`, with an empty exclude list — so a literal
+  `'GIVE_RECURRING_VERSION'` in our source is rewritten at build time and the `defined()` check then
+  matches nothing, silently, on the one path whose whole job is preventing a fatal. A constant name
+  arriving as a config *value* is a string in the host's array and is safe, which is why the design
+  holds: the library only ever receives these names, never spells one.
+- **Collaborators come from the container; value objects and exceptions are constructed inline.** No
+  `?Peer $peer = null` constructor parameter and no `?? new X()` fallback — a nullable dependency
+  instantiating its own default is a service locator wearing a constructor signature, and it is what
+  made every default class owe a no-argument constructor. `new Sub_Plugin( $config )` in
+  `Loader::register()` and `throw new Config_Exception( … )` stay: one value object per host-supplied
+  array, built in the call the host can see in its own stack trace, which is what lets registration
+  validate eagerly while resolving nothing. A `Sub_Plugin_Factory` would put a container resolution
+  in front of the one method that deliberately performs none.
+- **Naming: the suffix names the collaborator's role in the wiring, not whether it causes a side
+  effect.** A class that returns a URL from a filter still earns `-or` — `Redirector` alongside
+  `Registrar` and `Granter`, none of which need to perform anything for the name to be right. A class
+  stays bare while nothing in its folder does the same job (`Conflict\Resolver`, not
+  `Conflict\Standalone_Resolver`, even once `Gatekeeper` and `Redirector` sit beside it) and takes a
+  qualifier only when a second class of the same kind lands — `Scheduler` beside a later
+  `Retry_Scheduler`, never a qualifier bought in advance. An abstract
+  `-ion`/`-ance` noun is a directory name over agent nouns — `Activation/` holding `Activator` — and
+  never a class name; a census of 3,343 classes across eight Nexcess/StellarWP codebases found zero.
 
 ## Branch and PR workflow
 
@@ -261,18 +366,26 @@ branch exists. `main` is releasable after every merge.
 - **PR size cap:** ≤10 files, tests and test infrastructure excluded. No logic-bearing PR exceeds 4
   source files.
 - **Commits: no co-author trailers, ever.**
-- **PR body is exactly four parts, nothing else** — no boilerplate headings, no restating the diff,
-  no checklists:
+- **PR body is exactly three parts, nothing else** — no boilerplate headings, no restating the diff,
+  no checklists, and no "Verify" section: the commands are in this file and the coverage is in the
+  diff, so restating them per PR is filler a reviewer learns to scroll past.
 
   ```
-  What: one line.
+  What: one line, naming every hook or entry point the PR wires.
 
   Usage: the snippet this PR makes possible.
 
-  Why this way: the trade-off taken, and against what.
+  Why this way:
 
-  Verify: the command, and what is deliberately not covered.
+  **The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+  **The next claim.** Same again.
   ```
+
+  `What` is one line but not a narrow one — a PR that wires two hooks names both, or the second goes
+  unreviewed. `Why this way` is one bold-led block per decision, never a single paragraph running
+  several arguments together: a reviewer reads the bold leads, stops at the one they doubt, and the
+  rest costs them nothing. Cut the connective throat-clearing between claims, never the claims.
 
 - The README grows section-by-section with each PR so it is never ahead of what has shipped. Target
   ~120 lines: if it runs materially longer, cut rather than add.
@@ -286,7 +399,11 @@ branch exists. `main` is releasable after every merge.
 still carrying the old `stellarwp/sub-plugin-loader` package name, the `Nexcess\SubPluginLoader\`
 namespace, a `Config::set_version()` that was removed, and an `ob_start()` approach replaced by the
 `wp_admin_notice_markup` filter. `docs/superpowers/plans/2026-07-31-plugin-absorber.md` holds the
-task-by-task breakdown.
+task-by-task breakdown, and
+`docs/superpowers/plans/2026-08-12-container-required-rework.md` supersedes it wherever the two
+disagree about the container, the collaborator seams or the class names — that plan is what branches
+11 through 16 now implement, and the older plan still describes the optional-container design it
+replaced.
 
 Once a task's PR merges to `main`, delete that task's section from the plan in the next branch that
 touches the file; git history keeps it. A shipped task's plan describes code that already exists in

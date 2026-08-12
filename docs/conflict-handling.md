@@ -18,9 +18,28 @@ Set one per sub-plugin with the `conflict_policy` key, or decide it at runtime w
 Before loading a bundled plugin, the library checks whether `plugin_loaded_constant` is already
 defined. `defined()` ⇒ skip, which is what prevents the re-declaration fatal.
 
-**The constant must be defined at file scope.** A standalone that defines it from a bootstrap
-hooked at `plugins_loaded` or later has not defined it yet at the moment the guard is read, and the
-bundled copy would load on top of it.
+**The constant must be defined at file scope**, inside a `defined()` check so whichever copy loads
+first wins:
+
+```php
+if ( ! defined( 'GIVE_RECURRING_VERSION' ) ) {
+    define( 'GIVE_RECURRING_VERSION', '2.4.0' );
+}
+```
+
+A standalone that defines it from a bootstrap hooked at `plugins_loaded` or later has not defined it
+yet at the moment the guard is read, and the bundled copy would load on top of it.
+
+## What is deliberately out of scope
+
+**Version negotiation.** The library never compares versions, so it will not spare a standalone that
+is newer than the bundled copy. Express that yourself: check the version and return
+`Conflict_Policy::DEFER` from the `conflict_policy` [filter](filters.md), which has the final say.
+
+**Renamed standalone directories.** `standalone_plugin_basename` is the path as installed. A site
+that renamed the standalone's directory is not detected, and there is no fallback that derives the
+path from the load guard: one key is the guard and the other is the path, and no constant does both
+jobs. The cost is a missed detection; the alternative costs the guarantee the guard exists for.
 
 ## What the guard cannot do
 
