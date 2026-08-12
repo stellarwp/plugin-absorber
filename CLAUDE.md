@@ -261,18 +261,26 @@ branch exists. `main` is releasable after every merge.
 - **PR size cap:** ≤10 files, tests and test infrastructure excluded. No logic-bearing PR exceeds 4
   source files.
 - **Commits: no co-author trailers, ever.**
-- **PR body is exactly four parts, nothing else** — no boilerplate headings, no restating the diff,
-  no checklists:
+- **PR body is exactly three parts, nothing else** — no boilerplate headings, no restating the diff,
+  no checklists, and no "Verify" section: the commands are in this file and the coverage is in the
+  diff, so restating them per PR is filler a reviewer learns to scroll past.
 
   ```
-  What: one line.
+  What: one line, naming every hook or entry point the PR wires.
 
   Usage: the snippet this PR makes possible.
 
-  Why this way: the trade-off taken, and against what.
+  Why this way:
 
-  Verify: the command, and what is deliberately not covered.
+  **The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+  **The next claim.** Same again.
   ```
+
+  `What` is one line but not a narrow one — a PR that wires two hooks names both, or the second goes
+  unreviewed. `Why this way` is one bold-led block per decision, never a single paragraph running
+  several arguments together: a reviewer reads the bold leads, stops at the one they doubt, and the
+  rest costs them nothing. Cut the connective throat-clearing between claims, never the claims.
 
 - The README grows section-by-section with each PR so it is never ahead of what has shipped. Target
   ~120 lines: if it runs materially longer, cut rather than add.

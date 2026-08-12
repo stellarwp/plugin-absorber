@@ -327,19 +327,28 @@ a method signature already visible in the table.
 
 ## 7. PR body template
 
-Four parts, nothing else:
+Three parts, nothing else:
 
 ```
-What: one line.
+What: one line, naming every hook or entry point the PR wires.
 
 Usage: the snippet this PR makes possible.
 
-Why this way: the trade-off taken, and against what.
+Why this way:
 
-Verify: the command, and what is deliberately not covered.
+**The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+**The next claim.** Same again.
 ```
 
 No boilerplate headings, no restating the diff, no checklists.
+
+There is no `Verify` section (dropped 2026-08-12). The test commands live in `CLAUDE.md` and the
+coverage is in the diff; repeating both in every PR is filler a reviewer learns to scroll past.
+
+`Why this way` is one bold-led block per decision, never a single paragraph running several
+arguments together — a reviewer reads the bold leads and stops at the one they doubt. Cut the
+connective throat-clearing between claims, never the claims.
 
 ---
 

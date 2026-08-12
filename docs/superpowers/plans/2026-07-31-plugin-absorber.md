@@ -20,16 +20,19 @@ Every task's requirements implicitly include this section.
 - **Storage keys:** option `"{$option_prefix}_plugin_absorber_activations"`, option `"{$option_prefix}_plugin_absorber_notices"`. Both are assembled by `Config::get_option_name( string $name )` and nowhere else, alongside `Config::get_hook_name()` for filters. **Amended 2026-08-11:** `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, so `Give-Core` yields the option `give_core_plugin_absorber_notices` while still yielding the filter `Give-Core/plugin_absorber/should_load` — the prefix validator admits `A-Z` and `-`, and a hook-naming value should not reach a storage key verbatim. The two normalisations stay separate: folding case into the hook side would silently rename the host's own filters. **Amended 2026-08-03 (PR 10 review):** the notice queue was specified as a *transient* and is now an option. `set_transient()` returns before touching the database whenever an external object cache is present, so on any Redis or Memcached site the queue would live only in the cache — where a routine `wp_cache_flush()` from a deploy script or a "purge cache" button destroys it. The merge notice is raised exactly once and never re-queued, so losing it means a site owner is never told their plugin was deactivated. On multisite both this and the activation option are network options, because the resolver deactivates network-wide.
 - **Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only. No other StellarWP library.
 - **PR size cap:** ≤10 files per PR, tests and test infrastructure excluded. No logic-bearing PR exceeds 4 source files.
-- **PR body format** — exactly four parts, nothing else. No boilerplate headings, no restating the diff, no checklists:
+- **PR body format** — exactly three parts, nothing else. No boilerplate headings, no restating the diff, no checklists, and no `Verify` section (dropped 2026-08-12: the commands live in `CLAUDE.md` and the coverage is in the diff, so restating them per PR is filler a reviewer learns to scroll past):
   ```
-  What: one line.
+  What: one line, naming every hook or entry point the PR wires.
 
   Usage: the snippet this PR makes possible.
 
-  Why this way: the trade-off taken, and against what.
+  Why this way:
 
-  Verify: the command, and what is deliberately not covered.
+  **The claim, in bold.** One or two sentences: the trade-off taken, and against what.
+
+  **The next claim.** Same again.
   ```
+  `Why this way` is one bold-led block per decision, never a single paragraph running several arguments together — a reviewer reads the bold leads and stops at the one they doubt. Cut the connective throat-clearing between claims, never the claims.
 - **Branching:** stacked. Each branch cuts from the previous branch, and merges to `main` in order. Never open PR N+1 before PR N's branch exists.
 - **Commits:** no co-author trailers, ever.
 - **Every source file** carries a file-level docblock with `@package Nexcess\PluginAbsorber` and every method a docblock with `@since 1.0.0`. This binds `src/` only. Test classes and test support classes keep the file-level docblock, but their methods do not need `@since` — the test code in this plan's own tasks is written that way deliberately (ruled 2026-07-31).
@@ -1724,22 +1727,27 @@ Usage:
             : Conflict_Policy::DEACTIVATE;
     },
 
-Why this way: `deactivate_plugins()` receives `$network_wide` — a change from the engineering plan,
-which detects network activation and then drops the flag. Without it the call silently no-ops
-against a network-activated plugin, so every admin request deactivates nothing and redirects again.
-That is an infinite redirect loop on multisite, and it is exactly what the plan is own E2E
-criterion ("reloading the plugins page does not loop") was meant to catch.
+Why this way:
 
-`redirect_destination()` returns false on a plugins.php referrer so an inline update is never
-interrupted, and rewrites update.php / update-core.php referrers so the user is not bounced back
+**`deactivate_plugins()` receives `$network_wide`** — a change from the engineering plan, which
+detects network activation and then drops the flag. Without it the call silently no-ops against a
+network-activated plugin, so every admin request deactivates nothing and redirects again: an
+infinite redirect loop on multisite, and exactly what the plan is own E2E criterion ("reloading the
+plugins page does not loop") was meant to catch.
+
+**An unknown policy is its own case, never a `default:` fallthrough.** A typo like `defered` would
+otherwise land on the deactivate branch and turn off a plugin the site owner deliberately enabled.
+
+**`redirect_destination()` returns false on a plugins.php referrer**, so an inline update is never
+interrupted. update.php and update-core.php referrers are rewritten so the user is not bounced back
 into an update screen.
 
-Known limitation, deliberate: `resolve_all()` runs on front-end requests too, matching both
-reference implementations. Tracked as issue B in the spec.
+**`exit` is never mocked.** The stubbed `wp_safe_redirect()` throws `TestException`, halting the
+resolver exactly where production calls `exit` while leaving a failing test free to report as
+failing.
 
-Verify: `slic run unit` and `slic run unit --env multisite` — 15 tests. `exit` is never mocked: the
-stubbed `wp_safe_redirect()` throws `TestException`, which halts the resolver exactly where
-production calls `exit` while leaving a failing test free to report as failing.'
+**Known limitation, deliberate:** `resolve_all()` runs on front-end requests too, matching both
+reference implementations. Tracked as issue B in the spec.'
 ```
 
 ---
@@ -2092,7 +2100,8 @@ idempotent, version-gated migrations — not here.
 git add src/Activation.php src/Contracts/Activation_Interface.php src/Loader.php tests/unit/ActivationTest.php tests/unit/LoaderLoadTest.php README.md
 git commit -m "Add run-once activation tracking"
 git push -u origin 13-activation
-gh pr create --base 12-conflict-resolver --title "Activation" --body 'What: run-once-ever activation tracking, wired into the load path.
+gh pr create --base 12-conflict-resolver --title "Activation" --body 'What: `Activation` and `Activation_Interface`, reachable as `Loader::activation()`, wired into the
+load path as the last step after a successful require.
 
 Usage:
 
@@ -2100,19 +2109,20 @@ Usage:
         \Give\Recurring\Install::create_tables();
     },
 
-Why this way: `register_activation_hook()` never fires for a `require_once`d file, so a plugin
-absorbed into a host would never run its original install routine. One option holds a per-slug
-flag, and the callback fires after a successful require — never when the load was skipped, which
+Why this way:
+
+**`register_activation_hook()` never fires for a `require_once`d file**, so a plugin absorbed into
+a host would never run its original install routine. One option holds a per-slug flag instead.
+
+**The callback fires only after a successful require** — never when the load was skipped, which
 would otherwise create tables for code that is not loaded.
 
-A single option rather than one per slug keeps this to one autoloaded row no matter how many
+**A single option rather than one per slug** keeps this to one autoloaded row no matter how many
 sub-plugins a host bundles.
 
-Known limitation, deliberate: read-then-write is not atomic, so two simultaneous first requests can
-both run the callback. Tracked as issue E in the spec; `add_option()` as a claim would close it.
-
-Verify: `slic run unit` — 11 tests, including a corrupted-option recovery and hook-prefix
-namespacing.'
+**Known limitation, deliberate:** read-then-write is not atomic, so two simultaneous first requests
+can both run the callback. Tracked as issue E in the spec; `add_option()` as a claim would close
+it.'
 ```
 
 ---
@@ -2467,29 +2477,28 @@ Requires WordPress 6.4+ for the `wp_admin_notice_markup` filter.
 git add src/Notices/Queue.php src/Notices/Contracts/Queue_Interface.php src/Loader.php tests/unit/Notices/QueueActivationErrorTest.php README.md
 git commit -m "Replace WordPress fatal-activation text for absorbed standalones"
 git push -u origin 14-activation-error-notice
-gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: replaces WordPress generic "triggered a fatal error" notice with the sub-plugin own
-explanation when a user re-activates an absorbed standalone.
+gh pr create --base 13-activation --title "Activation-error rewrite" --body 'What: the `wp_admin_notice_markup` filter and its Loader trampoline, replacing WordPress generic
+"triggered a fatal error" notice with the sub-plugin own explanation when a user re-activates an
+absorbed standalone.
 
 Usage:
 
     "conflict_notice_message" => static fn() => __( "Now bundled with Give.", "give" ),
 
-Why this way: a change from the engineering plan, which specified `ob_start()` on
-`admin_head-plugins.php` copied from Kadence. The newer LearnDash reference uses the
-`wp_admin_notice_markup` filter — same nonce check, same str_replace, but no output buffering, no
-risk of mangling unrelated admin output, and directly unit-testable. The cost is a WordPress 6.4
-floor, which is when that filter landed.
+Why this way:
 
-Three gates before touching anything: the plugins screen, a `plugin` parameter matching a
+**The `wp_admin_notice_markup` filter, not `ob_start()`.** The engineering plan specified output
+buffering on `admin_head-plugins.php`, copied from Kadence. The filter does the same nonce check
+and the same str_replace with no buffering, no risk of mangling unrelated admin output, and is
+directly unit-testable. The cost is the WordPress 6.4 floor, which is when the filter landed.
+
+**Three gates before touching the markup:** the plugins screen, a `plugin` parameter matching a
 registered standalone basename, and a valid `plugin-activation-error_{basename}` nonce. Failing any
 one returns the markup untouched, as does having no configured message — better WordPress wording
 than none.
 
-This adds a method to `Notices\Contracts\Queue_Interface`, which shipped in PR 10. Pre-1.0 with no
-consumers.
-
-Verify: `slic run unit` — 8 tests, one per gate plus `wp_kses_post()` sanitising and the Loader
-trampoline.'
+**This adds a method to `Notices\Contracts\Queue_Interface`,** which shipped in PR 10. Pre-1.0 with
+no consumers.'
 ```
 
 ---
@@ -2931,20 +2940,23 @@ gh pr create --base 14-activation-error-notice --title "End-to-end suite" --body
 Usage: `tests/_data/plugins/absorber-host/absorber-host.php` is the worked consumer example —
 register, set a policy, supply an activation callback, boot.
 
-Why this way: these drive the real `active_plugins` option and let `deactivate_plugins()` actually
-run, rather than stubbing it as the unit tests do. Only `wp_safe_redirect` and `wp_get_referer` are
-stubbed; the redirect throws `TestException` so the request halts where production calls `exit`,
-without mocking `exit` itself. That makes this a genuine integration check of the load guard,
-the three policies, and the run-once activation working together.
+Why this way:
 
-Bundled fixtures are generated per test rather than committed: `require_once` caches by resolved
+**These drive real WordPress state.** The real `active_plugins` option, a real
+`deactivate_plugins()` call, rather than the stubs the unit tests use — a genuine integration check
+of the load guard, the three policies, and the run-once activation working together.
+
+**Only `wp_safe_redirect` and `wp_get_referer` are stubbed.** The redirect throws `TestException`,
+so the request halts where production calls `exit` without mocking `exit` itself.
+
+**Bundled fixtures are generated per test, never committed.** `require_once` caches by resolved
 path for the whole PHP process, so a committed bundled file would execute once for the entire suite
 and every later test would pass without loading anything. The generator moved into a shared
 `WithBundledPlugins` trait — the on-disk counterpart to `WithSubPlugins` from PR 7 — and
 `LoaderLoadTest` now uses it too.
 
-Verify: `slic run unit` and `slic run unit --env multisite` — 9 end-to-end tests. Not covered: real
-HTTP requests and a real browser; the redirect is asserted as a call, not followed.'
+**Out of scope:** real HTTP requests and a real browser. The redirect is asserted as a call, not
+followed.'
 ```
 
 ---
@@ -3067,12 +3079,15 @@ gh pr create --base 15-e2e-fixtures --title "README pass and 1.0.0" --body 'What
 
 Usage: see the complete worked example at the end of the README.
 
-Why this way: the README was built up section by section as each PR landed, so it never drifted
-from what actually shipped. This pass removes the duplication that approach leaves behind and
-checks the ordering reads for a newcomer rather than in merge order.
+Why this way:
 
-Verify: `git archive --format=tar HEAD | tar -t` shows only src/, composer.json, LICENSE, README,
-CHANGELOG — no tests, docs, or CI config in a consumer install. Both suites and PHPStan green.'
+**The README was built up section by section as each PR landed,** so it never drifted from what
+actually shipped. This pass removes the duplication that approach leaves behind and checks the
+ordering reads for a newcomer rather than in merge order.
+
+**`.gitattributes` keeps the dev files out of a consumer install.** `git archive` yields `src/`,
+`composer.json`, `LICENSE`, `README.md` and `CHANGELOG.md` — no tests, docs, or CI config reaching
+a consumer vendor directory.'
 ```
 
 - [ ] **Step 9: Merge the stack and tag**
