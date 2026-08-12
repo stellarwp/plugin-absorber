@@ -13,11 +13,11 @@ use Nexcess\PluginAbsorber\Conflict\Redirector;
 /**
  * Where the user lands after a standalone has been deactivated.
  *
- * `is_network_admin()` is stubbed in every test rather than left to whatever the harness happens to
- * have set, because its answer picks the URL builder every destination goes through, and the suite
- * runs on both singlesite and multisite. The two builder tests stub the builders as well: on
- * singlesite `network_admin_url()` and `admin_url()` return the same string, so no assertion about
- * a real URL can tell which one produced it.
+ * `is_network_admin()` and `is_user_admin()` are stubbed in every test rather than left to whatever
+ * the harness happens to have set, because between them they pick the URL builder every destination
+ * goes through, and the suite runs on both singlesite and multisite. The three builder tests stub
+ * the builders as well: on singlesite `network_admin_url()`, `user_admin_url()` and `admin_url()`
+ * return the same string, so no assertion about a real URL can tell which one produced it.
  *
  * @since 1.0.0
  */
@@ -32,6 +32,7 @@ class RedirectorTest extends WPTestCase {
 	 */
 	public function test_it_decides_where_to_send_the_user( $request_uri, string $expected ): void {
 		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', false );
 
 		$this->assertSame( $expected, ( new Redirector() )->after_deactivation( $request_uri ) );
 	}
@@ -148,12 +149,49 @@ class RedirectorTest extends WPTestCase {
 
 	public function test_it_builds_every_site_destination_with_admin_url(): void {
 		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', false );
 		$this->stub_admin_url_builders();
 
 		$redirector = new Redirector();
 
 		$this->assertSame( 'site-admin/edit.php', $redirector->after_deactivation( '/wp-admin/edit.php' ) );
 		$this->assertSame( 'site-admin/plugins.php', $redirector->after_deactivation( '/2026/08/hello-world/' ) );
+	}
+
+	public function test_it_keeps_a_user_admin_request_in_the_user_admin(): void {
+		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', true );
+
+		$this->assertSame(
+			user_admin_url( 'profile.php' ),
+			( new Redirector() )->after_deactivation( '/wp-admin/user/profile.php' )
+		);
+	}
+
+	public function test_it_sends_the_user_admin_root_to_the_user_dashboard(): void {
+		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', true );
+
+		$this->assertSame(
+			user_admin_url( 'index.php' ),
+			( new Redirector() )->after_deactivation( '/wp-admin/user/' )
+		);
+	}
+
+	/**
+	 * The user admin is the third admin, and it is reachable: /wp-admin/user/ defines WP_ADMIN, so
+	 * is_admin() is true and the request gate lets it through. Sent to admin_url() instead, someone
+	 * editing their profile across a network lands on a site they may not even be a member of.
+	 */
+	public function test_it_builds_every_user_destination_with_user_admin_url(): void {
+		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', true );
+		$this->stub_admin_url_builders();
+
+		$redirector = new Redirector();
+
+		$this->assertSame( 'user-admin/profile.php', $redirector->after_deactivation( '/wp-admin/user/profile.php' ) );
+		$this->assertSame( 'user-admin/plugins.php', $redirector->after_deactivation( '/2026/08/hello-world/' ) );
 	}
 
 	/**
@@ -165,6 +203,14 @@ class RedirectorTest extends WPTestCase {
 			'network_admin_url',
 			static function ( $path = '' ) {
 				return 'network-admin/' . $path;
+			},
+			true
+		);
+
+		$this->setFunctionReturn(
+			'user_admin_url',
+			static function ( $path = '' ) {
+				return 'user-admin/' . $path;
 			},
 			true
 		);

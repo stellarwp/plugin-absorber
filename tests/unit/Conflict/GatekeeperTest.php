@@ -290,6 +290,13 @@ class GatekeeperTest extends WPTestCase {
 		yield 'installing a plugin'     => [ 'action', 'install-plugin' ];
 		yield 'a bulk action'           => [ 'action', 'delete-selected' ];
 		yield 'the lower bulk selector' => [ 'action2', 'deactivate-selected' ];
+
+		// admin.php dispatches admin_action_{$action} on the value as it arrived, so a name made
+		// entirely of characters sanitize_key() strips still names work a plugin can be hooked to.
+		// Reading it through sanitize_key() would empty it and admit the one request the gate is
+		// most confident it refuses.
+		yield 'an action named outside the Latin alphabet' => [ 'action', 'экспорт' ];
+		yield 'an action named in punctuation'             => [ 'action', '+' ];
 	}
 
 	/**

@@ -21,7 +21,7 @@ use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
  * The request gate is cheap and reads nothing but the request, so it runs first and keeps a resolver
  * from being built at all. The user gate is asked last, once a conflict is known to exist, because
  * `current_user_can()` resolves the current user and caches it: called from plugins_loaded priority
- * 1 it would settle who is signed in before an SSO or JWT plugin that hooks `determine_current_user`
+ * 5 it would settle who is signed in before an SSO or JWT plugin that hooks `determine_current_user`
  * from its own plugins_loaded callback has been given the chance to, and that plugin's users would
  * then be treated as logged out for the rest of the request. A site with no conflict never pays it.
  *
@@ -202,10 +202,13 @@ class Gatekeeper {
 				continue;
 			}
 
-			$value  = wp_unslash( $raw );
-			$action = sanitize_key( is_string( $value ) ? $value : '' );
+			// Compared as it arrived rather than through sanitize_key(): admin.php dispatches
+			// admin_action_{$action} on the raw value, so an action named outside a-z0-9_- -- a
+			// non-Latin script, a bare '+' -- is work a plugin can be hooked to, and sanitizing
+			// first would empty it and admit the very request this gate exists to refuse.
+			$action = wp_unslash( $raw );
 
-			if ( $action !== '' && $action !== self::NO_ACTION ) {
+			if ( is_string( $action ) && $action !== '' && $action !== self::NO_ACTION ) {
 				return true;
 			}
 		}

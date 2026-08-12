@@ -69,9 +69,9 @@ class Redirector {
 	 * Read from the path's basename rather than from the URI, and returned only once it looks like
 	 * an admin screen. The request URI is a path on a site that may live in a subdirectory, may be
 	 * behind a TLS-terminating proxy whose scheme disagrees with admin_url(), and on multisite may
-	 * sit under the network admin -- so nothing built from admin_url() would recognise it. Taking
-	 * the basename is also what keeps a crafted URI out of the destination: only a validated screen
-	 * name leaves here, and admin_url() supplies everything in front of it.
+	 * sit under the network or user admin -- so nothing built from admin_url() would recognise it.
+	 * Taking the basename is also what keeps a crafted URI out of the destination: only a validated
+	 * screen name leaves here, and admin_url_for() supplies everything in front of it.
 	 *
 	 * @since 1.0.0
 	 *
@@ -145,13 +145,18 @@ class Redirector {
 	}
 
 	/**
-	 * An absolute admin URL for a screen, on whichever admin this request belongs to.
+	 * An absolute admin URL for a screen, on whichever of the three admins this request belongs to.
 	 *
 	 * admin_url() always names a site's own admin, so a super admin resolving a conflict from
 	 * /wp-admin/network/ would be thrown out of the network admin and onto the current blog's
-	 * screens -- where a network-activated standalone is not manageable at all. The constant
-	 * is_network_admin() reads is defined by wp-admin/network/admin.php before it reaches
-	 * wp-load.php, so it is already answerable at plugins_loaded, where conflict resolution runs.
+	 * screens -- where a network-activated standalone is not manageable at all. The user admin under
+	 * /wp-admin/user/ is the same failure with a different victim: someone editing their profile
+	 * across a network would land on whichever site the request happened to resolve against, which
+	 * they need not even be a member of.
+	 *
+	 * The constants both of these read are defined by wp-admin/network/admin.php and
+	 * wp-admin/user/admin.php before either reaches wp-load.php, so they are already answerable at
+	 * plugins_loaded, where conflict resolution runs.
 	 *
 	 * @since 1.0.0
 	 *
@@ -160,6 +165,14 @@ class Redirector {
 	 * @return string
 	 */
 	private function admin_url_for( string $screen ): string {
-		return is_network_admin() ? network_admin_url( $screen ) : admin_url( $screen );
+		if ( is_network_admin() ) {
+			return network_admin_url( $screen );
+		}
+
+		if ( is_user_admin() ) {
+			return user_admin_url( $screen );
+		}
+
+		return admin_url( $screen );
 	}
 }
