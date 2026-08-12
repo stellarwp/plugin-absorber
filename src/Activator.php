@@ -44,20 +44,7 @@ class Activator implements Activator_Interface {
 
 		$done[ $slug ] = true;
 
-		update_site_option( self::option_name(), $done );
-	}
-
-	/**
-	 * The option every slug's activation record lives in.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When no hook prefix has been set.
-	 *
-	 * @return string
-	 */
-	public static function option_name(): string {
-		return Config::get_option_name( 'activations' );
+		update_site_option( $this->option_name(), $done );
 	}
 
 	/**
@@ -74,10 +61,29 @@ class Activator implements Activator_Interface {
 	 * @return array<string,mixed>
 	 */
 	private function completed(): array {
-		$done = get_site_option( self::option_name(), [] );
+		$done = get_site_option( $this->option_name(), [] );
 
 		// Anything that is not an array is replaced rather than trusted. A corrupted option would
 		// otherwise fatal on the array read, inside plugins_loaded, on every request.
 		return is_array( $done ) ? $done : [];
+	}
+
+	/**
+	 * The option every slug's activation record lives in.
+	 *
+	 * Private, and not static, unlike `Notices\Store::option_name()`: that one is public because
+	 * `docs/notices.md` tells a host to read the queue option itself, and this record has no such
+	 * reader. Nothing outside this class composes the name, so nothing outside it needs to be told
+	 * the name, and a host that wants the bookkeeping elsewhere binds `Activator_Interface` rather
+	 * than reading around this one.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return string
+	 */
+	private function option_name(): string {
+		return Config::get_option_name( 'activations' );
 	}
 }

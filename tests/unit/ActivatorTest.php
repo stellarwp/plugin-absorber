@@ -166,9 +166,6 @@ class ActivatorTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( Config::get_option_name( 'activations' ), Activator::option_name() );
-		$this->assertSame( self::OPTION_WOO, Activator::option_name() );
-
 		$calls = [];
 
 		( new Activator() )->maybe_run( $this->recording_sub_plugin( $calls ) );
@@ -236,12 +233,16 @@ class ActivatorTest extends WPTestCase {
 	}
 
 	/**
-	 * The record as it stands, for whichever prefix the test set.
+	 * The record as it stands, read under the name this suite's own prefix produces.
+	 *
+	 * Against a literal, deliberately. Reading the name off the class under test would move both
+	 * sides of every assertion together, so a rename of the key — or of the segment `Config` builds
+	 * between the host's prefix and it — would keep passing while writing somewhere nobody reads.
 	 *
 	 * @return array<string,mixed>
 	 */
 	private function recorded(): array {
-		$done = get_site_option( Activator::option_name(), [] );
+		$done = get_site_option( self::OPTION, [] );
 
 		return is_array( $done ) ? $done : [];
 	}
