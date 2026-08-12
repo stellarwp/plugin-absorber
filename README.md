@@ -13,7 +13,7 @@ composer require stellarwp/plugin-absorber
 
 **Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md)** — two
 plugins shipping different versions of this library will collide otherwise. See
-[Installing](docs/installing.md) for the one prefixing rule you must not get wrong.
+[Installing][installing] for the one prefixing rule you must not get wrong.
 
 ## Quick start
 
@@ -39,23 +39,40 @@ add_action( 'plugins_loaded', function () {
 The container is required — any StellarWP `ContainerInterface` implementation, the one you already
 hand to Telemetry or Uplink. Every collaborator comes from it.
 
-Boot before `plugins_loaded` priority 5, where conflict resolution runs: WordPress silently ignores a
-callback added at or past the priority it is already dispatching. Later is reported through
-`_doing_it_wrong()` and run inline, but the ordering guarantees are weaker.
+Keep the `, 0`. `boot()` wires conflict resolution at `plugins_loaded` priority 5 and the load at
+priority 6, and WordPress silently ignores a callback added at or past the priority it is already
+dispatching — so anything below priority 5 wires cleanly, the priority 1 where several hosts wire
+their container today included. Booting later is reported through `_doing_it_wrong()` and both steps
+run inline instead — which on an admin page view can end the request in a redirect before `boot()`
+returns.
 
 Priority 0 is the recommendation, in the block that owns your container rather than in a service
 provider: a host that builds one lazily and replaces it at priority 0 leaves us holding an orphan
 whose bindings were discarded.
 
+A [complete bootstrap][configuration] — two sub-plugins, every optional key — closes the
+configuration doc.
+
 ## Docs
 
-- [Installing](docs/installing.md) — Composer, Strauss, and the constants Strauss must leave alone.
-- [Configuration](docs/configuration.md) — the hook prefix, the container, every sub-plugin key.
-- [Conflict handling](docs/conflict-handling.md) — the policies, when they run, and the guard's limits.
-- [Filters](docs/filters.md) — the runtime overrides for policies and notice text.
-- [Notices](docs/notices.md) — where the queue lives, who may see it, and how to render it yourself.
-- [Tests](tests/README.md) — running the suite, the fixtures and traits it offers, and every scenario
-  it drives the library through.
+- [Installing][installing] — Composer, Strauss, and the constants Strauss must leave alone.
+- [Configuration][configuration] — the hook prefix, the container, every sub-plugin key.
+- [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
+- [Filters][filters] — the runtime overrides for policies and notice text.
+- [Notices][notices] — where the queue lives, who may see it, and how to render it yourself.
+- [Tests][tests] — running the suite, the fixtures and traits it offers, and every scenario it drives
+  the library through.
+
+`docs/` and `tests/` are both `export-ignore`d, so neither is in a vendored copy of this library —
+these point at the repository rather than at a path that would be missing beside the installed
+source.
+
+[installing]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/installing.md
+[configuration]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/configuration.md
+[conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
+[filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
+[notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
+[tests]: https://github.com/stellarwp/plugin-absorber/blob/main/tests/README.md
 
 ## License
 

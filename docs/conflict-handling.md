@@ -6,7 +6,7 @@ When a sub-plugin's standalone counterpart is still active:
 
 | Policy | Behavior |
 |---|---|
-| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, notify, and redirect; the bundled copy loads on the next request. **Default.** |
+| `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, notify, and usually redirect; the bundled copy loads on the next request. **Default.** |
 | `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
 | `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
 
@@ -59,18 +59,23 @@ every site on a network. The gate matters at all because `plugins_loaded` fires 
 `auth_redirect()`, so an unauthenticated GET of an admin URL reaches this code on its way to the
 login screen. It applies to every policy rather than only to `deactivate`, which costs nothing — the
 other policies just queue a notice, and a notice is neither shown nor cleared for a user without the
-same capability, so nothing is consumed by waiting for one who has it.
+same capability.
 
-Both gates live in `Conflict\Gatekeeper`, and the hook asks it rather than the resolver, so binding
-your own `Conflict\Contracts\Resolver_Interface` cannot drop either by omission. They are asked in
-two halves either side of `Conflict\Detector::has_conflict()`, which only reports: the request-shape
-gate first, then the detector, then the capability. The capability check is last because
-`current_user_can()` resolves and caches the current user, and at priority 5 that lands ahead of any
-`determine_current_user` filter a plugin registers from its own `plugins_loaded` callback — an SSO or
-JWT plugin hooked at the default priority would never be consulted, and its users would be treated as
-signed out. Asking the detector rather than the resolver keeps detection off the contract a host
-rebinds, and means the resolver is built only on a request that passes both gates and has something
-to resolve.
+Both gates live in `Conflict\Gatekeeper`, along with a third that catches a host which reached
+`plugins_loaded` without ever calling `Config::set_hook_prefix()` — that is reported through
+`_doing_it_wrong()` and resolution stands down rather than throwing out of a core action. The hook
+asks the gatekeeper *before* it resolves `Conflict\Contracts\Resolver_Interface` at all, so binding
+your own resolver cannot drop any of them by omission: on a request that fails one, your
+implementation is never built, let alone called. The capability is asked last, after
+`Conflict\Detector::has_conflict()` has reported there is something to resolve — `current_user_can()`
+resolves and caches the current user, and at priority 5 that would land ahead of any
+`determine_current_user` filter an SSO or JWT plugin adds from its own `plugins_loaded` callback,
+whose users would then be treated as signed out for the rest of the request.
+
+The deactivation itself is silent, and covers both scopes on multisite. Silent because the
+standalone's own deactivation hook has already been registered by the time we run: a routine
+`flush_rewrite_rules()` in that callback, at `plugins_loaded`, regenerates the rules before `init`
+has declared a single post type, and every custom permalink on the site starts 404ing.
 
 ## The redirect
 
@@ -136,11 +141,14 @@ So the library filters `wp_admin_notice_markup` and swaps that sentence for the 
 `conflict_notice_message`, falling back to a generic one naming the slug. This is what puts the
 WordPress floor at 6.4: the filter does not exist before it.
 
-It touches nothing else. The markup comes back unchanged unless all three hold — the screen is
-`plugins`, or `plugins-network` in the network admin, where a super admin is the only one who can
-reactivate anything; the `plugin` query arg names a standalone this library has registered; and
-`_error_nonce` verifies against `plugin-activation-error_{basename}`. Another plugin's fatal is
-another plugin's business.
+It touches nothing else. The markup comes back untouched unless every one of these holds — the
+screen is `plugins`, or `plugins-network` in the network admin, where a super admin is the only one
+who can reactivate anything; the `plugin` query arg names a standalone this library has registered;
+and `_error_nonce` verifies against `plugin-activation-error_{basename}`. Another plugin's fatal is
+another plugin's business. (One exception, and it is not about this screen: a filter ahead of ours
+that returned something other than a string is normalised to `''`, because a `string` type
+declaration here would turn that plugin's mistake into a `TypeError` raised on the error screen
+least able to afford a second one.)
 
 The replacement runs through `wp_kses_post()`, so a knowledge-base link survives, and it is
 sanitised *before* it is checked for emptiness: a message that filters down to nothing leaves core's
@@ -150,4 +158,5 @@ The filter is wired by `Boot\Scheduler` under `is_admin()`, as
 `[ Absorber::class, 'filter_activation_error_markup' ]` — a named callback, so a host that would
 rather keep core's wording can `remove_filter()` it. The rewriting itself is
 `Conflict\Rewriter::rewrite()`, bound by class name like the rest of the conflict handling, so a host
-rebinds this screen on its own — without having to supply a notice queue to get it.
+can rebind this screen on its own — after `boot()`, as every class-name binding must be, and without
+having to supply a notice writer to get it.
