@@ -7,9 +7,9 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Conflict;
 
-use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
@@ -34,6 +34,13 @@ class Detector {
 	/**
 	 * @since 1.0.0
 	 *
+	 * @var Registry_Reader
+	 */
+	private $registry;
+
+	/**
+	 * @since 1.0.0
+	 *
 	 * @var Plugin_Checker_Interface
 	 */
 	private $plugin_checker;
@@ -41,9 +48,11 @@ class Detector {
 	/**
 	 * @since 1.0.0
 	 *
+	 * @param Registry_Reader          $registry       Which sub-plugins are registered.
 	 * @param Plugin_Checker_Interface $plugin_checker Whether the standalone is active.
 	 */
-	public function __construct( Plugin_Checker_Interface $plugin_checker ) {
+	public function __construct( Registry_Reader $registry, Plugin_Checker_Interface $plugin_checker ) {
+		$this->registry       = $registry;
 		$this->plugin_checker = $plugin_checker;
 	}
 
@@ -60,10 +69,10 @@ class Detector {
 	 * @return bool
 	 */
 	public function has_conflict(): bool {
-		// Absorber::all() rather than a registrar of our own: it flushes the pending registrations
-		// before it reads, and a registrar asked directly would not see anything registered since
-		// the last read.
-		foreach ( Absorber::all() as $sub_plugin ) {
+		// The reader rather than a registrar of our own: it drains the registrations still buffered
+		// on the facade before it reads, and a registrar asked directly would miss anything
+		// registered since the last read.
+		foreach ( $this->registry->all() as $sub_plugin ) {
 			if ( $this->is_in_conflict( $sub_plugin ) ) {
 				return true;
 			}

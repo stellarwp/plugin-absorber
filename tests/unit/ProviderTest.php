@@ -24,6 +24,7 @@ use Nexcess\PluginAbsorber\Plugin_Checker;
 use Nexcess\PluginAbsorber\Plugin_Deactivator;
 use Nexcess\PluginAbsorber\Provider;
 use Nexcess\PluginAbsorber\Registrar;
+use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
@@ -75,6 +76,7 @@ class ProviderTest extends WPTestCase {
 	 */
 	public static function default_bindings(): Generator {
 		yield 'the registrar'         => [ Registrar_Interface::class, Registrar::class ];
+		yield 'the registry reader'   => [ Registry_Reader::class, Registry_Reader::class ];
 		yield 'the notice queue'      => [ Queue_Interface::class, Queue::class ];
 		yield 'the notice store'      => [ Store::class, Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class, Renderer::class ];
@@ -108,6 +110,7 @@ class ProviderTest extends WPTestCase {
 	 */
 	public static function single_instance_bindings(): Generator {
 		yield 'the registrar'         => [ Registrar_Interface::class ];
+		yield 'the registry reader'   => [ Registry_Reader::class ];
 		yield 'the notice queue'      => [ Queue_Interface::class ];
 		yield 'the notice store'      => [ Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class ];
@@ -144,6 +147,7 @@ class ProviderTest extends WPTestCase {
 	 * @return Generator<string,array{0:string}>
 	 */
 	public static function class_id_bindings(): Generator {
+		yield 'the registry reader'   => [ Registry_Reader::class ];
 		yield 'the notice store'      => [ Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class ];
 		yield 'the conflict detector' => [ Detector::class ];

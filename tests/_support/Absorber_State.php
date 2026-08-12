@@ -8,13 +8,14 @@ namespace Nexcess\PluginAbsorber\Tests\Support;
 use Closure;
 use LogicException;
 use Nexcess\PluginAbsorber\Absorber;
+use Nexcess\PluginAbsorber\Registry_Reader;
 use ReflectionClass;
 use ReflectionFunction;
 use ReflectionProperty;
 use WP_Hook;
 
 /**
- * Restores `Absorber`'s static state between tests, and unwires the hooks boot() added.
+ * Restores the boot path's static state between tests, and unwires the hooks boot() added.
  *
  * `Absorber` has no public way to clear itself, and deliberately so: a reset method would be API the
  * library then has to support forever for the sake of its own test suite, and a host that reached for
@@ -26,17 +27,23 @@ use WP_Hook;
  */
 class Absorber_State {
 	/**
-	 * The value each of `Absorber`'s static properties starts life with.
+	 * The value each static property of the boot path starts life with, by the class holding it.
+	 *
+	 * Two classes, because the registration buffer belongs to `Registry_Reader` — a host registers
+	 * before there is a container to reach a registrar through, so the pre-store is static, and it
+	 * sits with the object that reads it rather than with the facade that writes to it. A test that
+	 * cleared only the facade would leave one test's registrations to drain into the next test's
+	 * registrar.
 	 *
 	 * Spelled out rather than read from `ReflectionClass::getDefaultProperties()`, which reports a
 	 * static property's *current* value on PHP below 8.3 — a reset built on it is a silent no-op on
 	 * the 7.4 leg.
 	 *
-	 * @var array<string,mixed>
+	 * @var array<class-string,array<string,mixed>>
 	 */
 	protected const DEFAULTS = [
-		'pending' => [],
-		'booted'  => false,
+		Absorber::class        => [ 'booted' => false ],
+		Registry_Reader::class => [ 'pending' => [] ],
 	];
 
 	/**
@@ -72,19 +79,19 @@ class Absorber_State {
 	public static function reset(): void {
 		self::unwire();
 
-		$reflection = new ReflectionClass( Absorber::class );
+		foreach ( self::DEFAULTS as $class => $defaults ) {
+			foreach ( ( new ReflectionClass( $class ) )->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
+				$name = $property->getName();
 
-		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
-			$name = $property->getName();
+				if ( ! array_key_exists( $name, $defaults ) ) {
+					throw new LogicException(
+						sprintf( '%s::$%s has no default in %s. Add one.', $class, $name, self::class )
+					);
+				}
 
-			if ( ! array_key_exists( $name, self::DEFAULTS ) ) {
-				throw new LogicException(
-					sprintf( 'Absorber::$%s has no default in %s. Add one.', $name, self::class )
-				);
+				$property->setAccessible( true );
+				$property->setValue( null, $defaults[ $name ] );
 			}
-
-			$property->setAccessible( true );
-			$property->setValue( null, self::DEFAULTS[ $name ] );
 		}
 	}
 

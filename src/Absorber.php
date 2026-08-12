@@ -30,13 +30,6 @@ final class Absorber {
 	use Guards_Hook_Prefix;
 
 	/**
-	 * Sub-plugins registered but not yet handed to the registrar.
-	 *
-	 * @var Sub_Plugin[]
-	 */
-	private static $pending = [];
-
-	/**
 	 * Whether the hooks have been wired.
 	 *
 	 * @var bool
@@ -69,10 +62,10 @@ final class Absorber {
 	 * Register one bundled sub-plugin. Call once per sub-plugin, before boot().
 	 *
 	 * The sub-plugin is buffered rather than handed straight to the registrar, so that registering
-	 * resolves nothing. Reaching the registrar needs the container, and a host that registers before
-	 * it calls Config::set_container() would otherwise fail on a call that has nothing to do with
-	 * the container. Buffering is what lets the container arrive at any point before boot, like
-	 * every other configuration call.
+	 * resolves nothing — not even the container. A host that registers before it calls
+	 * Config::set_container() would otherwise fail on a call that has nothing to do with the
+	 * container. The buffer belongs to `Registry_Reader`, which is where it is read back out: this
+	 * class hands its collaborators no work and holds none of their state.
 	 *
 	 * The configuration is still validated here: building the Sub_Plugin is what rejects it, and
 	 * that happens at the call the host can see in its own stack trace. It is built rather than
@@ -88,11 +81,16 @@ final class Absorber {
 	 * @return void
 	 */
 	public static function register( array $config ): void {
-		self::$pending[] = new Sub_Plugin( $config );
+		Registry_Reader::buffer( new Sub_Plugin( $config ) );
 	}
 
 	/**
 	 * Every registered sub-plugin, keyed by slug, in registration order.
+	 *
+	 * A delegation like the accessors above it, and for the same reason: what a host calls is here,
+	 * what it does is the collaborator's. The passes that read the registry are handed that
+	 * collaborator directly rather than calling back through this method — a facade sits in front of
+	 * its collaborators, never underneath them.
 	 *
 	 * @since 1.0.0
 	 *
@@ -102,20 +100,7 @@ final class Absorber {
 	 * @return array<string,Sub_Plugin>
 	 */
 	public static function all(): array {
-		self::flush();
-
-		// Registrar_Interface::all() can only declare `array` — PHP 7.4 has no way to say
-		// array<string,Sub_Plugin> in a signature — so a host binding its own registrar may return
-		// anything at all. Narrowed once here, where the untrusted value crosses into the library,
-		// rather than at each call site: a consumer that forgot the check would fatal inside
-		// plugins_loaded on its first predicate call, which is the exact failure this library
-		// exists to prevent, and every future consumer would have to remember it too.
-		return array_filter(
-			self::registrar()->all(),
-			static function ( $sub_plugin ): bool {
-				return $sub_plugin instanceof Sub_Plugin;
-			}
-		);
+		return self::collaborator( Registry_Reader::class )->all();
 	}
 
 	/**
@@ -227,39 +212,5 @@ final class Absorber {
 		}
 
 		return $collaborator;
-	}
-
-	/**
-	 * Hand every buffered registration to the registrar.
-	 *
-	 * The registrar stays the single source of truth: the buffer is a pre-store that needs no
-	 * container, and duplicate-slug detection and ordering remain the registrar's alone rather
-	 * than being restated here in a second dialect.
-	 *
-	 * The buffer is emptied before the loop, so a second read cannot re-register what the
-	 * registrar already holds and trip its duplicate-slug guard. It is emptied *after* the
-	 * registrar resolves, so a container binding that throws leaves the registrations buffered
-	 * for the next read rather than dropping them on the floor.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When no container has been set, or two sub-plugins were registered
-	 *                          under one slug.
-	 *
-	 * @return void
-	 */
-	private static function flush(): void {
-		if ( self::$pending === [] ) {
-			return;
-		}
-
-		$registrar = self::registrar();
-		$pending   = self::$pending;
-
-		self::$pending = [];
-
-		foreach ( $pending as $sub_plugin ) {
-			$registrar->register( $sub_plugin );
-		}
 	}
 }
