@@ -8,12 +8,12 @@ namespace Nexcess\PluginAbsorber\Tests\Unit\Boot;
 use Codeception\TestCase\WPTestCase;
 use Generator;
 use LogicException;
+use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
-use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
@@ -25,7 +25,7 @@ use WP_Hook;
 /**
  * When the library's steps run, and what happens when a host asks too late.
  *
- * Driven through `Loader::boot()` rather than by calling the scheduler directly. That is the only
+ * Driven through `Absorber::boot()` rather than by calling the scheduler directly. That is the only
  * entry point a host has, and the timing this class exists to get right is a property of the whole
  * boot — a scheduler asked to wire in isolation cannot show that a host booting from `plugins_loaded`
  * at the default priority still gets its sub-plugins.
@@ -60,7 +60,7 @@ class SchedulerTest extends WPTestCase {
 	public function setUp(): void {
 		parent::setUp();
 
-		Loader_State::reset();
+		Absorber_State::reset();
 		Config_State::reset();
 		Config::set_hook_prefix( 'give' );
 		$this->set_up_container();
@@ -82,7 +82,7 @@ class SchedulerTest extends WPTestCase {
 		// current screen before WP_ADMIN.
 		set_current_screen( 'front' );
 
-		// Only what these tests added by hand. What boot() wired comes off in Loader_State::reset().
+		// Only what these tests added by hand. What boot() wired comes off in Absorber_State::reset().
 		foreach ( $this->added_actions as [ $hook, $callback, $priority ] ) {
 			remove_action( $hook, $callback, $priority );
 		}
@@ -90,7 +90,7 @@ class SchedulerTest extends WPTestCase {
 
 		$this->stop_expecting_incorrect_usage();
 		$this->remove_bundled_plugin_files();
-		Loader_State::reset();
+		Absorber_State::reset();
 		Config_State::reset();
 		$this->tear_down_container();
 		parent::tearDown();
@@ -110,7 +110,7 @@ class SchedulerTest extends WPTestCase {
 
 		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
 
-		Loader::boot();
+		Absorber::boot();
 
 		$this->assertSame(
 			$before + 1,
@@ -129,8 +129,8 @@ class SchedulerTest extends WPTestCase {
 
 		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
 
-		Loader::boot();
-		Loader::boot();
+		Absorber::boot();
+		Absorber::boot();
 
 		$this->assertSame(
 			$before + 1,
@@ -150,7 +150,7 @@ class SchedulerTest extends WPTestCase {
 	public function test_a_plugin_hooking_at_the_default_priority_finds_the_bundled_code(): void {
 		$this->register_sub_plugin();
 
-		Loader::boot();
+		Absorber::boot();
 
 		$loads_seen = null;
 		$this->add_tracked_action(
@@ -170,7 +170,7 @@ class SchedulerTest extends WPTestCase {
 
 		$notices = $this->bind_spy_queue();
 
-		Loader::boot();
+		Absorber::boot();
 
 		do_action( 'all_admin_notices' );
 
@@ -186,7 +186,7 @@ class SchedulerTest extends WPTestCase {
 
 		$notices = $this->bind_spy_queue();
 
-		Loader::boot();
+		Absorber::boot();
 
 		// The recorder has to be shown to work: without it, a do_action() that fired nothing at all
 		// would satisfy the assertion below for a reason that has nothing to do with the front end.
@@ -226,7 +226,7 @@ class SchedulerTest extends WPTestCase {
 		$this->add_tracked_action(
 			'plugins_loaded',
 			static function () use ( $path, $constant ): void {
-				Loader::register(
+				Absorber::register(
 					[
 						'slug'                   => 'give-recurring',
 						'bundled_plugin_file'    => $path,
@@ -234,7 +234,7 @@ class SchedulerTest extends WPTestCase {
 					]
 				);
 
-				Loader::boot();
+				Absorber::boot();
 			},
 			$this->load_priority() + $offset
 		);
@@ -260,15 +260,15 @@ class SchedulerTest extends WPTestCase {
 		do_action( 'plugins_loaded' );
 
 		$this->register_sub_plugin();
-		Loader::boot();
+		Absorber::boot();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
 	}
 
 	/**
-	 * The suite's state helper stands in for the reset() the Loader deliberately does not ship.
-	 * Clearing the boot flag without unwiring would leave a Loader that reports itself unbooted while
+	 * The suite's state helper stands in for the reset() the Absorber deliberately does not ship.
+	 * Clearing the boot flag without unwiring would leave an Absorber that reports itself unbooted while
 	 * its callbacks are still attached — and every later test would load sub-plugins it never
 	 * registered.
 	 */
@@ -278,8 +278,8 @@ class SchedulerTest extends WPTestCase {
 		$load_step   = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
 		$notice_step = $this->callbacks_at( 'all_admin_notices' );
 
-		Loader::boot();
-		Loader_State::reset();
+		Absorber::boot();
+		Absorber_State::reset();
 
 		$this->assertSame( $load_step, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
 		$this->assertSame( $notice_step, $this->callbacks_at( 'all_admin_notices' ) );
@@ -292,10 +292,10 @@ class SchedulerTest extends WPTestCase {
 	public function test_the_state_helper_allows_booting_again(): void {
 		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
 
-		Loader::boot();
-		Loader_State::reset();
+		Absorber::boot();
+		Absorber_State::reset();
 
-		Loader::boot();
+		Absorber::boot();
 
 		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
 	}
@@ -312,7 +312,7 @@ class SchedulerTest extends WPTestCase {
 
 		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
 
-		Loader::boot();
+		Absorber::boot();
 
 		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
 	}
@@ -395,7 +395,7 @@ class SchedulerTest extends WPTestCase {
 	private function register_sub_plugin(): void {
 		$constant = $this->make_guard_constant();
 
-		Loader::register(
+		Absorber::register(
 			[
 				'slug'                   => 'give-recurring',
 				'bundled_plugin_file'    => $this->make_bundled_plugin_file( $constant ),
