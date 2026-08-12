@@ -74,7 +74,7 @@ seams a host may rebind:
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
-The rest — `Boot\Scheduler`, `Loader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
+The rest — `Boot\Scheduler`, `Loader`, `Registry_Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
 `Conflict\Redirector`, `Notices\Store`, `Notices\Renderer` — are bound as concrete classes. A host
 that wants one of them different rebinds the class name; there is no interface because nothing in the
 library dispatches on one.
@@ -118,9 +118,19 @@ it is di52-only: `stellarwp/container-contract` declares `bind`, `get`, `has` an
 nothing else. `[ $resolved_object, 'method' ]` is the other wrong answer — it forces every
 collaborator to be built at boot.
 
-`Absorber` keeps the public surface. `registrar()`, `notices()` and `resolver()` are one-line
+`Absorber` keeps the public surface. `registrar()`, `notices()`, `resolver()` and `all()` are one-line
 delegations to `$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
 depends on the peer it was handed rather than on the facade.
+
+**Nothing but `Absorber` names `Absorber`.** The registration buffer belongs to `Registry_Reader`,
+which is also what reads it back out: `Absorber::register()` pushes a `Sub_Plugin` into it and
+`Absorber::all()` delegates to it, while `Conflict\Detector`, `Conflict\Resolver` and `Loader` are
+each handed one. The buffer is static because it must be — `register()` is a static call a host makes
+at plugin-file scope, before there is a container to resolve a registrar from — and what is decided
+is only which class pays for that. Leaving it on the facade left an edge pointing back up: the passes
+the facade boots read the registry by calling the facade, so `Absorber` sat both above and below its
+own collaborators, and a pass could not be handed a registry to work on. The arrows run one way now,
+and a pass is complete the moment it is built.
 
 `Sub_Plugin` is a value object answering the per-sub-plugin questions it can answer **without a
 container-bound collaborator** (`is_enabled()`, `is_already_loaded()`, `has_standalone_plugin()`,
@@ -138,7 +148,7 @@ the plugin to ask about, and the collaborator does the asking.
 | Path | What |
 |---|---|
 | `src/Config.php` | Static facade: hook prefix + container. |
-| `src/Absorber.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
+| `src/Absorber.php` | Static facade: registration, `boot()`, and the accessors. Holds no collaborator's state. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
 | `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
@@ -146,6 +156,7 @@ the plugin to ask about, and the collaborator does the asking.
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
 | `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
+| `src/Registry_Reader.php` | The registration buffer, drained into the registrar on the way past; the object every pass reads the registry through. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
@@ -202,19 +213,26 @@ carries the whole re-declaration guarantee, and it is the only gate meaning "thi
 running" — warning that requirements are unmet for a plugin the admin can watch working would send
 them after the wrong problem. `docs/filters.md` and the spec agree.
 
-`Absorber::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
-may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
+`Registry_Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
+host may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
 the interface signature — so it is filtered once where the untrusted value enters. Both passes read
-through `Absorber::all()` rather than through the registrar they could resolve for themselves, because
-it flushes the pending registrations before it reads and a registrar asked directly would miss
-anything registered since the last flush.
+through the reader they were constructed with rather than through the registrar they could resolve for
+themselves, because it drains the pending registrations before it reads and a registrar asked directly
+would miss anything registered since the last flush.
 
-**Both passes also catch `Config_Exception` around that read.** The flush is where a duplicate slug
-throws and the registrar resolution is where a missing container does, and both arrive inside
-`plugins_loaded`, the hook that exists to prevent a fatal — so it is the last place allowed to cause
-one. The conflict pass needs the guard more than the load pass, not less: its request gate means the
-only requests reaching it are admin page views, so an escaping throw lands on exactly the screens the
-mistaken registration would have to be corrected from.
+**Both passes also catch `Config_Exception` around that read.** A duplicate slug is only found when
+the buffer reaches the registrar, which is a read — long after both `register()` calls returned — and
+it arrives inside `plugins_loaded`, the hook that exists to prevent a fatal, so this is the last place
+allowed to cause one. The conflict pass needs the guard more than the load pass, not less: its request
+gate means the only requests reaching it are admin page views, so an escaping throw lands on exactly
+the screens the mistaken registration would have to be corrected from.
+
+The container is no longer the other half of that. A pass is handed a reader that already holds its
+registrar, so a container that cannot supply one fails while the *pass* is being built — where an
+unbuildable `Queue_Interface` or `Plugin_Checker_Interface` has always failed. Read-time and
+build-time failures stopped being the same event when the registry became an argument, and the
+registrar now fails like every other binding rather than being the one collaborator whose broken
+binding surfaced late and politely.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is

@@ -5,22 +5,22 @@
 
 namespace Nexcess\PluginAbsorber\Conflict;
 
-use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
  * Default conflict resolution: act on each conflicting sub-plugin per its policy.
  *
- * Every peer is a required constructor argument, so this object is complete the moment it exists and
- * a test can hand it four doubles instead of standing up global state. Finding the conflict and
- * turning the standalone off arrive separately because they are separate jobs: `Detector` answers
- * whether a standalone is in the way, and a host that wants deactivation to be a no-op rebinds
- * `Plugin_Deactivator_Interface` without touching how detection works.
+ * Every peer is a required constructor argument, the registry read included, so this object is
+ * complete the moment it exists and a test can hand it doubles instead of standing up global state.
+ * Finding the conflict and turning the standalone off arrive separately because they are separate
+ * jobs: `Detector` answers whether a standalone is in the way, and a host that wants deactivation to
+ * be a no-op rebinds `Plugin_Deactivator_Interface` without touching how detection works.
  *
  * Neither of the two questions asked ahead of this class is asked here. `Detector` reports that
  * there is something to resolve and `Gatekeeper` decides who may have it resolved, and the conflict
@@ -32,6 +32,13 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * @since 1.0.0
  */
 class Resolver implements Resolver_Interface {
+	/**
+	 * @since 1.0.0
+	 *
+	 * @var Registry_Reader
+	 */
+	private $registry;
+
 	/**
 	 * @since 1.0.0
 	 *
@@ -63,17 +70,20 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
+	 * @param Registry_Reader              $registry           Which sub-plugins are registered.
 	 * @param Detector                     $detector           Whether a sub-plugin is in conflict.
 	 * @param Plugin_Deactivator_Interface $plugin_deactivator Turns the standalone off.
 	 * @param Queue_Interface              $notices            Where the user is told what happened.
 	 * @param Redirector                   $redirector         Where the user lands afterwards.
 	 */
 	public function __construct(
+		Registry_Reader $registry,
 		Detector $detector,
 		Plugin_Deactivator_Interface $plugin_deactivator,
 		Queue_Interface $notices,
 		Redirector $redirector
 	) {
+		$this->registry           = $registry;
 		$this->detector           = $detector;
 		$this->plugin_deactivator = $plugin_deactivator;
 		$this->notices            = $notices;
@@ -90,10 +100,10 @@ class Resolver implements Resolver_Interface {
 	public function resolve_all(): void {
 		$deactivated = false;
 
-		// Absorber::all() rather than a registrar of our own: it flushes the pending registrations
-		// before it reads, and a registrar asked directly would not see anything registered since
-		// the last read.
-		foreach ( Absorber::all() as $sub_plugin ) {
+		// The reader rather than a registrar of our own: it drains the registrations still buffered
+		// on the facade before it reads, and a registrar asked directly would miss anything
+		// registered since the last read.
+		foreach ( $this->registry->all() as $sub_plugin ) {
 			if ( ! $this->detector->is_in_conflict( $sub_plugin ) ) {
 				continue;
 			}

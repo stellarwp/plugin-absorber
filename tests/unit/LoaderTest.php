@@ -17,6 +17,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
@@ -104,6 +105,36 @@ class LoaderTest extends WPTestCase {
 		$constant = $this->register();
 
 		$this->loader()->load_all();
+
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+		$this->assertTrue( defined( $constant ) );
+	}
+
+	/**
+	 * The registry arrives as a constructor argument, so a load pass can be pointed at a sub-plugin
+	 * nothing ever registered — and the file it requires proves the loop read the object it was
+	 * handed rather than the facade.
+	 */
+	public function test_it_loads_the_registry_it_was_handed(): void {
+		$constant = $this->make_guard_constant();
+		$path     = $this->make_bundled_plugin_file( $constant );
+
+		$loader = new Loader(
+			new Stub_Registry_Reader(
+				[
+					new Sub_Plugin(
+						[
+							'slug'                   => 'give-recurring',
+							'bundled_plugin_file'    => $path,
+							'plugin_loaded_constant' => $constant,
+						]
+					),
+				]
+			),
+			new Spy_Queue()
+		);
+
+		$loader->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 		$this->assertTrue( defined( $constant ) );

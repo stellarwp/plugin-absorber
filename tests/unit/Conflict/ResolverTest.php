@@ -18,16 +18,19 @@ use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithRequestMethod;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
 /**
  * What the default resolver does once a conflict has been found, policy branch by policy branch.
@@ -54,6 +57,7 @@ class ResolverTest extends WPTestCase {
 	use WithHaltedRedirects;
 	use WithNoticeQueue;
 	use WithRequestMethod;
+	use WithSubPlugins;
 
 	/**
 	 * Every deactivate_plugins() call, as the arguments it was made with.
@@ -148,6 +152,46 @@ class ResolverTest extends WPTestCase {
 	 * left its contract: how a conflict is found is `Conflict\Detector`'s to change, and what to do
 	 * about one is this class's.
 	 */
+	/**
+	 * The registry is a peer like the other four, and this is what that buys: the sub-plugin
+	 * resolved here was never registered, so the run reaches no buffer and no registrar. A resolver
+	 * that read the facade instead would find nothing to resolve and deactivate nothing.
+	 */
+	public function test_it_resolves_the_registry_it_was_handed(): void {
+		$reader = new Stub_Registry_Reader(
+			[
+				$this->make_sub_plugin(
+					[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+				),
+			]
+		);
+
+		// After the provider, because a class id is one the container reports it can build whether or
+		// not anybody bound it -- so the provider binds its own regardless, and a double put in first
+		// would be silently replaced.
+		$this->container()->singleton(
+			Registry_Reader::class,
+			static function () use ( $reader ): Registry_Reader {
+				return $reader;
+			}
+		);
+
+		$this->standalone_is( true );
+
+		$this->capture_resolution();
+
+		$this->assertSame(
+			[ 'give-recurring/give-recurring.php' ],
+			array_column( $this->deactivations, 'plugins' ),
+			'The standalone deactivated has to be the one the reader handed over.'
+		);
+		$this->assertSame(
+			[],
+			Absorber::registrar()->all(),
+			'Nothing was ever registered: the whole run came off the injected reader.'
+		);
+	}
+
 	public function test_the_collaborators_come_from_the_container(): void {
 		$detector = new class() extends Detector {
 			/**

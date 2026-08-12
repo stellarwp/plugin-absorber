@@ -17,6 +17,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
@@ -33,10 +34,11 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
  * thing it must not read — a host's policy callable and the filter behind it can do anything at all,
  * and neither says whether a standalone is running.
  *
- * `has_conflict()` goes through `Absorber::all()`, so it needs the container; `is_in_conflict()` is
- * handed the sub-plugin and needs nothing but its checker, which is why the tests for it build a
- * detector directly. Both readings matter: the conflict step reaches the first, and the resolver
- * reaches the second once for every sub-plugin it walks.
+ * `has_conflict()` reads the registry through the reader it was built with, so most of the tests for
+ * it register through the facade the default reader is behind; `is_in_conflict()` is handed the
+ * sub-plugin and needs nothing but its checker, which is why the tests for it build a detector
+ * directly. Both readings matter: the conflict step reaches the first, and the resolver reaches the
+ * second once for every sub-plugin it walks.
  *
  * @since 1.0.0
  */
@@ -119,6 +121,24 @@ class DetectorTest extends WPTestCase {
 
 		$this->assertTrue( $this->detector()->has_conflict() );
 		$this->assertSame( [ 'give-recurring/give-recurring.php' ], $this->asked );
+	}
+
+	/**
+	 * The registry arrives as an argument like everything else, so nothing is registered here at all:
+	 * the sub-plugin this probe finds is one the facade has never been told about.
+	 */
+	public function test_it_reads_the_registry_it_was_handed(): void {
+		$detector = new Detector(
+			new Stub_Registry_Reader( [ $this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] ) ] ),
+			$this->recording_checker( true )
+		);
+
+		$this->assertTrue( $detector->has_conflict() );
+		$this->assertSame(
+			[ 'give-recurring/give-recurring.php' ],
+			$this->asked,
+			'The sub-plugin asked about has to be the one the reader handed over.'
+		);
 	}
 
 	public function test_it_finds_an_active_standalone(): void {
@@ -267,23 +287,19 @@ class DetectorTest extends WPTestCase {
 	}
 
 	/**
-	 * A registry read is a container read. The probe reads the registry and nothing else, which is
-	 * what keeps it cheap enough to ask of every admin GET.
+	 * The probe reads the registry and nothing else, which is what keeps it cheap enough to ask of
+	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still raise,
+	 * because it is only found when the buffer reaches the registrar. The conflict step catches this
+	 * exception type around the probe for exactly this case, so it has to arrive as this type.
 	 */
-	public function test_it_needs_a_container(): void {
+	public function test_a_duplicate_slug_surfaces_from_the_probe(): void {
 		$this->standalone_is( true );
 		$this->register();
-
-		$detector = $this->detector();
-
-		// The prefix stays, the container goes: a probe that could not reach the registrar would
-		// throw the same exception for the other reason.
-		Config_State::reset();
-		Config::set_hook_prefix( 'give' );
+		$this->register();
 
 		$this->expectException( Config_Exception::class );
 
-		$detector->has_conflict();
+		$this->detector()->has_conflict();
 	}
 
 	/**
@@ -291,7 +307,7 @@ class DetectorTest extends WPTestCase {
 	 * through the registry — no container, no registration, just the object and its checker.
 	 */
 	public function test_is_in_conflict_is_true_for_an_active_standalone(): void {
-		$detector = new Detector( $this->recording_checker( true ) );
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
 
 		$this->assertTrue(
 			$detector->is_in_conflict(
@@ -301,7 +317,7 @@ class DetectorTest extends WPTestCase {
 	}
 
 	public function test_is_in_conflict_is_false_when_the_standalone_is_not_active(): void {
-		$detector = new Detector( $this->recording_checker( false ) );
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( false ) );
 
 		$this->assertFalse(
 			$detector->is_in_conflict(
@@ -319,7 +335,7 @@ class DetectorTest extends WPTestCase {
 	 * The two cheap keys are read first, so a site with a disabled sub-plugin pays nothing for it.
 	 */
 	public function test_is_in_conflict_asks_nothing_about_a_disabled_sub_plugin(): void {
-		$detector = new Detector( $this->recording_checker( true ) );
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
 
 		$this->assertFalse(
 			$detector->is_in_conflict(
@@ -337,7 +353,7 @@ class DetectorTest extends WPTestCase {
 	}
 
 	public function test_is_in_conflict_asks_nothing_about_a_sub_plugin_with_no_standalone(): void {
-		$detector = new Detector( $this->recording_checker( true ) );
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
 
 		$this->assertFalse( $detector->is_in_conflict( $this->make_sub_plugin() ) );
 		$this->assertSame( [], $this->asked, 'There is no basename to ask about.' );
@@ -351,7 +367,7 @@ class DetectorTest extends WPTestCase {
 	 * from either copy, not whether the standalone is switched on.
 	 */
 	public function test_is_in_conflict_asks_about_the_configured_basename(): void {
-		$detector = new Detector( $this->recording_checker( true ) );
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
 
 		$detector->is_in_conflict(
 			$this->make_sub_plugin(
