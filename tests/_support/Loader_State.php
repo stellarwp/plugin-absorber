@@ -5,22 +5,24 @@
 
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
+use Closure;
 use LogicException;
 use Nexcess\PluginAbsorber\Loader;
 use ReflectionClass;
+use ReflectionFunction;
 use ReflectionProperty;
+use WP_Hook;
 
 /**
- * Restores `Loader`'s static state between tests.
+ * Restores `Loader`'s static state between tests, and unwires the hooks boot() added.
  *
  * `Loader` has no public way to clear itself, and deliberately so: a reset method would be API the
- * library then has to support forever for the sake of its own test suite, and a host that reached
- * for it mid-request would discard the registrations the load loop is about to read. Reflection
- * keeps that seam on this side of the fence.
+ * library then has to support forever for the sake of its own test suite, and a host that reached for
+ * it mid-request would discard the registrations the load loop is about to read. Reflection keeps that
+ * seam on this side of the fence.
  *
- * Dropping the memo is enough for the default collaborators, which are built per resolve. A
- * collaborator bound into a container as a singleton comes back populated on the next resolve, so
- * a test that binds one must build a fresh instance rather than expect this to empty it.
+ * Collaborators are the container's now, so there is no memo here to drop: a test gets a fresh set by
+ * standing up a fresh container, which `Traits\WithContainer` does in one line.
  */
 class Loader_State {
 	/**
@@ -38,6 +40,24 @@ class Loader_State {
 	];
 
 	/**
+	 * The hooks boot() reaches, directly or through `Boot\Scheduler`.
+	 *
+	 * @var string[]
+	 */
+	protected const HOOKS = [
+		'plugins_loaded',
+		'all_admin_notices',
+		'wp_admin_notice_markup',
+	];
+
+	/**
+	 * Namespace every callback this library wires belongs to.
+	 *
+	 * @var string
+	 */
+	protected const NAMESPACE_PREFIX = 'Nexcess\\PluginAbsorber\\';
+
+	/**
 	 * Return every static property of `Loader` to its default, and unwire the hooks it added.
 	 *
 	 * Clearing the boot flag without unwiring would leave a `Loader` that reports itself unbooted
@@ -50,36 +70,9 @@ class Loader_State {
 	 * @return void
 	 */
 	public static function reset(): void {
+		self::unwire();
+
 		$reflection = new ReflectionClass( Loader::class );
-
-		// The memo lives on Container\Resolution now, but every test in the suite resets through
-		// this one call, so it is dropped from here rather than making each of them reset twice.
-		Resolution_State::reset();
-
-		// Read rather than restated, so the helper unwires exactly what boot() wired -- including
-		// any step the Loader grows later. Restating it would go on removing a callback from a
-		// priority the Loader no longer uses, leaving the real one attached and every later test
-		// loading sub-plugins it never registered.
-		$sequence = $reflection->getConstant( 'SEQUENCE' );
-
-		// Refused rather than coerced, for the same reason.
-		if ( ! is_array( $sequence ) ) {
-			throw new LogicException(
-				sprintf( 'Loader::SEQUENCE must be an array for %s to unwire the hooks boot() added.', self::class )
-			);
-		}
-
-		foreach ( $sequence as $method => $priority ) {
-			if ( ! is_string( $method ) || ! is_int( $priority ) ) {
-				throw new LogicException(
-					sprintf( 'Loader::SEQUENCE must map method names to int priorities for %s to unwire them.', self::class )
-				);
-			}
-
-			remove_action( 'plugins_loaded', [ Loader::class, $method ], $priority );
-		}
-
-		remove_action( 'all_admin_notices', [ Loader::class, 'render_notices' ] );
 
 		foreach ( $reflection->getProperties( ReflectionProperty::IS_STATIC ) as $property ) {
 			$name = $property->getName();
@@ -93,5 +86,90 @@ class Loader_State {
 			$property->setAccessible( true );
 			$property->setValue( null, self::DEFAULTS[ $name ] );
 		}
+	}
+
+	/**
+	 * Take back every callback this library put on the boot hooks.
+	 *
+	 * Identified by where the callback comes from rather than by restating what boot() wires. The
+	 * steps are closures over the container now, so there is no name to match on and no
+	 * `has_action( $hook, [ Loader::class, 'load_all' ] )` to remove them by; and
+	 * `remove_all_actions()` would strip the hook bare, discarding every callback WordPress and the
+	 * rest of the suite have on it for the remainder of the process.
+	 *
+	 * Reading `Boot\Scheduler::SEQUENCE` for its priorities would be the narrower sweep, but it would
+	 * also miss a step wired at a priority the constant no longer names — which is exactly the drift
+	 * an unwire helper exists to survive.
+	 *
+	 * @return void
+	 */
+	protected static function unwire(): void {
+		foreach ( self::HOOKS as $hook ) {
+			$wp_hook = $GLOBALS['wp_filter'][ $hook ] ?? null;
+
+			if ( ! $wp_hook instanceof WP_Hook ) {
+				continue;
+			}
+
+			// Iterating a by-value copy, so removing as we go cannot disturb the walk.
+			foreach ( $wp_hook->callbacks as $priority => $callbacks ) {
+				if ( ! is_int( $priority ) || ! is_array( $callbacks ) ) {
+					continue;
+				}
+
+				foreach ( $callbacks as $registered ) {
+					$callback = is_array( $registered ) ? ( $registered['function'] ?? null ) : null;
+
+					if ( $callback !== null && is_callable( $callback ) && self::belongs_to_the_library( $callback ) ) {
+						remove_action( $hook, $callback, $priority );
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Whether a registered callback came out of this library.
+	 *
+	 * Covers both shapes a hook callback can take here: a closure written in `src/`, and a static or
+	 * instance method on one of the library's own classes.
+	 *
+	 * @param callable $callback Callback registered on one of the boot hooks.
+	 *
+	 * @return bool
+	 */
+	protected static function belongs_to_the_library( callable $callback ): bool {
+		if ( $callback instanceof Closure ) {
+			$file = ( new ReflectionFunction( $callback ) )->getFileName();
+
+			return is_string( $file ) && strpos( $file, self::source_directory() ) === 0;
+		}
+
+		if ( is_array( $callback ) ) {
+			$target = $callback[0] ?? null;
+			$class  = is_object( $target ) ? get_class( $target ) : $target;
+
+			return is_string( $class ) && strpos( $class, self::NAMESPACE_PREFIX ) === 0;
+		}
+
+		return is_string( $callback ) && strpos( $callback, self::NAMESPACE_PREFIX ) === 0;
+	}
+
+	/**
+	 * Where the library's own source lives, read off a class rather than assumed from this file.
+	 *
+	 * @throws LogicException When the path cannot be read, rather than matching every closure on
+	 *                        an empty prefix and unwiring the whole site.
+	 *
+	 * @return string
+	 */
+	protected static function source_directory(): string {
+		$file = ( new ReflectionClass( Loader::class ) )->getFileName();
+
+		if ( ! is_string( $file ) || $file === '' ) {
+			throw new LogicException( sprintf( 'Could not locate the library source from %s.', self::class ) );
+		}
+
+		return dirname( $file ) . DIRECTORY_SEPARATOR;
 	}
 }

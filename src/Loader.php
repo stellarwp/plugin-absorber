@@ -5,17 +5,19 @@
 
 namespace Nexcess\PluginAbsorber;
 
-use Nexcess\PluginAbsorber\Container\Resolution;
+use Nexcess\PluginAbsorber\Boot\Scheduler;
+use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
-use WP_Hook;
+use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
 
 /**
- * Static facade: registration, hook wiring, and the load loop.
+ * Static facade: registration, and the one call that starts everything.
  *
- * Resolving an interface to its implementation lives in `Container\Resolution`; the accessors here
- * are one-line delegations, so a host calls `Loader::notices()` and never has to know that.
+ * What a host touches, and deliberately little else. How collaborators are built belongs to
+ * `Provider`, when they run to `Boot\Scheduler`, and the load pass itself to `Load\Runner` — so
+ * the only reason to open this file is to change what a host may say to the library.
  *
  * `final` because it cannot usefully be extended: every member is private static and every internal
  * call is `self::`, so a subclass would inherit the API, be unable to override any of it, and change
@@ -24,33 +26,7 @@ use WP_Hook;
  * @since 1.0.0
  */
 final class Loader {
-	/**
-	 * plugins_loaded priority the load loop runs at.
-	 *
-	 * Ahead of the default priority, so a bundled plugin is in memory before the plugins that
-	 * expect it start their own work, and low enough to leave room for earlier wiring.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var int
-	 */
-	private const LOAD_PRIORITY = 2;
-
-	/**
-	 * The plugins_loaded steps, in run order, as [ method, priority ] pairs.
-	 *
-	 * Stated once because boot() expresses this order twice — as hook priorities when it can still
-	 * wire, and as straight calls when it is too late to and has to run them inline. Those two are
-	 * the same sequence, and a comment is the only thing that could hold them in agreement.
-	 * Iterating one list cannot drift.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var array<string,int>
-	 */
-	private const SEQUENCE = [
-		'load_all' => self::LOAD_PRIORITY,
-	];
+	use Guards_Hook_Prefix;
 
 	/**
 	 * Sub-plugins registered but not yet handed to the registrar.
@@ -69,36 +45,38 @@ final class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When the container cannot produce a usable instance.
+	 * @throws Config_Exception When no container has been set, or its binding is unusable.
 	 *
 	 * @return Registrar_Interface
 	 */
 	public static function registrar(): Registrar_Interface {
-		return Resolution::registrar();
+		return self::collaborator( Registrar_Interface::class );
 	}
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When the container cannot produce a usable instance.
+	 * @throws Config_Exception When no container has been set, or its binding is unusable.
 	 *
 	 * @return Queue_Interface
 	 */
 	public static function notices(): Queue_Interface {
-		return Resolution::notices();
+		return self::collaborator( Queue_Interface::class );
 	}
 
 	/**
 	 * Register one bundled sub-plugin. Call once per sub-plugin, before boot().
 	 *
 	 * The sub-plugin is buffered rather than handed straight to the registrar, so that registering
-	 * resolves nothing. Resolution needs the container, and a host that registers before it calls
-	 * Config::set_container() would otherwise pin the default registrar and silently ignore the
-	 * binding. Buffering is what lets the container arrive at any point before boot, like every
-	 * other configuration call.
+	 * resolves nothing. Reaching the registrar needs the container, and a host that registers before
+	 * it calls Config::set_container() would otherwise fail on a call that has nothing to do with
+	 * the container. Buffering is what lets the container arrive at any point before boot, like
+	 * every other configuration call.
 	 *
 	 * The configuration is still validated here: building the Sub_Plugin is what rejects it, and
-	 * that happens at the call the host can see in its own stack trace.
+	 * that happens at the call the host can see in its own stack trace. It is built rather than
+	 * resolved because it is a value object — a container asked for one would need the config
+	 * passed through it, and there is nothing about it to rebind.
 	 *
 	 * @since 1.0.0
 	 *
@@ -117,8 +95,8 @@ final class Loader {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When the container cannot produce a usable registrar, or two
-	 *                          sub-plugins were registered under one slug.
+	 * @throws Config_Exception When no container has been set, or two sub-plugins were registered
+	 *                          under one slug.
 	 *
 	 * @return array<string,Sub_Plugin>
 	 */
@@ -140,13 +118,17 @@ final class Loader {
 	}
 
 	/**
-	 * Wire the WordPress hooks. Idempotent — safe to call from more than one code path.
+	 * Bind the collaborators, then let the scheduler decide when they run. Idempotent — safe to
+	 * call from more than one code path.
 	 *
-	 * Hooks are plain static trampolines rather than container callbacks, which is what keeps the
-	 * container optional. Each trampoline delegates to the resolved collaborator, so rebinding
-	 * still takes effect.
+	 * The provider is constructed rather than resolved: it is what teaches the container about this
+	 * library, so the container cannot be asked to build it first. It is bound afterwards, and only
+	 * when nothing answers to `Provider_Interface` already, so a host may replace the whole set of
+	 * bindings with one of its own.
 	 *
 	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no container has been set.
 	 *
 	 * @return void
 	 */
@@ -155,60 +137,25 @@ final class Loader {
 			return;
 		}
 
+		$container = Config::get_container();
+
+		if ( ! $container->has( Provider_Interface::class ) ) {
+			$container->singleton( Provider_Interface::class, new Provider( $container ) );
+		}
+
+		$container->get( Provider_Interface::class )->register();
+		$container->get( Scheduler::class )->wire();
+
+		// Last, not first. A boot that threw on its way through -- no container, a binding that
+		// cannot be built -- has wired nothing, and a host that fixes the mistake and calls again
+		// should get a working library rather than a silent no-op.
 		self::$booted = true;
-
-		if ( is_admin() ) {
-			// all_admin_notices, not admin_notices. WordPress dispatches admin_notices,
-			// network_admin_notices and user_admin_notices as mutually exclusive branches, so a
-			// superadmin working in the network admin -- exactly where a network-wide
-			// deactivation gets noticed -- would never see the queue rendered.
-			add_action( 'all_admin_notices', [ self::class, 'render_notices' ] );
-		}
-
-		// Adding an action at a priority the current dispatch has already passed is accepted and
-		// then never fires. Booting from plugins_loaded at the default priority instead of 0 --
-		// the commonest hook mistake there is -- would otherwise mean nothing loads at all, with
-		// no warning and a site that looks entirely healthy.
-		if ( self::wiring_window_has_closed() ) {
-			_doing_it_wrong(
-				__METHOD__,
-				'Loader::boot() must run before plugins_loaded priority 2. Loading inline instead.',
-				'1.0.0'
-			);
-
-			// In the order the hooks would have run them.
-			foreach ( array_keys( self::SEQUENCE ) as $method ) {
-				call_user_func( [ self::class, $method ] );
-			}
-
-			return;
-		}
-
-		foreach ( self::SEQUENCE as $method => $priority ) {
-			add_action( 'plugins_loaded', [ self::class, $method ], $priority );
-		}
 	}
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @return void
-	 */
-	public static function load_all(): void {
-		// The load path needs the prefix for the should_load filter and for the notice store.
-		// Throwing out of a core action would take the whole site down over a bootstrap mistake,
-		// so it is reported where a developer will see it and the load is abandoned instead.
-		if ( ! self::has_hook_prefix() ) {
-			return;
-		}
-
-		foreach ( self::all() as $sub_plugin ) {
-			self::load( $sub_plugin );
-		}
-	}
-
-	/**
-	 * @since 1.0.0
+	 * @throws Config_Exception When no container has been set.
 	 *
 	 * @return void
 	 */
@@ -218,6 +165,43 @@ final class Loader {
 		}
 
 		self::notices()->render();
+	}
+
+	/**
+	 * The object bound to a collaborator interface, checked before it is handed on.
+	 *
+	 * The container's own return type promises nothing, so a host that bound the wrong class -- a
+	 * typo'd class name, an interface it forgot to implement -- would otherwise surface as a
+	 * TypeError raised inside this library, naming this library's method. That reads as a bug here
+	 * rather than a mistake in the host's own bindings, and it happens inside `plugins_loaded`,
+	 * where nobody is looking. Naming the interface and the class that failed it turns the same
+	 * failure into an instruction.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @template T of object
+	 *
+	 * @param class-string<T> $interface Collaborator interface to resolve.
+	 *
+	 * @throws Config_Exception When no container has been set, or its binding does not implement
+	 *                          the interface it was bound to.
+	 *
+	 * @return T
+	 */
+	private static function collaborator( string $interface ): object {
+		$collaborator = Config::get_container()->get( $interface );
+
+		if ( ! $collaborator instanceof $interface ) {
+			throw new Config_Exception(
+				sprintf(
+					'The container binding for %s returned %s, which does not implement it.',
+					$interface,
+					is_object( $collaborator ) ? get_class( $collaborator ) : gettype( $collaborator )
+				)
+			);
+		}
+
+		return $collaborator;
 	}
 
 	/**
@@ -234,8 +218,8 @@ final class Loader {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When the container cannot produce a usable registrar, or two
-	 *                          sub-plugins were registered under one slug.
+	 * @throws Config_Exception When no container has been set, or two sub-plugins were registered
+	 *                          under one slug.
 	 *
 	 * @return void
 	 */
@@ -252,118 +236,5 @@ final class Loader {
 		foreach ( $pending as $sub_plugin ) {
 			$registrar->register( $sub_plugin );
 		}
-	}
-
-	/**
-	 * Load one sub-plugin, cheapest and most decisive check first.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @param Sub_Plugin $sub_plugin Sub-plugin to load.
-	 *
-	 * @throws Config_Exception When a collaborator binding is unusable.
-	 *
-	 * @return void
-	 */
-	private static function load( Sub_Plugin $sub_plugin ): void {
-		if ( ! $sub_plugin->is_enabled() ) {
-			return;
-		}
-
-		// Ahead of the dependency check, which calls an arbitrary host callable. This is one
-		// defined(), it carries the whole re-declaration guarantee, and it is the only gate that
-		// means "the plugin is already running" -- warning that requirements are unmet for a
-		// plugin the admin can see working would be worse than useless.
-		if ( $sub_plugin->is_already_loaded() ) {
-			return;
-		}
-
-		if ( ! $sub_plugin->are_dependencies_met() ) {
-			self::notices()->queue_dependency_notice( $sub_plugin );
-
-			return;
-		}
-
-		// Not file_exists(): that is true for a directory and for a file with no read permission,
-		// and require_once fatals on both. A missing file is a broken build in the host plugin
-		// rather than anything a site owner can act on, so it goes to the developer instead of
-		// into the notice queue, where it would have displayed the host's own
-		// dependency_notice_message and sent the owner after the wrong problem entirely.
-		$file = $sub_plugin->get_bundled_plugin_file();
-
-		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
-			_doing_it_wrong(
-				'Nexcess\PluginAbsorber\Loader',
-				sprintf(
-					'The bundled plugin file for "%s" is missing or unreadable: %s',
-					$sub_plugin->get_slug(),
-					$file
-				),
-				'1.0.0'
-			);
-
-			return;
-		}
-
-		// No type guard on the return, unlike the conflict_policy filter: there is no cast here,
-		// and every unexpected value is falsy-or-truthy without fataling. Anything odd skips the
-		// load, which is the safe direction.
-		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
-
-		if ( ! $should_load ) {
-			return;
-		}
-
-		// An include takes the scope of the line it sits on, and this one is inside a method, where
-		// wp-settings.php includes plugins at global scope. Top-level assignments in the bundled
-		// file are function-local as a result -- documented for hosts, because no amount of
-		// wrapping here can hand a required file the global scope it would have had.
-		require_once $file;
-	}
-
-	/**
-	 * Whether it is already too late to wire the load hook.
-	 *
-	 * The comparison is inclusive. A callback added to the priority currently being dispatched is
-	 * accepted and never reached either: WP_Hook::apply_filters() walks `$this->callbacks[$priority]`
-	 * with a by-value foreach, so the append lands on an array the running loop has already copied.
-	 * Booting from plugins_loaded at priority 2 is the case a host is likeliest to hit by accident,
-	 * and an exclusive comparison would let exactly that one through unreported.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	private static function wiring_window_has_closed(): bool {
-		if ( ! did_action( 'plugins_loaded' ) ) {
-			return false;
-		}
-
-		if ( ! doing_action( 'plugins_loaded' ) ) {
-			return true;
-		}
-
-		$hook = $GLOBALS['wp_filter']['plugins_loaded'] ?? null;
-
-		return $hook instanceof WP_Hook && $hook->current_priority() >= self::LOAD_PRIORITY;
-	}
-
-	/**
-	 * Whether a hook prefix has been set, reporting to the developer when it has not.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return bool
-	 */
-	private static function has_hook_prefix(): bool {
-		try {
-			Config::get_hook_prefix();
-		} catch ( Config_Exception $exception ) {
-			_doing_it_wrong( 'Nexcess\PluginAbsorber\Loader', $exception->getMessage(), '1.0.0' );
-
-			return false;
-		}
-
-		return true;
 	}
 }

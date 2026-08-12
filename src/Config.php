@@ -115,9 +115,12 @@ class Config {
 	}
 
 	/**
-	 * Share the host's container so collaborators become bindable.
+	 * Share the host's container. Required, and required before boot().
 	 *
-	 * Entirely optional — with no container the library instantiates its own defaults.
+	 * Every collaborator this library uses is resolved from it, which is what makes each of them
+	 * replaceable by binding an interface. There is no second, container-less path to keep working
+	 * beside that one: two ways to reach a collaborator means two sets of behaviour to reason
+	 * about, and the one nobody runs is the one that rots.
 	 *
 	 * @since 1.0.0
 	 *
@@ -132,9 +135,17 @@ class Config {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @return ContainerInterface|null
+	 * @throws Config_Exception When no container has been set.
+	 *
+	 * @return ContainerInterface
 	 */
-	public static function get_container(): ?ContainerInterface {
+	public static function get_container(): ContainerInterface {
+		if ( self::$container === null ) {
+			throw new Config_Exception(
+				'You must call Config::set_container() before booting the Plugin Absorber.'
+			);
+		}
+
 		return self::$container;
 	}
 

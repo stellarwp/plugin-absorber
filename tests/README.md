@@ -16,6 +16,48 @@ slic run unit --env multisite     # multisite
 CI runs both envs on PHP 7.4 and 8.5 — the ends of the supported range — against WordPress
 `latest` and `nightly`. Four legs, with the `nightly` ones non-blocking.
 
+## The container
+
+The container is required, so any test that reaches a collaborator has to set
+one. `WithContainer` is the one-line form: it builds a `Test_Container`, runs
+the library's own `Provider` over it, and hands it to `Config`.
+
+```php
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
+
+public function setUp(): void {
+	parent::setUp();
+
+	Loader_State::reset();
+	Config_State::reset();
+	Config::set_hook_prefix( 'give' );
+	$this->set_up_container();
+}
+```
+
+A test about a *rebinding* host binds its own implementation first and passes
+the container in — the provider only binds what nothing else has, which is the
+guarantee those tests exist to pin:
+
+```php
+$container = new Test_Container();
+$container->singleton( Queue_Interface::class, static fn() => $notices );
+
+$this->set_up_container( $container );
+```
+
+Bind interfaces, not concrete classes: DI52 reports `has()` true for any class
+name that exists, bound or not, so binding `Notices\Store` first cannot
+demonstrate anything the provider does.
+
+`$this->resolve( Some::class )` is the typed read back out, and
+`$this->container()` the container itself. Call `tear_down_container()` from
+tearDown, alongside `Config_State::reset()`.
+
+Container tests must use `Tests\Support\Test_Container`.
+`lucatume\DI52\Container` implements PSR-11's `ContainerInterface`, not
+StellarWP's, so passing it to `Config::set_container()` is a `TypeError`.
+
 ## Sub-plugin fixtures
 
 `WithSubPlugins` builds a well-formed `Sub_Plugin`, so a test states only the
@@ -57,6 +99,26 @@ $this->make_sub_plugin( [ 'plugin_loaded_constant' => 'ABSORBER_TEST_LOADED_CONS
 
 Overrides are merged last, so a deliberately unusable value still reaches the
 constructor — that is how the tests for rejected config work.
+
+## Bundled plugin fixtures
+
+`WithBundledPlugins` writes the file the load path requires:
+
+```php
+$constant = $this->make_guard_constant();
+$path     = $this->make_bundled_plugin_file( $constant );
+
+// … register, load …
+
+$this->assertSame( 1, $this->bundled_plugin_loads() );
+```
+
+Every call writes a *new* file under a unique name, and every guard constant is
+unique too. Neither is tidiness: `require_once` dedupes by resolved path for
+the lifetime of the PHP process, so a shared fixture lets a later test pass
+without loading anything, and the fixture defines its constant for real, so a
+reused name makes a later sub-plugin read as already loaded. Call
+`remove_bundled_plugin_files()` from tearDown.
 
 A fixture helper cannot be called `make()`, `makeEmpty()`, `construct()`, or
 `constructEmpty()`: those are public methods on `Codeception\Test\Unit`, which
@@ -156,52 +218,59 @@ class Deactivator {
 }
 ```
 
-Assert it like this:
+Assert it through `WithHaltedRedirects`, which owns the whole shape:
 
 ```php
-use Nexcess\PluginAbsorber\Tests\Support\TestException;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
 
 public function test_redirects_back(): void {
-	$redirects = [];
+	$subject = new Deactivator();
 
-	$this->setFunctionReturn(
-		'wp_safe_redirect',
-		static function ( $location ) use ( &$redirects ) {
-			$redirects[] = $location;
-
-			throw new TestException( 'Halted where production calls exit().' );
-		},
-		true
+	$location = $this->capture_redirect(
+		static function () use ( $subject ): void {
+			$subject->redirect_back( 'https://example.test/wp-admin/plugins.php' );
+		}
 	);
 
-	$subject = new Deactivator();
-	$halted  = false;
-
-	try {
-		$subject->redirect_back( 'https://example.test/wp-admin/plugins.php' );
-	} catch ( TestException $e ) {
-		$halted = true;
-
-		$this->assertSame( 'Halted where production calls exit().', $e->getMessage() );
-	}
-
-	$this->assertTrue( $halted, 'The redirect must halt where production calls exit().' );
-	$this->assertSame( [ 'https://example.test/wp-admin/plugins.php' ], $redirects );
+	$this->assertSame( 'https://example.test/wp-admin/plugins.php', $location );
 }
 ```
 
-The `$halted` flag is the part that cannot be dropped. Catching the exception
-without asserting that it actually arrived turns "the code under test never
-redirected at all" into a silent pass — the same class of failure this section
+Two parts of that are easy to drop by hand and silent when dropped, which is
+why they live in the trait rather than in each test body. The `fail()` on the
+line after the action is what turns "the code under test never redirected at
+all" into a failure instead of a pass — the same class of failure this section
 opens by warning about, moved out of `preventExit()` and into the test body.
-Matching on the message as well as the class keeps an unrelated `TestException`
-thrown earlier from satisfying the catch for the wrong reason.
+Matching on the exception's message as well as its class keeps an unrelated
+`TestException` thrown earlier from satisfying the catch for the wrong reason.
 
-A bare `expectException( TestException::class )` is fine when the test only
-cares that the halt happened and asserts nothing about state afterwards. The
-try/catch shape exists so assertions can run after the halt; there is no reason
-to use both mechanisms in one test.
+The trait needs `UopzFunctions` on the same class, for the stub.
 
-`tests/unit/SmokeTest.php` covers this with
-`test_a_stub_can_throw_to_halt_a_code_path`, which is the executable proof that
-a stub really can throw to stop a code path before it reaches `exit`.
+`tests/unit/SmokeTest.php` covers both the mechanism and the trait, with
+`test_a_stub_can_throw_to_halt_a_code_path` and
+`test_the_shared_helper_captures_a_halted_redirect` — the executable proof that
+a stub really can stop a code path before it reaches `exit`, and that the shared
+helper reports it when one does not.
+
+## Expecting `_doing_it_wrong()`
+
+`setExpectedIncorrectUsage()` matches the first argument exactly, which for a
+report made with `__METHOD__` means restating a private method name in the test.
+That name is an implementation detail of where a gate happens to live — moving
+the inline-boot fallback from `Loader` to `Boot\Scheduler` changed it without
+changing anything a host can observe.
+
+`WithIncorrectUsage` registers the expectation from the report itself and
+asserts over what was reported instead:
+
+```php
+$this->expect_incorrect_usage();
+
+$runner->load_all();
+
+$this->assert_the_library_reported_incorrect_usage();
+```
+
+An unexpected report still fails the test, because everything the listener sees
+is recorded and asserted to belong to this library. Call
+`stop_expecting_incorrect_usage()` from tearDown.

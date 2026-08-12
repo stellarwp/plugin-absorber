@@ -59,7 +59,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_the_default_notices_satisfy_the_contract(): void {
-		$this->assertInstanceOf( Queue_Interface::class, new Queue() );
+		$this->assertInstanceOf( Queue_Interface::class, $this->make_queue() );
 	}
 
 	/**
@@ -78,7 +78,7 @@ class QueueTest extends WPTestCase {
 		string $expected,
 		bool $exact
 	): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->{$method}( $this->make_sub_plugin( $overrides ) );
 
 		$queue = $this->queue();
@@ -159,7 +159,7 @@ class QueueTest extends WPTestCase {
 	 * already happened, the other asks the user to do it. Sharing a default would be wrong.
 	 */
 	public function test_the_merge_and_conflict_defaults_differ(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_conflict_notice( $this->make_sub_plugin() );
 
@@ -169,7 +169,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_a_configured_message_is_used_for_both_conflict_types(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Ours.' ] )
 		);
@@ -184,7 +184,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_queueing_the_same_slug_and_type_twice_does_not_duplicate(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
@@ -192,7 +192,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_one_slug_can_hold_notices_of_different_types(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_dependency_notice( $this->make_sub_plugin() );
 
@@ -200,7 +200,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_different_slugs_do_not_collide(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 		$notices->queue_merge_notice( $this->make_sub_plugin( [ 'slug' => 'give-fee-recovery' ] ) );
 
@@ -212,7 +212,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_dismissible_markup(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
@@ -230,7 +230,7 @@ class QueueTest extends WPTestCase {
 	 * @param string $class  Expected `notice-*` class.
 	 */
 	public function test_render_uses_the_severity_of_the_notice_type( string $method, string $class ): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->{$method}(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Something happened.' ] )
 		);
@@ -251,7 +251,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_render_strips_a_script_from_the_message(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Careful.<script>alert(1)</script>' ] )
 		);
@@ -270,7 +270,7 @@ class QueueTest extends WPTestCase {
 	 * typically — while the event handler a message must never be able to ship is stripped.
 	 */
 	public function test_render_keeps_a_link_but_not_an_event_handler(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin(
 				[ 'conflict_notice_message' => static fn() => 'See <a href="https://example.com" onclick="alert(1)">the docs</a>.' ]
@@ -284,7 +284,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_render_clears_the_queue(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->render_to_string( $notices );
@@ -294,7 +294,7 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_every_queued_notice(): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'First.' ] )
 		);
@@ -309,13 +309,13 @@ class QueueTest extends WPTestCase {
 	}
 
 	public function test_render_outputs_nothing_when_the_queue_is_empty(): void {
-		$this->assertSame( '', $this->render_to_string( new Queue() ) );
+		$this->assertSame( '', $this->render_to_string( $this->make_queue() ) );
 	}
 
 	/**
 	 * Where notices are kept is a constructor argument, so a host can move the queue somewhere else
-	 * without also taking on how notices are worded or drawn. Both arguments default, so
-	 * `new Queue()` — which is what Loader::resolve() builds — is unaffected.
+	 * without also taking on how notices are worded or drawn. Both arguments are required and both
+	 * are bound by `Provider`, so a host rebinds the store rather than subclassing the queue.
 	 */
 	public function test_a_replacement_store_is_used_instead_of_the_option(): void {
 		$store = new class() extends Store {
@@ -349,7 +349,7 @@ class QueueTest extends WPTestCase {
 			}
 		};
 
-		( new Queue( $store ) )->queue_merge_notice(
+		$this->make_queue( $store )->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
 
@@ -372,7 +372,7 @@ class QueueTest extends WPTestCase {
 			}
 		};
 
-		$notices = new Queue( null, $renderer );
+		$notices = $this->make_queue( null, $renderer );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertSame( '<p class="mine">1</p>', $this->render_to_string( $notices ) );
@@ -400,7 +400,7 @@ class QueueTest extends WPTestCase {
 			}
 		};
 
-		$notices = new Queue( null, $renderer );
+		$notices = $this->make_queue( null, $renderer );
 		$notices->queue_merge_notice( $this->make_sub_plugin() );
 
 		wp_set_current_user( $this->create_user( 'subscriber' ) );
@@ -420,7 +420,7 @@ class QueueTest extends WPTestCase {
 	 * @param string|null $role Role to render as, or null for a logged-out visitor.
 	 */
 	public function test_render_does_nothing_for_a_user_who_cannot_activate_plugins( ?string $role ): void {
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
@@ -450,7 +450,7 @@ class QueueTest extends WPTestCase {
 			$this->markTestSkipped( 'Outside multisite an administrator simply has activate_plugins.' );
 		}
 
-		$notices = new Queue();
+		$notices = $this->make_queue();
 		$notices->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
@@ -469,7 +469,7 @@ class QueueTest extends WPTestCase {
 	 * transient-backed design this class exists to avoid.
 	 */
 	public function test_the_queue_is_a_durable_database_row(): void {
-		( new Queue() )->queue_merge_notice(
+		$this->make_queue()->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
 
@@ -481,7 +481,7 @@ class QueueTest extends WPTestCase {
 
 		wp_cache_flush();
 
-		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( new Queue() ) );
+		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( $this->make_queue() ) );
 	}
 
 	/**
@@ -495,7 +495,7 @@ class QueueTest extends WPTestCase {
 	public function test_render_ignores_anything_that_is_not_a_message( $stored, ?string $present, array $absent ): void {
 		$this->seed_queue( $stored );
 
-		$output = $this->render_to_string( new Queue() );
+		$output = $this->render_to_string( $this->make_queue() );
 
 		if ( $present === null ) {
 			$this->assertSame( '', $output );
@@ -544,7 +544,7 @@ class QueueTest extends WPTestCase {
 	public function test_a_corrupted_queue_heals_on_the_next_write(): void {
 		$this->seed_queue( [ 'a:merge' => [ 'nested' ] ] );
 
-		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
+		$this->make_queue()->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertSame( [ 'give-recurring:merge' ], array_keys( $this->queue() ) );
 	}
@@ -555,7 +555,7 @@ class QueueTest extends WPTestCase {
 
 		$this->assertSame( self::OPTION_FOR_OTHER_PREFIX, Queue::option_name() );
 
-		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
+		$this->make_queue()->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertIsArray( get_site_option( self::OPTION_FOR_OTHER_PREFIX, false ) );
 		$this->assertFalse( $this->queue_exists() );
@@ -566,7 +566,7 @@ class QueueTest extends WPTestCase {
 
 		$this->expectException( Config_Exception::class );
 
-		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
+		$this->make_queue()->queue_merge_notice( $this->make_sub_plugin() );
 	}
 
 	/**
@@ -578,7 +578,7 @@ class QueueTest extends WPTestCase {
 			$this->markTestSkipped( 'Network options are not part of the per-site autoload bundle.' );
 		}
 
-		( new Queue() )->queue_merge_notice( $this->make_sub_plugin() );
+		$this->make_queue()->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertNotContains( self::OPTION, array_keys( wp_load_alloptions() ) );
 	}
@@ -673,6 +673,22 @@ class QueueTest extends WPTestCase {
 		}
 
 		return $user_id;
+	}
+
+	/**
+	 * The queue as the container builds it, or with one half replaced.
+	 *
+	 * Both collaborators are required arguments — nothing in `src/` defaults a collaborator to a
+	 * `new` of its own any more — so the standard pair is spelled out once here rather than in every
+	 * test that only cares about what a notice says.
+	 *
+	 * @param Store|null    $store    Where the queue is kept.
+	 * @param Renderer|null $renderer How a queued notice is drawn.
+	 *
+	 * @return Queue
+	 */
+	private function make_queue( ?Store $store = null, ?Renderer $renderer = null ): Queue {
+		return new Queue( $store ?? new Store(), $renderer ?? new Renderer() );
 	}
 
 	private function render_to_string( Queue $notices ): string {

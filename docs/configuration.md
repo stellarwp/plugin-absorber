@@ -6,7 +6,7 @@
 use Nexcess\PluginAbsorber\Config;
 
 Config::set_hook_prefix( 'give' );          // required — keys hooks and options
-Config::set_container( give()->container ); // optional — lets you rebind collaborators
+Config::set_container( give()->container ); // required — every collaborator resolves from it
 ```
 
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
@@ -14,36 +14,55 @@ The hook prefix accepts letters, numbers, hyphens, and underscores. Anything els
 option names lowercase it and turn hyphens into underscores, so `Give-Core` hooks
 `Give-Core/plugin_absorber/should_load` and stores `give_core_plugin_absorber_notices`.
 
-The container is optional. Without one, the library instantiates its own collaborators; with one,
-a host can rebind them.
+## The container
+
+Both calls are required, and both belong at `plugins_loaded` priority 0, in your own container
+block rather than in a service provider.
+
+Any implementation of StellarWP's `ContainerInterface` will do — the one your plugin already hands
+to Telemetry, Uplink or Harbor. `Config::get_container()` throws `Config_Exception` when none is
+set; `Config::has_container()` is the probe if you need to ask.
+
+Priority matters twice. Conflict resolution runs at `plugins_loaded` priority 1 and the load at
+priority 2, and WordPress silently ignores a callback added at or past the priority it is already
+dispatching — so configuring us from a provider that itself runs at priority 1 races us. And a host
+that builds its container lazily may *replace* it at priority 0; hand us the container before that
+happens and we hold an orphan whose bindings were discarded.
 
 ## Rebinding a collaborator
 
-Every collaborator is interface-backed. With a container set, bind one to override the library
-globally; with no container, the defaults are used and nothing is required.
+`Loader::boot()` binds the defaults, and skips any id your container already has — so your binding
+wins whether you make it before boot or after, and nothing is resolved until `plugins_loaded`
+priority 1 in any case:
 
 ```php
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 
 $container->singleton( Registrar_Interface::class, My_Registrar::class );
-Config::set_container( $container );
 ```
 
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
 | `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
+| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
+| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
 
-`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter: it may
-come before or after your `Loader::register()` calls, so long as it comes before boot. Registering
-buffers the sub-plugin and resolves nothing, so nothing is decided until the first read.
+`Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
+`site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
+`is_plugin_active()` then does not report what is in the database.
+
+`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
+the configuration calls: it may come before or after your `Loader::register()` calls, so long as it
+comes before boot. Registering buffers the sub-plugin and resolves nothing, so nothing is decided
+until the first read.
 
 A binding that does not implement the interface it is bound to throws `Config_Exception` when it is
 resolved, rather than being cached and failing later somewhere less obvious. So does a binding whose
 factory throws — with the original failure kept as the previous exception.
 
-The container is **not** used to wire hooks — those stay plain static callbacks, so the container
-stays genuinely optional.
+The container is **not** used to wire hooks. Those are closures that resolve when they fire, so
+registering them instantiates nothing and a request that triggers none builds none.
 
 ## Sub-plugin keys
 

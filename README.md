@@ -22,23 +22,32 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Loader;
 
 add_action( 'plugins_loaded', function () {
-    Config::set_hook_prefix( 'give' );          // required — keys the hooks and options
-    Config::set_container( give()->container ); // optional — lets you rebind collaborators
+    Config::set_hook_prefix( 'give' );            // required — keys the hooks and options
+    Config::set_container( give()->container );   // required — every collaborator resolves from it
 
     Loader::register( [
-        'slug'                       => 'give-stripe',
-        'bundled_plugin_file'        => __DIR__ . '/sub-plugins/give-stripe/give-stripe.php',
-        'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
-        'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
+        'slug'                       => 'give-recurring',
+        'bundled_plugin_file'        => __DIR__ . '/sub-plugins/recurring/give-recurring.php',
+        'plugin_loaded_constant'     => 'GIVE_RECURRING_VERSION',
+        'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
     ] );
 
     Loader::boot();
 }, 0 );
 ```
 
-Keep the `, 0`: `boot()` wires the load at `plugins_loaded` priority 2, and WordPress silently
-ignores a callback added at or past the priority it is already dispatching. Booting later is
-reported through `_doing_it_wrong()` and loaded inline, but the ordering guarantees are weaker.
+The container is required — any StellarWP `ContainerInterface` implementation, the one you already
+hand to Telemetry or Uplink. Every collaborator comes from it.
+
+Keep the `, 0`. `boot()` wires the load at `plugins_loaded` priority 2, and WordPress silently
+ignores a callback added at or past the priority it is already dispatching — so configuring the
+library from a provider that itself runs at priority 2 or later races the library it is configuring.
+Booting later is reported through `_doing_it_wrong()` and loaded inline, but the ordering guarantees
+are weaker.
+
+Put this in the block that owns your container, not in a service provider, and pass the container you
+intend to keep: a host that builds one lazily and replaces it later leaves us holding an orphan whose
+bindings were discarded.
 
 ## Docs
 

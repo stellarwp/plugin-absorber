@@ -30,3 +30,8 @@ It is consulted only for a sub-plugin that would otherwise have loaded — after
 the guard constant, the dependency check and the file check, in that order. So returning `true`
 cannot force a load past the guard constant: nothing overrides that. Anything other than a truthy
 return skips the load, which is the safe direction.
+
+**Watch the polarity when you wire an existing gate to this one.** `should_load` is true means *do
+load*. A host filter named for the opposite — LearnDash's `learndash_module_{x}_disabled`, where true
+means *do not load* — inverts the gate if it is passed through unnegated, and the failure is silent
+in the direction that loads a plugin the site turned off.
