@@ -52,6 +52,31 @@ trait WithBundledPlugins {
 	}
 
 	/**
+	 * Write a bundled plugin that throws as it is included, the way a broken build does.
+	 *
+	 * It counts its load first, so a test can tell "the require never happened" from "the require
+	 * happened and the file threw".
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return string
+	 */
+	protected function make_throwing_bundled_plugin_file(): string {
+		$path = sys_get_temp_dir() . '/absorber-' . uniqid( '', true ) . '.php';
+
+		file_put_contents(
+			$path,
+			'<?php' . PHP_EOL
+			. '$GLOBALS["absorber_loads"] = ( $GLOBALS["absorber_loads"] ?? 0 ) + 1;' . PHP_EOL
+			. 'throw new \RuntimeException( "the bundled plugin could not start" );' . PHP_EOL
+		);
+
+		$this->bundled_plugin_files[] = $path;
+
+		return $path;
+	}
+
+	/**
 	 * A guard constant name no other test can collide with.
 	 *
 	 * The fixture defines its constant for real, and a `define()` lasts for the whole PHP process: a

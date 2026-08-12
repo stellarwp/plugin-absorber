@@ -162,7 +162,19 @@ final class Absorber {
 			return;
 		}
 
-		self::notices()->render();
+		// The queue is a rebindable seam and the messages inside it are host callables, so rendering
+		// runs somebody else's code -- on all_admin_notices, which every admin screen fires. A throw
+		// out of here would white-screen wp-admin, which is exactly where a site owner would go to
+		// undo whatever caused it. The notice is worth less than the screen it would be read on.
+		try {
+			self::notices()->render();
+		} catch ( Throwable $thrown ) {
+			_doing_it_wrong(
+				self::class . '::render_notices',
+				sprintf( 'The notices could not be rendered: %s', $thrown->getMessage() ),
+				'1.0.0'
+			);
+		}
 	}
 
 	/**

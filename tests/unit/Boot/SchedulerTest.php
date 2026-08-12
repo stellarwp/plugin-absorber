@@ -16,6 +16,7 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
+use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -28,6 +29,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithRequestMethod;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUsers;
 use ReflectionClass;
+use RuntimeException;
 use WP_Hook;
 
 /**
@@ -162,6 +164,48 @@ class SchedulerTest extends WPTestCase {
 	 * much room a host has to configure the library in. Priority 5 leaves 0 through 4, which covers
 	 * booting at 0 as documented and the priority-1 habit LearnDash and MemberDash already have.
 	 */
+	/**
+	 * The outermost guarantee, and the reason it lives here rather than in each pass: whatever a step
+	 * reaches — a collaborator a host's factory could not build, a gate, a probe, a pass that got past
+	 * its own guard — `plugins_loaded` fires on every request a site serves, and a throw out of it is
+	 * a white screen on all of them. Each step is reported and abandoned on its own, so the step
+	 * behind it still runs.
+	 *
+	 * @dataProvider throwing_steps
+	 *
+	 * @param string $id Binding the step resolves, bound to a factory that throws.
+	 */
+	public function test_a_step_that_throws_cannot_end_the_request( string $id ): void {
+		$this->expect_incorrect_usage();
+
+		Absorber::boot();
+
+		// After boot, because `Provider::bind_once()` rebinds a class id whatever a host put there
+		// first -- it cannot tell a deliberate binding from a container's willingness to autowire the
+		// class. Bound before it, this factory would be replaced by the real collaborator and the step
+		// would run perfectly well.
+		$this->container()->singleton(
+			$id,
+			static function (): object {
+				throw new RuntimeException( 'the host factory needed a database connection' );
+			}
+		);
+
+		do_action( 'plugins_loaded' );
+
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * Both steps, because a guard on one of them leaves the other able to end the request.
+	 *
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function throwing_steps(): Generator {
+		yield 'the conflict step' => [ Gatekeeper::class ];
+		yield 'the load step'     => [ Loader::class ];
+	}
+
 	public function test_the_conflict_step_runs_before_the_load_step(): void {
 		$this->assertSame( 5, self::resolve_priority() );
 		$this->assertLessThan( self::load_priority(), self::resolve_priority() );

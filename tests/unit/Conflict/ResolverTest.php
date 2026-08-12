@@ -30,7 +30,9 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithRequestMethod;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
+use RuntimeException;
 
 /**
  * What the default resolver does once a conflict has been found, policy branch by policy branch.
@@ -56,6 +58,7 @@ class ResolverTest extends WPTestCase {
 	use WithContainer;
 	use WithHaltedRedirects;
 	use WithNoticeQueue;
+	use WithIncorrectUsage;
 	use WithRequestMethod;
 	use WithSubPlugins;
 
@@ -127,6 +130,7 @@ class ResolverTest extends WPTestCase {
 			$_SERVER['REQUEST_URI'] = $this->request_uri;
 		}
 
+		$this->stop_expecting_incorrect_usage();
 		$this->restore_request_method();
 		$this->clear_notices();
 		Absorber_State::reset();
@@ -190,6 +194,35 @@ class ResolverTest extends WPTestCase {
 			Absorber::registrar()->all(),
 			'Nothing was ever registered: the whole run came off the injected reader.'
 		);
+	}
+
+	/**
+	 * The policy may be a host callable, the notice message is another, and `deactivate_plugins()`
+	 * runs the standalone's own deactivation hook — all of it arbitrary code, all of it inside
+	 * `plugins_loaded`. A throw from one sub-plugin must not cost the site the admin screen it would
+	 * be fixed from, nor leave a second standalone running with nothing said about it.
+	 */
+	public function test_a_sub_plugin_that_throws_does_not_stop_the_others(): void {
+		$this->expect_incorrect_usage();
+		$this->standalone_is( true );
+
+		$this->register(
+			[
+				'conflict_policy' => static function (): string {
+					throw new RuntimeException( 'the policy option could not be read' );
+				},
+			]
+		);
+		$this->register_fee_recovery();
+
+		$this->capture_resolution();
+
+		$this->assertSame(
+			[ 'give-fee-recovery/give-fee-recovery.php' ],
+			array_column( $this->deactivations, 'plugins' ),
+			'The sub-plugin behind the one that threw still has to be resolved.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
 	}
 
 	public function test_the_collaborators_come_from_the_container(): void {
@@ -666,7 +699,14 @@ class ResolverTest extends WPTestCase {
 		);
 	}
 
-	public function test_resolve_all_needs_a_hook_prefix(): void {
+	/**
+	 * Without a prefix there is no notice to raise, so there is no honest way to explain a
+	 * deactivation to the site owner — and this runs inside `plugins_loaded`, where throwing is not
+	 * an option however wrong the host's bootstrap is. It stands down whole rather than turning a
+	 * plugin off and going quiet, which is what the load pass does with the same missing prefix.
+	 */
+	public function test_it_stands_down_without_a_hook_prefix(): void {
+		$this->expect_incorrect_usage();
 		$this->standalone_is( true );
 		$this->register();
 
@@ -674,13 +714,18 @@ class ResolverTest extends WPTestCase {
 		$container = $this->container();
 
 		// The prefix goes, the container stays: this is about the missing prefix, and a resolver that
-		// could not reach its registrar would throw the same exception for the other reason.
+		// could not reach its registrar would stand down for the other reason.
 		Config_State::reset();
 		Config::set_container( $container );
 
-		$this->expectException( Config_Exception::class );
+		$this->without_ending_the_request(
+			static function () use ( $resolver ): void {
+				$resolver->resolve_all();
+			}
+		);
 
-		$resolver->resolve_all();
+		$this->assertSame( [], $this->deactivations, 'Nothing may be turned off that cannot be explained.' );
+		$this->assert_the_library_reported_incorrect_usage();
 	}
 
 	/**

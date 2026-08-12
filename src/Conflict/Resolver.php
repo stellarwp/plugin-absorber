@@ -12,6 +12,8 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Throwable;
 
 /**
  * Default conflict resolution: act on each conflicting sub-plugin per its policy.
@@ -32,6 +34,8 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * @since 1.0.0
  */
 class Resolver implements Resolver_Interface {
+	use Guards_Hook_Prefix;
+
 	/**
 	 * @since 1.0.0
 	 *
@@ -98,18 +102,46 @@ class Resolver implements Resolver_Interface {
 	 * @return void
 	 */
 	public function resolve_all(): void {
+		// Every notice this pass raises is keyed and filtered by the host's prefix, so without one
+		// there is no way to tell the site owner why a plugin of theirs went off. Standing down whole
+		// is the honest answer -- deactivating first and failing to explain it is worse than leaving
+		// the conflict for the request after the host fixes its bootstrap -- and it is what the load
+		// pass at the next priority does with the same missing prefix.
+		if ( ! self::has_hook_prefix() ) {
+			return;
+		}
+
 		$deactivated = false;
 
 		// The reader rather than a registrar of our own: it drains the registrations still buffered
 		// on the facade before it reads, and a registrar asked directly would miss anything
 		// registered since the last read.
 		foreach ( $this->registry->all() as $sub_plugin ) {
-			if ( ! $this->detector->is_in_conflict( $sub_plugin ) ) {
-				continue;
-			}
+			// The policy may be a host callable behind a filter any plugin on the site may have
+			// hooked, the notice message is another callable, and deactivate_plugins() runs the
+			// standalone's own deactivation hook -- so this loop calls arbitrary code, from inside
+			// plugins_loaded, on an admin page view. A throw out of here would take away the screen
+			// the site owner would have used to undo whatever caused it, and would leave a second
+			// standalone running with nothing said about it. Reported per sub-plugin, and the next
+			// one is still resolved.
+			try {
+				if ( ! $this->detector->is_in_conflict( $sub_plugin ) ) {
+					continue;
+				}
 
-			if ( $this->resolve( $sub_plugin ) ) {
-				$deactivated = true;
+				if ( $this->resolve( $sub_plugin ) ) {
+					$deactivated = true;
+				}
+			} catch ( Throwable $thrown ) {
+				_doing_it_wrong(
+					self::class,
+					sprintf(
+						'The conflict for "%s" threw while being resolved, so it was abandoned: %s',
+						$sub_plugin->get_slug(),
+						$thrown->getMessage()
+					),
+					'1.0.0'
+				);
 			}
 		}
 

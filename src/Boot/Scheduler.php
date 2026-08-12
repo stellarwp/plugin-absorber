@@ -12,6 +12,7 @@ use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
+use Throwable;
 use WP_Hook;
 
 /**
@@ -160,7 +161,7 @@ class Scheduler {
 			[
 				'priority' => self::LOAD_PRIORITY,
 				'run'      => static function () use ( $container ): void {
-					$container->get( Loader::class )->load_all();
+					self::load( $container );
 				},
 			],
 		];
@@ -179,23 +180,23 @@ class Scheduler {
 	 * @return void
 	 */
 	private static function resolve_conflicts( ContainerInterface $container ): void {
-		$gatekeeper = $container->get( Gatekeeper::class );
-
-		// The shape of the request first. It reads the request and nothing else, so cron, WP-CLI, a
-		// POST and every front-end view are turned away having resolved no user and built no
-		// resolver.
-		if ( ! $gatekeeper->request_may_resolve() ) {
-			return;
-		}
-
 		try {
+			$gatekeeper = $container->get( Gatekeeper::class );
+
+			// The shape of the request first. It reads the request and nothing else, so cron, WP-CLI, a
+			// POST and every front-end view are turned away having resolved no user and built no
+			// resolver.
+			if ( ! $gatekeeper->request_may_resolve() ) {
+				return;
+			}
+
 			// Then whether there is a conflict at all, before anyone asks who is signed in.
 			// current_user_can() resolves and caches the current user, and this step runs at
-			// plugins_loaded priority 5 -- ahead of the plugins that add their
-			// determine_current_user filter from a plugins_loaded callback of their own. Ask on
-			// every admin GET and an SSO or JWT visitor is pinned as logged out for the rest of the
-			// request, on requests with nothing to resolve. The detector reports and changes
-			// nothing, so the capability is only asked for where its answer decides something.
+			// plugins_loaded priority 5 -- ahead of the plugins that add their determine_current_user
+			// filter from a plugins_loaded callback of their own. Ask on every admin GET and an SSO or
+			// JWT visitor is pinned as logged out for the rest of the request, on requests with nothing
+			// to resolve. The detector reports and changes nothing, so the capability is only asked for
+			// where its answer decides something.
 			if ( ! $container->get( Detector::class )->has_conflict() ) {
 				return;
 			}
@@ -209,12 +210,10 @@ class Scheduler {
 			// only on the request that goes on to use it.
 			$container->get( Resolver_Interface::class )->resolve_all();
 		} catch ( Config_Exception $exception ) {
-			// Reading the registry is where a duplicate slug, a missing container and an unusable
-			// binding all surface, and this step reads it a priority ahead of the load pass that has
-			// always guarded the same read. Letting one out here is worse than letting it out there:
-			// the request gate means the only requests that reach this are admin page views, so the
-			// fatal would land on precisely the screens the mistaken registration could be corrected
-			// from. Reported to the developer, and the conflict pass abandoned, instead.
+			// Reading the registry is where a duplicate slug surfaces, and this step reads it a
+			// priority ahead of the load pass that has always guarded the same read. Named separately
+			// from the catch below because it is the one failure here a developer can act on directly,
+			// and the message says which.
 			_doing_it_wrong(
 				self::class,
 				sprintf(
@@ -223,7 +222,54 @@ class Scheduler {
 				),
 				'1.0.0'
 			);
+		} catch ( Throwable $thrown ) {
+			// The backstop, and the promise the whole library rests on: plugins_loaded fires on every
+			// request a site serves, so a throw out of a step is a white screen on all of them. What
+			// reaches here is a collaborator a host's factory could not build, a gate, the probe, or a
+			// resolver a host bound itself -- the passes guard their own per-sub-plugin loops, and this
+			// guards everything the step touches on the way to them.
+			self::report_a_step_that_threw( 'conflict pass', 'no conflict was resolved', $thrown );
 		}
+	}
+
+	/**
+	 * The load step.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param ContainerInterface $container Container the load pass is resolved from.
+	 *
+	 * @return void
+	 */
+	private static function load( ContainerInterface $container ): void {
+		// Guarded like the conflict step, and for the same reason. `Loader::load_all()` already reports
+		// per sub-plugin and carries on, so what is left for this to catch is the pass itself -- a
+		// container that cannot build it above all, which is the shape a host's own broken binding
+		// takes.
+		try {
+			$container->get( Loader::class )->load_all();
+		} catch ( Throwable $thrown ) {
+			self::report_a_step_that_threw( 'load pass', 'no sub-plugin was loaded', $thrown );
+		}
+	}
+
+	/**
+	 * Tell the developer which step was abandoned, and why.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string    $step        Step that threw, named as the sequence names it.
+	 * @param string    $consequence What the site got instead.
+	 * @param Throwable $thrown      What came out of the step.
+	 *
+	 * @return void
+	 */
+	private static function report_a_step_that_threw( string $step, string $consequence, Throwable $thrown ): void {
+		_doing_it_wrong(
+			self::class,
+			sprintf( 'The %s threw, so %s: %s', $step, $consequence, $thrown->getMessage() ),
+			'1.0.0'
+		);
 	}
 
 	/**
