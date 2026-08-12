@@ -49,6 +49,7 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |
+| `Contracts\Activator_Interface` | `Activator` | Runs a sub-plugin's activation callback once, ever. |
 
 `Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
@@ -106,6 +107,29 @@ reads first reports it with `_doing_it_wrong()`, and that request resolves no co
 sub-plugin at all, rather than throwing out of a core hook. A config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+
+## Activation
+
+A bundled plugin is `require_once`d, not activated, so `register_activation_hook()` never fires for
+it — whatever that hook would have done, creating a table or seeding options, would otherwise never
+happen at all. [`activation_callback`](#sub-plugin-keys) fills that gap:
+
+```php
+'activation_callback' => static function ( Sub_Plugin $sub_plugin ) {
+    \Give\Recurring\Install::create_tables();
+},
+```
+
+It runs exactly once ever per slug, is passed the `Sub_Plugin`, and runs only after a require that
+actually happened — never for a sub-plugin whose load was skipped, because a schema appearing for a
+plugin that is not loaded is worse than no schema at all.
+
+The record lives in the `{option_prefix}_plugin_absorber_activations` option, a network option on
+multisite for the same reason the [notice queue](notices.md) is one: `deactivate_plugins()` is
+network-wide, so a merge that happened network-wide must not re-run the callback on every site. The
+slug is recorded *after* the callback returns, so a callback that fails is retried on the next
+request rather than marked done and silently skipped forever. Bind `Activator_Interface` to record
+"once, ever" somewhere else — your own migration table, say.
 
 ## The bundled file is included from a function, not from global scope
 

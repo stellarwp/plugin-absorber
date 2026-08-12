@@ -5,6 +5,7 @@
 
 namespace Nexcess\PluginAbsorber;
 
+use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
@@ -14,8 +15,8 @@ use Throwable;
  * The load pass: every registered sub-plugin, in registration order, gated one at a time.
  *
  * Separate from `Absorber` because it is the one thing here that runs rather than configures. It is
- * reached from a hook, it needs the notice queue, and it is the piece a host is likeliest to want
- * to watch or replace — none of which is true of registration.
+ * reached from a hook, it needs the notice queue and the activator, and it is the piece a host is
+ * likeliest to want to watch or replace — none of which is true of registration.
  *
  * @since 1.0.0
  */
@@ -39,12 +40,25 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Registry_Reader $registry Which sub-plugins are registered.
-	 * @param Queue_Interface $notices  Where a sub-plugin that could not load says so.
+	 * @var Activator_Interface
 	 */
-	public function __construct( Registry_Reader $registry, Queue_Interface $notices ) {
-		$this->registry = $registry;
-		$this->notices  = $notices;
+	private $activator;
+
+	/**
+	 * @since 1.0.0
+	 *
+	 * @param Registry_Reader     $registry  Which sub-plugins are registered.
+	 * @param Queue_Interface     $notices   Where a sub-plugin that could not load says so.
+	 * @param Activator_Interface $activator Runs the activation callback of one that did.
+	 */
+	public function __construct(
+		Registry_Reader $registry,
+		Queue_Interface $notices,
+		Activator_Interface $activator
+	) {
+		$this->registry  = $registry;
+		$this->notices   = $notices;
+		$this->activator = $activator;
 	}
 
 	/**
@@ -180,5 +194,12 @@ class Loader {
 		// file are function-local as a result -- documented for hosts, because no amount of
 		// wrapping here can hand a required file the global scope it would have had.
 		require_once $file;
+
+		// Only after a require that actually happened. A bundled plugin is included rather than
+		// activated, so register_activation_hook() never fires for it and whatever that hook would
+		// have done -- creating a table, seeding options -- would never happen at all. Running it
+		// for a sub-plugin that was skipped would be worse: the schema would appear for a plugin
+		// that is not loaded.
+		$this->activator->maybe_run( $sub_plugin );
 	}
 }

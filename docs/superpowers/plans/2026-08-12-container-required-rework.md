@@ -287,7 +287,7 @@ level 9, so most breakage surfaces from `composer test:analysis` without standin
 
 ### Task 13 — `13-activation`
 
-- [ ] `Activation` → `Activator`, `Activation_Interface` → `Activator_Interface`; constructor injection; bind in `Provider`.
+- [x] `Activation` → `Activator`, `Activation_Interface` → `Activator_Interface`; constructor injection; bind in `Provider`.
 
 ### Task 14 — `14-activation-error-rewrite`
 
