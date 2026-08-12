@@ -8,16 +8,20 @@
 namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Notices\Store;
 
 /**
  * One shared way to read and clear the queue, for every test that only cares about what landed in it.
  *
- * The name comes from `Queue::option_name()` rather than from a literal, because the literal was
+ * The name comes from the bound `Notices\Store` rather than from a literal, because the literal was
  * copied into three unrelated test classes: renaming the option — or the segment `Config` builds
  * between the host's prefix and the key — then means finding all of them, and the one that is missed
  * asserts against an option nothing writes, which reads as "no notice was queued" rather than as a
  * failure to keep up.
+ *
+ * The store rather than the queue, deliberately: this reads where the *default* queue keeps its
+ * notices, so a test that binds its own queue and then finds nothing here has learnt something.
  *
  * A test *about* the name pins it against a literal instead, and keeps its own reader. Reading it
  * from here as well would move both sides of that assertion together.
@@ -84,7 +88,9 @@ trait WithNoticeQueue {
 	 */
 	private function notice_option_name(): ?string {
 		try {
-			return Queue::option_name();
+			$store = Config::get_container()->get( Store::class );
+
+			return $store instanceof Store ? $store->option_name() : null;
 		} catch ( Config_Exception $exception ) {
 			return null;
 		}
