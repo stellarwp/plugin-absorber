@@ -10,6 +10,7 @@ use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
@@ -66,6 +67,7 @@ final class Provider implements Provider_Interface {
 		$this->bind_once( Registrar_Interface::class, Registrar::class );
 		$this->bind_once( Plugin_Checker_Interface::class, Plugin_Checker::class );
 		$this->bind_once( Plugin_Deactivator_Interface::class, Plugin_Deactivator::class );
+		$this->bind_once( Activator_Interface::class, Activator::class );
 		$this->bind_once( Store::class );
 		$this->bind_once( Renderer::class );
 		$this->bind_once( Redirector::class );
@@ -96,7 +98,10 @@ final class Provider implements Provider_Interface {
 		$this->bind_once(
 			Runner::class,
 			static function () use ( $container ): Runner {
-				return new Runner( $container->get( Queue_Interface::class ) );
+				return new Runner(
+					$container->get( Queue_Interface::class ),
+					$container->get( Activator_Interface::class )
+				);
 			}
 		);
 
