@@ -6,6 +6,10 @@
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Boot\Scheduler;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
+use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
+use Nexcess\PluginAbsorber\Conflict\Redirector;
+use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
@@ -64,6 +68,8 @@ final class Provider implements Provider_Interface {
 		$this->bind_once( Plugin_Deactivator_Interface::class, Plugin_Deactivator::class );
 		$this->bind_once( Store::class );
 		$this->bind_once( Renderer::class );
+		$this->bind_once( Redirector::class );
+		$this->bind_once( Gatekeeper::class );
 
 		// Explicit factories rather than a class name for everything with a constructor argument:
 		// container-contract promises `bind`, `get`, `has` and `singleton` and nothing about
@@ -72,6 +78,18 @@ final class Provider implements Provider_Interface {
 			Queue_Interface::class,
 			static function () use ( $container ): Queue {
 				return new Queue( $container->get( Store::class ), $container->get( Renderer::class ) );
+			}
+		);
+
+		$this->bind_once(
+			Resolver_Interface::class,
+			static function () use ( $container ): Resolver {
+				return new Resolver(
+					$container->get( Plugin_Checker_Interface::class ),
+					$container->get( Plugin_Deactivator_Interface::class ),
+					$container->get( Queue_Interface::class ),
+					$container->get( Redirector::class )
+				);
 			}
 		);
 

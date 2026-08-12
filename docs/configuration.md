@@ -47,10 +47,18 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |
 
 `Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
 `is_plugin_active()` then does not report what is in the database.
+
+Rebinding `Resolver_Interface` does not put you in charge of *when* resolution may run. Both gates —
+[an interactive admin `GET`, and the `activate_plugins`
+capability](conflict-handling.md#when-resolution-runs) — live in `Conflict\Gatekeeper`, which the
+hook consults before it resolves the resolver at all, so an implementation that never thought about
+either is still safe. Everything the resolver *does* — which policy branch, what the notice says,
+where the user lands — is yours.
 
 `set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
 the configuration calls: it may come before or after your `Loader::register()` calls, so long as it

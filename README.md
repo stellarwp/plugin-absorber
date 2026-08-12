@@ -39,11 +39,11 @@ add_action( 'plugins_loaded', function () {
 The container is required — any StellarWP `ContainerInterface` implementation, the one you already
 hand to Telemetry or Uplink. Every collaborator comes from it.
 
-Keep the `, 0`. `boot()` wires the load at `plugins_loaded` priority 2, and WordPress silently
-ignores a callback added at or past the priority it is already dispatching — so configuring the
-library from a provider that itself runs at priority 2 or later races the library it is configuring.
-Booting later is reported through `_doing_it_wrong()` and loaded inline, but the ordering guarantees
-are weaker.
+Keep the `, 0`. `boot()` wires conflict resolution at `plugins_loaded` priority 1 and the load at
+priority 2, and WordPress silently ignores a callback added at or past the priority it is already
+dispatching — so configuring the library from a provider that itself runs at priority 1, which is
+where several hosts wire their container today, races the library it is configuring. Booting later is
+reported through `_doing_it_wrong()` and loaded inline, but the ordering guarantees are weaker.
 
 Put this in the block that owns your container, not in a service provider, and pass the container you
 intend to keep: a host that builds one lazily and replaces it later leaves us holding an orphan whose
@@ -53,7 +53,7 @@ bindings were discarded.
 
 - [Installing](docs/installing.md) — Composer, Strauss, and the constants Strauss must leave alone.
 - [Configuration](docs/configuration.md) — the hook prefix, the container, every sub-plugin key.
-- [Conflict handling](docs/conflict-handling.md) — the policies, the load guard, and its limits.
+- [Conflict handling](docs/conflict-handling.md) — the policies, when they run, and the guard's limits.
 - [Filters](docs/filters.md) — the runtime overrides for policies and notice text.
 - [Notices](docs/notices.md) — where the queue lives, who may see it, and how to render it yourself.
 

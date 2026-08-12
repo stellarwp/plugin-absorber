@@ -118,8 +118,8 @@ it is di52-only: `stellarwp/container-contract` declares `bind`, `get`, `has` an
 nothing else. `[ $resolved_object, 'method' ]` is the other wrong answer — it forces every
 collaborator to be built at boot.
 
-`Loader` keeps the public surface. `registrar()` and `notices()` are one-line delegations to
-`$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
+`Loader` keeps the public surface. `registrar()`, `notices()` and `resolver()` are one-line
+delegations to `$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
 depends on the peer it was handed rather than on the facade.
 
 `Sub_Plugin` is a value object answering the per-sub-plugin questions it can answer **without a
@@ -133,8 +133,7 @@ the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-`src/Conflict/` — `Resolver`, `Gatekeeper`, `Redirector` — and `Activator` are not built yet.
-Currently:
+`Activator` is not built yet. Currently:
 
 | Path | What |
 |---|---|
@@ -147,6 +146,7 @@ Currently:
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
 | `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
+| `src/Conflict/` | `Resolver` (which policy branch to take), `Gatekeeper` (which requests may take one), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Config_Exception`. |
@@ -161,7 +161,7 @@ Loader::boot();                               // idempotent
     → Provider::register()                    // every binding
     → Boot\Scheduler                          // every hook, as a closure over the container
 
-plugins_loaded @1      → Conflict\Resolver::resolve_all()   [gated by Conflict\Gatekeeper]
+plugins_loaded @1      → Conflict\Gatekeeper, then Conflict\Resolver::resolve_all()
 plugins_loaded @2      → Load\Runner::load_all()
 all_admin_notices      → Loader::render_notices()           [is_admin() only]
 wp_admin_notice_markup → Loader::filter_activation_error_markup() [is_admin() only]
@@ -177,6 +177,14 @@ earlier holds an orphan whose bindings are discarded. This is also why `Loader::
 and resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
 register into the throwaway.
 
+**The too-late barrier measures against the first step in the sequence, not the last.**
+`Boot\Scheduler` compares the priority `plugins_loaded` is already dispatching against the lowest
+priority it has to wire — conflict resolution at 1, not the load at 2 — and over that line it runs
+the whole sequence inline in hook order rather than wiring any of it. Measuring against the load
+would let a host booting at priority 1 wire the load and silently lose the conflict pass, which is
+the half of the sequence a fatal depends on. The comparison is inclusive, because a callback added
+at the priority currently being dispatched is accepted and never reached.
+
 `load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
 loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
 callback (only after a *successful* require).
@@ -188,23 +196,40 @@ them after the wrong problem. `docs/filters.md` and the spec agree.
 
 `Loader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A host
 may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
-the interface signature — so it is filtered once where the untrusted value enters.
+the interface signature — so it is filtered once where the untrusted value enters. Both passes read
+through `Loader::all()` rather than through the registrar they could resolve for themselves, because
+it flushes the pending registrations before it reads and a registrar asked directly would miss
+anything registered since the last flush.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
-`DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects.
-`Conflict\Redirector` decides where to; it returns `false` when the referrer is already `plugins.php`,
-so an inline update is never interrupted. It decides and never navigates — `wp_safe_redirect()` and
-`exit` stay in the resolver, so the policy action and the admin-URL knowledge change for separate
-reasons.
+`DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
+the worked example of required injection — `Plugin_Checker_Interface` to detect the standalone,
+`Plugin_Deactivator_Interface` to turn it off, `Queue_Interface` for the notice and
+`Conflict\Redirector` for the destination, all four constructor arguments with no default — so the
+object a test builds is the object the provider builds, and a host's rebinding of either plugin seam
+reaches it without the resolver knowing a container exists.
+
+`Conflict\Redirector::after_deactivation( $referrer )` decides where the user lands and never goes
+there: `wp_safe_redirect()` and the `exit` after it stay in the resolver, so the policy action and
+the admin-URL knowledge change for separate reasons, and every destination is assertable without a
+test standing in for the end of a request. It returns `false` — stay put — when the referrer is
+already `plugins.php`, since that list is about to render the deactivation anyway; it sends
+`update.php` and `update-core.php` to `plugins.php`, since reloading either re-runs an update; with
+no usable referrer, `plugins.php`. It matches on the screen basename, not on a substring of an
+absolute URL: `wp_get_referer()` prefers the bare `_wp_http_referer` path that every nonce-bearing
+admin form carries, so comparing against `admin_url()` would miss the network admin and every site
+behind a TLS-terminating proxy.
 
 **Who may have a conflict resolved is `Conflict\Gatekeeper`'s business, not the resolver's.** It
-gates on an interactive admin `GET` (`plugins_loaded` fires on every request) *and* on
-`current_user_can( 'activate_plugins' )` (`plugins_loaded` runs before `auth_redirect()`, so an
-unauthenticated GET of an admin URL gets that far). The hook resolves the gatekeeper rather than the
-resolver, so a host binding its own `Resolver_Interface` cannot drop either gate by omission. The
-capability gate covers every policy, not just the destructive one, and that is free: the other
-branches only queue a notice, and `Notices\Queue::render()` refuses to render *or clear* for a user
-without the same capability, so queuing earlier would only park it until a capable admin arrives.
+gates on an interactive admin `GET` (`plugins_loaded` fires on every request, including cron, CLI
+and a visitor's POST) *and* on `current_user_can( 'activate_plugins' )` (`plugins_loaded` runs
+before `auth_redirect()`, so an unauthenticated GET of an admin URL gets that far). The
+`plugins_loaded` step asks the gatekeeper *before* it resolves `Resolver_Interface` at all, so a
+host binding its own resolver cannot drop either gate by omission — and a request that fails one
+never builds a resolver. The capability gate covers every policy, not just the destructive one, and
+that is free: the other branches only queue a notice, and `Notices\Queue::render()` refuses to
+render *or clear* for a user without the same capability, so queuing earlier would only park it
+until a capable admin arrives.
 
 An unknown policy must be handled as its own case via `Conflict_Policy::is_valid()`, never left to
 a `default:` fallthrough — a typo like `'defered'` would otherwise deactivate a plugin the site

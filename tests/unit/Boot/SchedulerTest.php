@@ -10,15 +10,22 @@ use Generator;
 use LogicException;
 use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
+use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
+use Nexcess\PluginAbsorber\Conflict_Policy;
+use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Loader_State;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Gatekeeper;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Resolver;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUsers;
 use ReflectionClass;
 use WP_Hook;
 
@@ -40,11 +47,17 @@ class SchedulerTest extends WPTestCase {
 	use WithBundledPlugins;
 	use WithContainer;
 	use WithIncorrectUsage;
+	use WithUsers;
 
 	/**
 	 * @var int
 	 */
 	private $plugins_loaded_count = 0;
+
+	/**
+	 * @var string|null
+	 */
+	private $request_method;
 
 	/**
 	 * Hook callbacks these tests added, as [ hook, callback, priority ] triples.
@@ -65,6 +78,12 @@ class SchedulerTest extends WPTestCase {
 		Config::set_hook_prefix( 'give' );
 		$this->set_up_container();
 		$this->reset_bundled_plugin_loads();
+		$this->clear_notices();
+
+		// The conflict step reads the request method, so the one test that lets the real gatekeeper
+		// answer depends on it rather than on whatever the harness happened to leave behind.
+		$this->request_method      = $_SERVER['REQUEST_METHOD'] ?? null;
+		$_SERVER['REQUEST_METHOD'] = 'GET';
 
 		// The harness has to boot WordPress before it can run anything, so plugins_loaded has already
 		// fired by the time any test starts — and boot() would rightly report that it is too late to
@@ -76,6 +95,12 @@ class SchedulerTest extends WPTestCase {
 
 	public function tearDown(): void {
 		$GLOBALS['wp_actions']['plugins_loaded'] = $this->plugins_loaded_count;
+
+		if ( $this->request_method === null ) {
+			unset( $_SERVER['REQUEST_METHOD'] );
+		} else {
+			$_SERVER['REQUEST_METHOD'] = $this->request_method;
+		}
 
 		// In tearDown rather than at the end of the test body: a failing assertion would otherwise
 		// leak an admin screen into every test that runs after it, since is_admin() checks the
@@ -90,6 +115,7 @@ class SchedulerTest extends WPTestCase {
 
 		$this->stop_expecting_incorrect_usage();
 		$this->remove_bundled_plugin_files();
+		$this->clear_notices();
 		Loader_State::reset();
 		Config_State::reset();
 		$this->tear_down_container();
@@ -103,6 +129,93 @@ class SchedulerTest extends WPTestCase {
 	 */
 	public function test_the_load_step_runs_early_in_plugins_loaded(): void {
 		$this->assertSame( 2, $this->load_priority() );
+	}
+
+	/**
+	 * A standalone that survives the conflict defines its guard constant as it loads, and the load
+	 * pass has to see that — so resolution runs first and cannot share a priority with it.
+	 */
+	public function test_the_conflict_step_runs_before_the_load_step(): void {
+		$this->assertSame( 1, $this->resolve_priority() );
+		$this->assertLessThan( $this->load_priority(), $this->resolve_priority() );
+	}
+
+	public function test_it_wires_the_conflict_step_at_the_resolve_priority(): void {
+		[ 'resolver' => $resolver ] = $this->bind_conflict_doubles( true );
+
+		$before = $this->callbacks_at( 'plugins_loaded', $this->resolve_priority() );
+
+		Loader::boot();
+
+		$this->assertSame(
+			$before + 1,
+			$this->callbacks_at( 'plugins_loaded', $this->resolve_priority() ),
+			'boot() must wire the conflict step rather than run it.'
+		);
+		$this->assertSame( 0, $resolver->resolve_calls, 'Wiring must not resolve anything yet.' );
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $resolver->resolve_calls );
+	}
+
+	/**
+	 * The gate is asked first and the resolver is built only once it has said yes. That order is the
+	 * whole guarantee: a host binding its own `Resolver_Interface` decides what a conflict means, not
+	 * who is allowed to have one resolved, and a replacement that forgot a gate cannot reopen it
+	 * because it is never reached.
+	 */
+	public function test_the_conflict_step_asks_the_gatekeeper_before_resolving(): void {
+		[ 'gatekeeper' => $gatekeeper, 'resolver' => $resolver ] = $this->bind_conflict_doubles( false );
+
+		Loader::boot();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $gatekeeper->may_resolve_calls, 'The step has to ask the gate.' );
+		$this->assertSame( 0, $resolver->resolve_calls, 'A refused request must not reach a resolver at all.' );
+	}
+
+	public function test_the_conflict_step_resolves_once_the_gatekeeper_admits_the_request(): void {
+		[ 'gatekeeper' => $gatekeeper, 'resolver' => $resolver ] = $this->bind_conflict_doubles( true );
+
+		Loader::boot();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $gatekeeper->may_resolve_calls );
+		$this->assertSame( 1, $resolver->resolve_calls );
+	}
+
+	/**
+	 * The real gate, on the request it exists to turn away. The capability check covers the policies
+	 * that only queue a notice as well as the destructive one, and nothing is lost by that — the
+	 * standalone is still there to detect once someone who can act on it arrives, which is what the
+	 * second half asserts.
+	 */
+	public function test_a_user_who_cannot_activate_plugins_has_nothing_resolved_or_queued(): void {
+		set_current_screen( 'dashboard' );
+
+		$this->bind_active_standalone();
+		$this->register_conflicted_sub_plugin();
+
+		wp_set_current_user( $this->create_user( 'subscriber' ) );
+
+		Loader::boot();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( [], $this->notice_queue(), 'A user who could never read the notice must not consume it.' );
+
+		$this->become_plugin_administrator();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertArrayHasKey(
+			'give-recurring:conflict',
+			$this->notice_queue(),
+			'The conflict has to still be detectable once someone who can act on it arrives.'
+		);
 	}
 
 	public function test_it_wires_the_load_step_at_the_load_priority(): void {
@@ -209,13 +322,15 @@ class SchedulerTest extends WPTestCase {
 	 * never fires. Booting from plugins_loaded at the default priority instead of 0 would otherwise
 	 * load nothing at all, on a site that looks completely healthy.
 	 *
-	 * The load priority itself is the boundary case: a callback added to the priority currently being
+	 * The window is measured from the earliest step in the sequence, so the resolve priority is the
+	 * boundary case rather than the load priority: a callback added to the priority currently being
 	 * dispatched is never reached either, because the dispatch loop walks a by-value copy of that
-	 * priority's callback array.
+	 * priority's callback array. Booting between the two steps still reports, and still loads.
 	 *
 	 * @dataProvider late_boot_priorities
 	 *
-	 * @param int $offset How far past the load priority the host boots from.
+	 * @param int $offset How far past the load priority the host boots from; negative for the window
+	 *                    between conflict resolution and the load pass.
 	 */
 	public function test_booting_too_late_in_plugins_loaded_loads_inline_instead( int $offset ): void {
 		$this->expect_incorrect_usage();
@@ -249,9 +364,40 @@ class SchedulerTest extends WPTestCase {
 	 * @return Generator<string,array{0:int}>
 	 */
 	public static function late_boot_priorities(): Generator {
+		yield 'at the resolve priority'  => [ -1 ];
 		yield 'at the load priority'     => [ 0 ];
 		yield 'one past it'              => [ 1 ];
 		yield 'the default a host omits' => [ 8 ];
+	}
+
+	/**
+	 * The other side of the same boundary. The window closes at the first step rather than the last,
+	 * so a host booting at priority 0 — which is what the README tells it to do — must still wire both
+	 * steps and be reported on for nothing.
+	 */
+	public function test_booting_at_the_start_of_plugins_loaded_still_wires(): void {
+		$constant = $this->make_guard_constant();
+		$path     = $this->make_bundled_plugin_file( $constant );
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			static function () use ( $path, $constant ): void {
+				Loader::register(
+					[
+						'slug'                   => 'give-recurring',
+						'bundled_plugin_file'    => $path,
+						'plugin_loaded_constant' => $constant,
+					]
+				);
+
+				Loader::boot();
+			},
+			0
+		);
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
 
 	public function test_booting_after_plugins_loaded_has_finished_loads_inline(): void {
@@ -336,6 +482,24 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
+	 * The priority the conflict step is wired at, read from the scheduler rather than restated.
+	 *
+	 * @throws LogicException When the constant is missing or not an int, rather than counting
+	 *                        callbacks at priority zero and passing for the wrong reason.
+	 *
+	 * @return int
+	 */
+	private function resolve_priority(): int {
+		$priority = ( new ReflectionClass( Scheduler::class ) )->getConstant( 'RESOLVE_PRIORITY' );
+
+		if ( ! is_int( $priority ) ) {
+			throw new LogicException( 'Boot\Scheduler::RESOLVE_PRIORITY must be an int.' );
+		}
+
+		return $priority;
+	}
+
+	/**
 	 * How many callbacks are on a hook, at one priority or in total.
 	 *
 	 * @param string   $hook     Hook to count.
@@ -385,6 +549,104 @@ class SchedulerTest extends WPTestCase {
 		$this->set_up_container( $container );
 
 		return $notices;
+	}
+
+	/**
+	 * Bind a gatekeeper with a fixed answer and a resolver that records being reached.
+	 *
+	 * Both bound before the provider runs, which is the only order that leaves them bound. The pair is
+	 * returned rather than resolved back out of the container, so the assertions read a spy's own type
+	 * — `Resolver_Interface` declares no counter, and nothing here narrows a container's return.
+	 *
+	 * @param bool $may_resolve The answer the gate always gives.
+	 *
+	 * @return array{gatekeeper:Spy_Gatekeeper,resolver:Spy_Resolver}
+	 */
+	private function bind_conflict_doubles( bool $may_resolve ): array {
+		$gatekeeper = new Spy_Gatekeeper( $may_resolve );
+		$resolver   = new Spy_Resolver();
+
+		$container = new Test_Container();
+		$container->singleton(
+			Gatekeeper::class,
+			static function () use ( $gatekeeper ): Gatekeeper {
+				return $gatekeeper;
+			}
+		);
+		$container->singleton(
+			Resolver_Interface::class,
+			static function () use ( $resolver ): Resolver_Interface {
+				return $resolver;
+			}
+		);
+
+		$this->set_up_container( $container );
+
+		return [
+			'gatekeeper' => $gatekeeper,
+			'resolver'   => $resolver,
+		];
+	}
+
+	/**
+	 * Report every standalone as active, without reaching WordPress for the answer.
+	 *
+	 * @return void
+	 */
+	private function bind_active_standalone(): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Plugin_Checker_Interface::class,
+			static function (): Plugin_Checker_Interface {
+				return new class() implements Plugin_Checker_Interface {
+					/**
+					 * @param string $basename Plugin basename.
+					 *
+					 * @return bool
+					 */
+					public function is_active( string $basename ): bool {
+						return true;
+					}
+				};
+			}
+		);
+
+		$this->set_up_container( $container );
+	}
+
+	/**
+	 * Register a sub-plugin whose standalone is in conflict, under the policy that only talks.
+	 *
+	 * @return void
+	 */
+	private function register_conflicted_sub_plugin(): void {
+		$constant = $this->make_guard_constant();
+
+		Loader::register(
+			[
+				'slug'                       => 'give-recurring',
+				'bundled_plugin_file'        => $this->make_bundled_plugin_file( $constant ),
+				'plugin_loaded_constant'     => $constant,
+				'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+				'conflict_policy'            => Conflict_Policy::NOTICE_ONLY,
+			]
+		);
+	}
+
+	/**
+	 * The queue is stored as a site option on every install — on single site that call falls through
+	 * to the plain option table — so there is one place to read it from.
+	 *
+	 * @return array<string,string>
+	 */
+	private function notice_queue(): array {
+		$queue = get_site_option( 'give_plugin_absorber_notices', [] );
+
+		return is_array( $queue ) ? $queue : [];
+	}
+
+	private function clear_notices(): void {
+		delete_site_option( 'give_plugin_absorber_notices' );
 	}
 
 	/**

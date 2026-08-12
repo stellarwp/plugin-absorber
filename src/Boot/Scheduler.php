@@ -5,6 +5,8 @@
 
 namespace Nexcess\PluginAbsorber\Boot;
 
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
+use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Load\Runner;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
@@ -35,6 +37,18 @@ class Scheduler {
 	private const LOAD_PRIORITY = 2;
 
 	/**
+	 * plugins_loaded priority conflict resolution runs at, ahead of the load pass.
+	 *
+	 * A standalone that survives the conflict defines the guard constant as it loads, and the load
+	 * pass has to see that, so resolution cannot share a priority with it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var int
+	 */
+	private const RESOLVE_PRIORITY = 1;
+
+	/**
 	 * @since 1.0.0
 	 *
 	 * @var ContainerInterface
@@ -57,6 +71,10 @@ class Scheduler {
 	 * collaborator when the hook fires, so a host may still rebind one after boot() and up until
 	 * plugins_loaded, and a binding nothing reaches is never built at all.
 	 *
+	 * Called too late, the steps run inline instead of being wired — and conflict resolution can
+	 * end the request, so on an admin page load this call may not return. Boot at plugins_loaded
+	 * priority 0, as documented, and it always does.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @return void
@@ -77,7 +95,7 @@ class Scheduler {
 		if ( $this->wiring_window_has_closed() ) {
 			_doing_it_wrong(
 				Loader::class . '::boot',
-				'Loader::boot() must run before plugins_loaded priority 2. Loading inline instead.',
+				'Loader::boot() must run before plugins_loaded priority 1. Resolving and loading inline instead.',
 				'1.0.0'
 			);
 
@@ -109,12 +127,25 @@ class Scheduler {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @return array<int,array{priority:int,run:callable():void}>
+	 * @return non-empty-array<int,array{priority:int,run:callable():void}>
 	 */
 	private function sequence(): array {
 		$container = $this->container;
 
 		return [
+			[
+				'priority' => self::RESOLVE_PRIORITY,
+				'run'      => static function () use ( $container ): void {
+					// The gatekeeper first, and the resolver only once it has said yes. Who may have
+					// a conflict resolved is the library's invariant rather than the host's policy,
+					// so it is settled before anything a host may have rebound is even built.
+					if ( ! $container->get( Gatekeeper::class )->may_resolve() ) {
+						return;
+					}
+
+					$container->get( Resolver_Interface::class )->resolve_all();
+				},
+			],
 			[
 				'priority' => self::LOAD_PRIORITY,
 				'run'      => static function () use ( $container ): void {
@@ -125,13 +156,17 @@ class Scheduler {
 	}
 
 	/**
-	 * Whether it is already too late to wire the load hook.
+	 * Whether it is already too late to wire the first step of the sequence.
+	 *
+	 * Measured against the earliest priority in sequence(), read rather than restated, because a
+	 * boot that can still wire a later step but has missed an earlier one has missed something —
+	 * and with resolution at 1 and the load at 2, booting between the two is a real window.
 	 *
 	 * The comparison is inclusive. A callback added to the priority currently being dispatched is
 	 * accepted and never reached either: WP_Hook::apply_filters() walks `$this->callbacks[$priority]`
 	 * with a by-value foreach, so the append lands on an array the running loop has already copied.
-	 * Booting from plugins_loaded at priority 2 is the case a host is likeliest to hit by accident,
-	 * and an exclusive comparison would let exactly that one through unreported.
+	 * Booting from plugins_loaded at that priority is the case a host is likeliest to hit by
+	 * accident, and an exclusive comparison would let exactly that one through unreported.
 	 *
 	 * @since 1.0.0
 	 *
@@ -148,6 +183,7 @@ class Scheduler {
 
 		$hook = $GLOBALS['wp_filter']['plugins_loaded'] ?? null;
 
-		return $hook instanceof WP_Hook && $hook->current_priority() >= self::LOAD_PRIORITY;
+		return $hook instanceof WP_Hook
+			&& $hook->current_priority() >= min( array_column( $this->sequence(), 'priority' ) );
 	}
 }
