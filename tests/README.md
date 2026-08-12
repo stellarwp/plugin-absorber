@@ -281,7 +281,7 @@ asserts over what was reported instead:
 ```php
 $this->expect_incorrect_usage();
 
-$runner->load_all();
+$loader->load_all();
 
 $this->assert_the_library_reported_incorrect_usage();
 ```

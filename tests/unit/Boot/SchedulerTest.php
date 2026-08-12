@@ -151,7 +151,7 @@ class SchedulerTest extends WPTestCase {
 	 * wp-settings.php includes keeps all of them.
 	 */
 	public function test_the_load_step_runs_early_in_plugins_loaded(): void {
-		$this->assertSame( 6, $this->load_priority() );
+		$this->assertSame( 6, self::load_priority() );
 	}
 
 	/**
@@ -163,14 +163,14 @@ class SchedulerTest extends WPTestCase {
 	 * booting at 0 as documented and the priority-1 habit LearnDash and MemberDash already have.
 	 */
 	public function test_the_conflict_step_runs_before_the_load_step(): void {
-		$this->assertSame( 5, $this->resolve_priority() );
-		$this->assertLessThan( $this->load_priority(), $this->resolve_priority() );
+		$this->assertSame( 5, self::resolve_priority() );
+		$this->assertLessThan( self::load_priority(), self::resolve_priority() );
 	}
 
 	public function test_it_wires_the_conflict_step_at_the_resolve_priority(): void {
 		$this->bind_resolver_double();
 
-		$before = $this->callbacks_at( 'plugins_loaded', $this->resolve_priority() );
+		$before = $this->callbacks_at( 'plugins_loaded', self::resolve_priority() );
 
 		Absorber::boot();
 
@@ -181,7 +181,7 @@ class SchedulerTest extends WPTestCase {
 		// would have asked the real gatekeeper and left the log empty either way.
 		$this->assertSame(
 			$before + 1,
-			$this->callbacks_at( 'plugins_loaded', $this->resolve_priority() ),
+			$this->callbacks_at( 'plugins_loaded', self::resolve_priority() ),
 			'boot() must wire the conflict step rather than run it.'
 		);
 		$this->assertSame( [], $this->conflict_calls, 'Wiring must not ask anything yet.' );
@@ -324,16 +324,51 @@ class SchedulerTest extends WPTestCase {
 		);
 	}
 
+	/**
+	 * Reading the registry flushes the registration buffer, and the registrar refuses a slug it
+	 * already holds. The conflict step reads a priority ahead of the load pass, so it — not the load
+	 * pass that has always guarded this — is the first pass a duplicate slug reaches, and a throw
+	 * here arrives inside plugins_loaded, where it takes wp-admin down and locks the developer out
+	 * of the screen where the second registration could be undone.
+	 *
+	 * The front end never reaches it, because the request gate turns away first. That is what makes
+	 * this the worse failure rather than a lesser one: the only requests that fatal are the ones the
+	 * mistake could have been corrected from.
+	 */
+	public function test_a_duplicate_slug_is_reported_rather_than_fataling_the_conflict_step(): void {
+		set_current_screen( 'dashboard' );
+
+		$this->bind_active_standalone();
+		$this->register_conflicted_sub_plugin();
+		$this->register_conflicted_sub_plugin();
+
+		$this->become_plugin_administrator();
+
+		Absorber::boot();
+
+		$this->expect_incorrect_usage();
+
+		do_action( 'plugins_loaded' );
+
+		// Reaching this line at all is half of what is under test: the step has to return.
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'A read that failed has no list to resolve from, so nothing may be resolved.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
 	public function test_it_wires_the_load_step_at_the_load_priority(): void {
 		$this->register_sub_plugin();
 
-		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$before = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 
 		Absorber::boot();
 
 		$this->assertSame(
 			$before + 1,
-			$this->callbacks_at( 'plugins_loaded', $this->load_priority() ),
+			$this->callbacks_at( 'plugins_loaded', self::load_priority() ),
 			'boot() must wire the load step rather than run it.'
 		);
 		$this->assertSame( 0, $this->bundled_plugin_loads(), 'Wiring must not load anything yet.' );
@@ -346,14 +381,14 @@ class SchedulerTest extends WPTestCase {
 	public function test_booting_twice_wires_the_load_step_only_once(): void {
 		$this->register_sub_plugin();
 
-		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$before = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 
 		Absorber::boot();
 		Absorber::boot();
 
 		$this->assertSame(
 			$before + 1,
-			$this->callbacks_at( 'plugins_loaded', $this->load_priority() ),
+			$this->callbacks_at( 'plugins_loaded', self::load_priority() ),
 			'boot() must be idempotent.'
 		);
 
@@ -457,7 +492,7 @@ class SchedulerTest extends WPTestCase {
 
 				Absorber::boot();
 			},
-			$this->load_priority() + $offset
+			self::load_priority() + $offset
 		);
 
 		do_action( 'plugins_loaded' );
@@ -473,7 +508,11 @@ class SchedulerTest extends WPTestCase {
 		yield 'at the resolve priority'  => [ -1 ];
 		yield 'at the load priority'     => [ 0 ];
 		yield 'one past it'              => [ 1 ];
-		yield 'the default a host omits' => [ 8 ];
+		// Priority 10, where an add_action() naming no priority at all lands — the commonest way to
+		// boot too late. Derived from the load priority rather than written as an offset, which
+		// would go on describing this case while quietly testing a different one every time the
+		// load priority moved.
+		yield 'the default a host omits' => [ 10 - self::load_priority() ];
 	}
 
 	/**
@@ -495,7 +534,7 @@ class SchedulerTest extends WPTestCase {
 	public function test_booting_before_the_resolve_priority_still_wires( int $priority ): void {
 		$constant = $this->make_guard_constant();
 		$path     = $this->make_bundled_plugin_file( $constant );
-		$before   = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$before   = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 
 		$this->add_tracked_action(
 			'plugins_loaded',
@@ -518,7 +557,7 @@ class SchedulerTest extends WPTestCase {
 		$this->assertSame( 1, $this->bundled_plugin_loads(), 'The bundled plugin has to load either way.' );
 		$this->assertSame(
 			$before + 1,
-			$this->callbacks_at( 'plugins_loaded', $this->load_priority() ),
+			$this->callbacks_at( 'plugins_loaded', self::load_priority() ),
 			'Booting inside the window has to wire the load step, not run it inline.'
 		);
 	}
@@ -553,13 +592,13 @@ class SchedulerTest extends WPTestCase {
 	public function test_the_state_helper_unwires_the_hooks_boot_added(): void {
 		set_current_screen( 'dashboard' );
 
-		$load_step   = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$load_step   = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 		$notice_step = $this->callbacks_at( 'all_admin_notices' );
 
 		Absorber::boot();
 		Absorber_State::reset();
 
-		$this->assertSame( $load_step, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
+		$this->assertSame( $load_step, $this->callbacks_at( 'plugins_loaded', self::load_priority() ) );
 		$this->assertSame( $notice_step, $this->callbacks_at( 'all_admin_notices' ) );
 	}
 
@@ -568,14 +607,14 @@ class SchedulerTest extends WPTestCase {
 	 * rather than a leftover from the first.
 	 */
 	public function test_the_state_helper_allows_booting_again(): void {
-		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$before = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 
 		Absorber::boot();
 		Absorber_State::reset();
 
 		Absorber::boot();
 
-		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
+		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', self::load_priority() ) );
 	}
 
 	/**
@@ -588,11 +627,11 @@ class SchedulerTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_container( $container );
 
-		$before = $this->callbacks_at( 'plugins_loaded', $this->load_priority() );
+		$before = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
 
 		Absorber::boot();
 
-		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', $this->load_priority() ) );
+		$this->assertSame( $before + 1, $this->callbacks_at( 'plugins_loaded', self::load_priority() ) );
 	}
 
 	/**
@@ -603,7 +642,7 @@ class SchedulerTest extends WPTestCase {
 	 *
 	 * @return int
 	 */
-	private function load_priority(): int {
+	private static function load_priority(): int {
 		$priority = ( new ReflectionClass( Scheduler::class ) )->getConstant( 'LOAD_PRIORITY' );
 
 		if ( ! is_int( $priority ) ) {
@@ -621,7 +660,7 @@ class SchedulerTest extends WPTestCase {
 	 *
 	 * @return int
 	 */
-	private function resolve_priority(): int {
+	private static function resolve_priority(): int {
 		$priority = ( new ReflectionClass( Scheduler::class ) )->getConstant( 'RESOLVE_PRIORITY' );
 
 		if ( ! is_int( $priority ) ) {

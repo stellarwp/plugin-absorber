@@ -9,6 +9,7 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
 use WP_Hook;
@@ -153,35 +154,7 @@ class Scheduler {
 			[
 				'priority' => self::RESOLVE_PRIORITY,
 				'run'      => static function () use ( $container ): void {
-					$gatekeeper = $container->get( Gatekeeper::class );
-
-					// The shape of the request first. It reads the request and nothing else, so
-					// cron, WP-CLI, a POST and every front-end view are turned away having resolved
-					// no user and built no resolver.
-					if ( ! $gatekeeper->request_may_resolve() ) {
-						return;
-					}
-
-					// Then whether there is a conflict at all, before anyone asks who is signed in.
-					// current_user_can() resolves and caches the current user, and this step runs at
-					// plugins_loaded priority 5 -- ahead of the plugins that add their
-					// determine_current_user filter from a plugins_loaded callback of their own. Ask
-					// on every admin GET and an SSO or JWT visitor is pinned as logged out for the
-					// rest of the request, on requests with nothing to resolve. The detector reports
-					// and changes nothing, so the capability is only asked for where its answer
-					// decides something.
-					if ( ! $container->get( Detector::class )->has_conflict() ) {
-						return;
-					}
-
-					if ( ! $gatekeeper->user_may_resolve() ) {
-						return;
-					}
-
-					// Both gates and the probe live here rather than inside the resolver, so a host
-					// binding its own cannot drop one by omission -- and asking them first means a
-					// resolver is built only on the request that goes on to use it.
-					$container->get( Resolver_Interface::class )->resolve_all();
+					self::resolve_conflicts( $container );
 				},
 			],
 			[
@@ -191,6 +164,66 @@ class Scheduler {
 				},
 			],
 		];
+	}
+
+	/**
+	 * The conflict step: the two gates, the probe between them, and the resolve behind all three.
+	 *
+	 * Static, and handed the container rather than reading one, so the closure in sequence() stays a
+	 * closure over the container like the load step beside it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param ContainerInterface $container Container each collaborator is resolved from.
+	 *
+	 * @return void
+	 */
+	private static function resolve_conflicts( ContainerInterface $container ): void {
+		$gatekeeper = $container->get( Gatekeeper::class );
+
+		// The shape of the request first. It reads the request and nothing else, so cron, WP-CLI, a
+		// POST and every front-end view are turned away having resolved no user and built no
+		// resolver.
+		if ( ! $gatekeeper->request_may_resolve() ) {
+			return;
+		}
+
+		try {
+			// Then whether there is a conflict at all, before anyone asks who is signed in.
+			// current_user_can() resolves and caches the current user, and this step runs at
+			// plugins_loaded priority 5 -- ahead of the plugins that add their
+			// determine_current_user filter from a plugins_loaded callback of their own. Ask on
+			// every admin GET and an SSO or JWT visitor is pinned as logged out for the rest of the
+			// request, on requests with nothing to resolve. The detector reports and changes
+			// nothing, so the capability is only asked for where its answer decides something.
+			if ( ! $container->get( Detector::class )->has_conflict() ) {
+				return;
+			}
+
+			if ( ! $gatekeeper->user_may_resolve() ) {
+				return;
+			}
+
+			// Both gates and the probe live here rather than inside the resolver, so a host binding
+			// its own cannot drop one by omission -- and asking them first means a resolver is built
+			// only on the request that goes on to use it.
+			$container->get( Resolver_Interface::class )->resolve_all();
+		} catch ( Config_Exception $exception ) {
+			// Reading the registry is where a duplicate slug, a missing container and an unusable
+			// binding all surface, and this step reads it a priority ahead of the load pass that has
+			// always guarded the same read. Letting one out here is worse than letting it out there:
+			// the request gate means the only requests that reach this are admin page views, so the
+			// fatal would land on precisely the screens the mistaken registration could be corrected
+			// from. Reported to the developer, and the conflict pass abandoned, instead.
+			_doing_it_wrong(
+				self::class,
+				sprintf(
+					'The registered sub-plugins could not be read, so no conflict was resolved: %s',
+					$exception->getMessage()
+				),
+				'1.0.0'
+			);
+		}
 	}
 
 	/**

@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit\Load;
+namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
 use lucatume\WPBrowser\Traits\UopzFunctions;
@@ -103,7 +103,7 @@ class LoaderTest extends WPTestCase {
 	public function test_it_requires_the_bundled_file(): void {
 		$constant = $this->register();
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 		$this->assertTrue( defined( $constant ) );
@@ -112,8 +112,8 @@ class LoaderTest extends WPTestCase {
 	public function test_it_requires_the_bundled_file_exactly_once(): void {
 		$this->register();
 
-		$this->runner()->load_all();
-		$this->runner()->load_all();
+		$this->loader()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -121,7 +121,7 @@ class LoaderTest extends WPTestCase {
 	public function test_it_skips_a_disabled_sub_plugin(): void {
 		$this->register( [ 'enabled' => false ] );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 	}
@@ -129,7 +129,7 @@ class LoaderTest extends WPTestCase {
 	public function test_it_skips_when_dependencies_are_unmet_and_queues_a_notice(): void {
 		$this->register( [ 'dependency_check' => static fn() => false ] );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assertArrayHasKey( 'give-recurring:dependency', $this->queued_notices() );
@@ -140,7 +140,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->register( [], $constant );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame(
 			0,
@@ -160,7 +160,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -186,7 +186,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( [], $this->queued_notices() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -206,7 +206,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -234,7 +234,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -260,7 +260,7 @@ class LoaderTest extends WPTestCase {
 			$constant
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $checked );
 		$this->assertSame( [], $this->queued_notices(), 'No notice for a plugin that is already running.' );
@@ -271,7 +271,7 @@ class LoaderTest extends WPTestCase {
 
 		add_filter( 'give/plugin_absorber/should_load', '__return_false' );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 	}
@@ -291,7 +291,7 @@ class LoaderTest extends WPTestCase {
 			2
 		);
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertInstanceOf( Sub_Plugin::class, $received );
 		$this->assertSame( 'give-recurring', $received->get_slug() );
@@ -307,7 +307,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->record_should_load_calls();
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( [], $this->should_load_calls );
 
@@ -324,7 +324,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->record_should_load_calls();
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( [], $this->should_load_calls );
 
@@ -335,7 +335,7 @@ class LoaderTest extends WPTestCase {
 		$this->register( [ 'slug' => 'give-recurring' ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 2, $this->bundled_plugin_loads() );
 	}
@@ -348,7 +348,7 @@ class LoaderTest extends WPTestCase {
 		$this->register( [ 'slug' => 'give-recurring', 'enabled' => false ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -406,7 +406,7 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->set_up_container( $container );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -428,7 +428,7 @@ class LoaderTest extends WPTestCase {
 			);
 		}
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -441,7 +441,7 @@ class LoaderTest extends WPTestCase {
 	public function test_load_all_does_nothing_without_a_hook_prefix(): void {
 		$this->register();
 
-		$runner    = $this->runner();
+		$loader    = $this->loader();
 		$container = $this->container();
 
 		// The prefix goes, the container stays: this is about the missing prefix, and a library that
@@ -450,7 +450,7 @@ class LoaderTest extends WPTestCase {
 		Config::set_container( $container );
 		$this->expect_incorrect_usage();
 
-		$runner->load_all();
+		$loader->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads(), 'A bootstrap mistake must not fatal the site.' );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -471,7 +471,7 @@ class LoaderTest extends WPTestCase {
 		$this->expect_incorrect_usage();
 		$this->record_incorrect_usage_messages();
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		// Reaching this line at all is half of what is under test: load_all() has to return.
 		$this->assertSame(
@@ -519,7 +519,7 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->set_up_container( $container );
 
-		$this->runner()->load_all();
+		$this->loader()->load_all();
 
 		$this->assertSame(
 			[ 'give-recurring' ],
@@ -534,11 +534,11 @@ class LoaderTest extends WPTestCase {
 	}
 
 	/**
-	 * The runner as the container builds it, which is how the scheduler reaches it too.
+	 * The loader as the container builds it, which is how the scheduler reaches it too.
 	 *
 	 * @return Loader
 	 */
-	private function runner(): Loader {
+	private function loader(): Loader {
 		return $this->resolve( Loader::class );
 	}
 

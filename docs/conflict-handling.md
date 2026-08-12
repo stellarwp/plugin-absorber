@@ -83,8 +83,9 @@ reloading one of those would re-run an update, and anything that names no usable
 back to `plugins.php`.
 
 The destination is assembled from the screen name and query string through `admin_url()` — or
-`network_admin_url()` in the network admin — never from the request URI itself, so nothing in the URI
-decides the host. There is no redirect loop: the next request has no active standalone, so nothing
+`network_admin_url()` and `user_admin_url()` in the network and user admins, so a request resolved
+in one of those comes back to it — never from the request URI itself, so nothing in the URI decides
+the host. There is no redirect loop: the next request has no active standalone, so nothing
 resolves.
 
 With several sub-plugins in conflict, all of them are resolved before the one redirect at the end,

@@ -141,7 +141,7 @@ the plugin to ask about, and the collaborator does the asking.
 | `src/Absorber.php` | Static facade: the registration buffer, `boot()`, and the accessors. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
-| `src/Load/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
+| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
@@ -209,6 +209,13 @@ through `Absorber::all()` rather than through the registrar they could resolve f
 it flushes the pending registrations before it reads and a registrar asked directly would miss
 anything registered since the last flush.
 
+**Both passes also catch `Config_Exception` around that read.** The flush is where a duplicate slug
+throws and the registrar resolution is where a missing container does, and both arrive inside
+`plugins_loaded`, the hook that exists to prevent a fatal — so it is the last place allowed to cause
+one. The conflict pass needs the guard more than the load pass, not less: its request gate means the
+only requests reaching it are admin page views, so an escaping throw lands on exactly the screens the
+mistaken registration would have to be corrected from.
+
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
 the worked example of required injection — `Conflict\Detector` to say which sub-plugins are in
@@ -230,10 +237,11 @@ cannot loop, since the next request finds no active standalone. `update.php` and
 are the exception and go to `plugins.php`, because reloading either re-runs an update; so does a URI
 naming no admin screen at all. It matches on the screen basename, not on a substring of an absolute
 URL: the request URI is a bare path, on a site that may sit in a subdirectory, behind a
-TLS-terminating proxy whose scheme disagrees with `admin_url()`, or under the network admin, so
-nothing built from `admin_url()` would recognise it. The basename is also what keeps a crafted URI
+TLS-terminating proxy whose scheme disagrees with `admin_url()`, or under the network or user admin,
+so nothing built from `admin_url()` would recognise it. The basename is also what keeps a crafted URI
 out of the destination — only a validated screen name and a re-encoded query leave the class, and
-`admin_url()`, or `network_admin_url()` in the network admin, supplies everything in front of them.
+`admin_url()`, or `network_admin_url()`/`user_admin_url()` in the other two admins, supplies
+everything in front of them.
 
 **Who may have a conflict resolved is `Conflict\Gatekeeper`'s business, not the resolver's.** Two
 methods, because the two gates are asked at different moments. `request_may_resolve()` reads the

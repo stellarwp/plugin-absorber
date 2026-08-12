@@ -99,10 +99,11 @@ at include time.
 Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
 activation record, so a second registration under the same slug is refused with a
 `Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Registrations are buffered and nothing reads them until the load pass at `plugins_loaded`
-priority 6, so that is where the collision surfaces — not at the second `register()` call and not at
-`boot()`. It is reported with `_doing_it_wrong()` and that request loads no sub-plugin at all, rather
-than thrown out of a core hook. A config array the library cannot use is still rejected on the spot.
+load. Registrations are buffered and nothing reads them until `plugins_loaded` — the conflict pass at
+priority 5 on an admin page view, the load pass at priority 6 on everything else — so that is where
+the collision surfaces, not at the second `register()` call and not at `boot()`. Whichever pass
+reads first reports it with `_doing_it_wrong()`, and that request resolves no conflict and loads no
+sub-plugin at all, rather than throwing out of a core hook. A config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
 
