@@ -12,7 +12,9 @@ Each runs last, after the configured value and any fallback. Because they fire w
 asked for rather than when the sub-plugin is registered, they are also the place to call `__()` —
 by then the textdomain is loaded.
 
-A filter returning a non-scalar yields an empty string rather than a fatal cast.
+A filter returning a non-scalar yields an empty string rather than a fatal cast. A `conflict_policy`
+return that is not one of the three constants is treated as [`NOTICE_ONLY`, never as consent to
+deactivate](conflict-handling.md#policies).
 
 ## The load gate
 

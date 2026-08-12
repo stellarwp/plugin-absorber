@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Load;
 
 use Codeception\TestCase\WPTestCase;
 use lucatume\WPBrowser\Traits\UopzFunctions;
@@ -21,6 +21,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 
 /**
  * The load loop and its gate chain.
@@ -36,6 +37,7 @@ class LoaderTest extends WPTestCase {
 	use WithBundledPlugins;
 	use WithContainer;
 	use WithIncorrectUsage;
+	use WithNoticeQueue;
 
 	/**
 	 * Guard constants a test defined through uopz.
@@ -101,7 +103,7 @@ class LoaderTest extends WPTestCase {
 	public function test_it_requires_the_bundled_file(): void {
 		$constant = $this->register();
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 		$this->assertTrue( defined( $constant ) );
@@ -110,8 +112,8 @@ class LoaderTest extends WPTestCase {
 	public function test_it_requires_the_bundled_file_exactly_once(): void {
 		$this->register();
 
-		$this->loader()->load_all();
-		$this->loader()->load_all();
+		$this->runner()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -119,7 +121,7 @@ class LoaderTest extends WPTestCase {
 	public function test_it_skips_a_disabled_sub_plugin(): void {
 		$this->register( [ 'enabled' => false ] );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 	}
@@ -127,10 +129,10 @@ class LoaderTest extends WPTestCase {
 	public function test_it_skips_when_dependencies_are_unmet_and_queues_a_notice(): void {
 		$this->register( [ 'dependency_check' => static fn() => false ] );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
-		$this->assertArrayHasKey( 'give-recurring:dependency', $this->notice_queue() );
+		$this->assertArrayHasKey( 'give-recurring:dependency', $this->queued_notices() );
 	}
 
 	public function test_it_skips_when_the_guard_constant_is_already_defined(): void {
@@ -138,7 +140,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->register( [], $constant );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame(
 			0,
@@ -158,7 +160,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -184,9 +186,9 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
-		$this->assertSame( [], $this->notice_queue() );
+		$this->assertSame( [], $this->queued_notices() );
 		$this->assert_the_library_reported_incorrect_usage();
 	}
 
@@ -204,7 +206,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -232,7 +234,7 @@ class LoaderTest extends WPTestCase {
 			]
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -258,10 +260,10 @@ class LoaderTest extends WPTestCase {
 			$constant
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $checked );
-		$this->assertSame( [], $this->notice_queue(), 'No notice for a plugin that is already running.' );
+		$this->assertSame( [], $this->queued_notices(), 'No notice for a plugin that is already running.' );
 	}
 
 	public function test_the_should_load_filter_can_veto_the_load(): void {
@@ -269,7 +271,7 @@ class LoaderTest extends WPTestCase {
 
 		add_filter( 'give/plugin_absorber/should_load', '__return_false' );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
 	}
@@ -289,7 +291,7 @@ class LoaderTest extends WPTestCase {
 			2
 		);
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertInstanceOf( Sub_Plugin::class, $received );
 		$this->assertSame( 'give-recurring', $received->get_slug() );
@@ -305,7 +307,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->record_should_load_calls();
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( [], $this->should_load_calls );
 
@@ -322,7 +324,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->record_should_load_calls();
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( [], $this->should_load_calls );
 
@@ -333,7 +335,7 @@ class LoaderTest extends WPTestCase {
 		$this->register( [ 'slug' => 'give-recurring' ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 2, $this->bundled_plugin_loads() );
 	}
@@ -346,7 +348,7 @@ class LoaderTest extends WPTestCase {
 		$this->register( [ 'slug' => 'give-recurring', 'enabled' => false ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -404,7 +406,7 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->set_up_container( $container );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -426,7 +428,7 @@ class LoaderTest extends WPTestCase {
 			);
 		}
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame( 1, $this->bundled_plugin_loads() );
 	}
@@ -439,7 +441,7 @@ class LoaderTest extends WPTestCase {
 	public function test_load_all_does_nothing_without_a_hook_prefix(): void {
 		$this->register();
 
-		$loader    = $this->loader();
+		$runner    = $this->runner();
 		$container = $this->container();
 
 		// The prefix goes, the container stays: this is about the missing prefix, and a library that
@@ -448,7 +450,7 @@ class LoaderTest extends WPTestCase {
 		Config::set_container( $container );
 		$this->expect_incorrect_usage();
 
-		$loader->load_all();
+		$runner->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads(), 'A bootstrap mistake must not fatal the site.' );
 		$this->assert_the_library_reported_incorrect_usage();
@@ -469,7 +471,7 @@ class LoaderTest extends WPTestCase {
 		$this->expect_incorrect_usage();
 		$this->record_incorrect_usage_messages();
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		// Reaching this line at all is half of what is under test: load_all() has to return.
 		$this->assertSame(
@@ -517,7 +519,7 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->set_up_container( $container );
 
-		$this->loader()->load_all();
+		$this->runner()->load_all();
 
 		$this->assertSame(
 			[ 'give-recurring' ],
@@ -526,17 +528,17 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->assertSame(
 			[],
-			$this->notice_queue(),
+			$this->queued_notices(),
 			'The default queue must not have been resolved alongside it.'
 		);
 	}
 
 	/**
-	 * The loader as the container builds it, which is how the scheduler reaches it too.
+	 * The runner as the container builds it, which is how the scheduler reaches it too.
 	 *
 	 * @return Loader
 	 */
-	private function loader(): Loader {
+	private function runner(): Loader {
 		return $this->resolve( Loader::class );
 	}
 
@@ -630,22 +632,6 @@ class LoaderTest extends WPTestCase {
 		}
 
 		$this->incorrect_usage_messages = [];
-	}
-
-	private function clear_notices(): void {
-		delete_site_option( 'give_plugin_absorber_notices' );
-	}
-
-	/**
-	 * The queue is stored as a site option on every install — on single site that call falls through
-	 * to the plain option table — so there is one place to read it from.
-	 *
-	 * @return array<string,string>
-	 */
-	private function notice_queue(): array {
-		$queue = get_site_option( 'give_plugin_absorber_notices', [] );
-
-		return is_array( $queue ) ? $queue : [];
 	}
 
 	/**

@@ -10,8 +10,91 @@ When a sub-plugin's standalone counterpart is still active:
 | `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
 | `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
 
-Set one per sub-plugin with the `conflict_policy` key, or decide it at runtime with the
-`conflict_policy` [filter](filters.md), which has the final say.
+Set one per sub-plugin with the `conflict_policy` key — a constant, or a `callable( Sub_Plugin ):
+string`. The `conflict_policy` [filter](filters.md) runs after that and has the final say:
+
+```php
+// In the config: stand down when a newer standalone supersedes the bundled copy.
+'conflict_policy' => static fn( Sub_Plugin $sub ) => give_standalone_is_newer( $sub )
+    ? Conflict_Policy::DEFER
+    : Conflict_Policy::DEACTIVATE,
+
+// Anywhere, and last:
+add_filter( 'give/plugin_absorber/conflict_policy', static function ( $policy, $sub ) {
+    return $sub->get_slug() === 'give-recurring' ? Conflict_Policy::NOTICE_ONLY : $policy;
+}, 10, 2 );
+```
+
+**An unrecognised policy is treated as `NOTICE_ONLY`**, never as consent to deactivate.
+`Conflict_Policy::is_valid()` decides, so a typo like `'defered'` — in a policy a host persisted in
+an option, or in whatever that filter returned — only produces a notice. A value nobody chose must
+not turn off a plugin somebody chose.
+
+A policy is only reached for a sub-plugin that is enabled, names a `standalone_plugin_basename`, and
+whose standalone is active right now; everything else is skipped before any policy is read.
+
+## When resolution runs
+
+At `plugins_loaded` priority 5, one ahead of the load pass at 6: a standalone that survives the
+conflict defines the guard constant as it loads, and the load pass has to see that. Priority 5 is
+also the deadline for `Absorber::boot()`, since this is the first step it has to wire.
+
+It runs **only on an interactive admin `GET`** — not WP-CLI, not cron, not ajax, not a form POST —
+because resolving can deactivate a plugin and end the request with a redirect. Ungated, a visitor's
+checkout POST would come back as a 302 that discards what was submitted and drops the order, and a
+WP-CLI command would exit having printed nothing, because `header()` is a no-op under the CLI SAPI.
+Waiting costs nothing: the standalone is still there to detect on the next page view.
+
+**A `GET` that carries an action is skipped too.** `update.php?action=upgrade-plugin`,
+`plugins.php?action=activate` and the `admin-post.php` links are all admin `GET`s that *do* something,
+and a redirect discards their work exactly as it would a POST's — the user clicks Update and lands on
+a list screen with nothing updated. Anything naming an `action` or `action2`, and the endpoints that
+exist only to perform work, wait for the next plain page view. This is deliberately blunt: a
+read-only `post.php?action=edit` waits as well.
+
+It also requires the capability that matches what deactivation actually does. Deactivating a
+standalone is network-wide wherever a network exists, so the check is `manage_network_plugins` on
+multisite and `activate_plugins` otherwise — `activate_plugins` alone does not imply authority over
+every site on a network. The gate matters at all because `plugins_loaded` fires well before
+`auth_redirect()`, so an unauthenticated GET of an admin URL reaches this code on its way to the
+login screen. It applies to every policy rather than only to `deactivate`, which costs nothing — the
+other policies just queue a notice, and a notice is neither shown nor cleared for a user without the
+same capability, so nothing is consumed by waiting for one who has it.
+
+Both gates live in `Conflict\Gatekeeper`, and the hook asks it rather than the resolver, so binding
+your own `Conflict\Contracts\Resolver_Interface` cannot drop either by omission. They are asked in
+two halves either side of `Conflict\Detector::has_conflict()`, which only reports: the request-shape
+gate first, then the detector, then the capability. The capability check is last because
+`current_user_can()` resolves and caches the current user, and at priority 5 that lands ahead of any
+`determine_current_user` filter a plugin registers from its own `plugins_loaded` callback — an SSO or
+JWT plugin hooked at the default priority would never be consulted, and its users would be treated as
+signed out. Asking the detector rather than the resolver keeps detection off the contract a host
+rebinds, and means the resolver is built only on a request that passes both gates and has something
+to resolve.
+
+## The redirect
+
+The standalone's code is already in memory by the time the conflict is resolved — WordPress included
+it before `plugins_loaded` — so the redirect is how the request sheds it. The destination is **the
+screen being requested**, not the one the user came from: it re-renders without the standalone, and
+the admin stays where they asked to be. `/wp-admin/` and the network and user admin roots mean the
+dashboard. The update screens (`update.php`, `update-core.php`) go to `plugins.php` instead, because
+reloading one of those would re-run an update, and anything that names no usable admin screen falls
+back to `plugins.php`.
+
+The destination is assembled from the screen name and query string through `admin_url()` — or
+`network_admin_url()` in the network admin — never from the request URI itself, so nothing in the URI
+decides the host. There is no redirect loop: the next request has no active standalone, so nothing
+resolves.
+
+With several sub-plugins in conflict, all of them are resolved before the one redirect at the end,
+and the redirect is skipped entirely once headers have been sent — which is what a host booting too
+late produces, since the `_doing_it_wrong()` notice is output. The request then finishes rendering
+instead of dying blank.
+
+`Conflict\Redirector` makes that decision and returns it; the redirect itself is the resolver's. The
+merge notice is queued before either, so the explanation survives whether or not the request ends in
+a redirect.
 
 ## The load guard
 

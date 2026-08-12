@@ -6,9 +6,11 @@
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Boot\Scheduler;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
+use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
@@ -84,6 +86,18 @@ final class Provider implements Provider_Interface {
 			Detector::class,
 			static function () use ( $container ): Detector {
 				return new Detector( $container->get( Plugin_Checker_Interface::class ) );
+			}
+		);
+
+		$this->bind_once(
+			Resolver_Interface::class,
+			static function () use ( $container ): Resolver {
+				return new Resolver(
+					$container->get( Detector::class ),
+					$container->get( Plugin_Deactivator_Interface::class ),
+					$container->get( Queue_Interface::class ),
+					$container->get( Redirector::class )
+				);
 			}
 		);
 

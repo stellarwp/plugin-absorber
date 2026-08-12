@@ -1,0 +1,766 @@
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+namespace Nexcess\PluginAbsorber\Tests\Unit\Conflict;
+
+use Codeception\TestCase\WPTestCase;
+use Generator;
+use lucatume\WPBrowser\Traits\UopzFunctions;
+use Nexcess\PluginAbsorber\Absorber;
+use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
+use Nexcess\PluginAbsorber\Conflict\Detector;
+use Nexcess\PluginAbsorber\Conflict\Redirector;
+use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Conflict_Policy;
+use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
+use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
+use Nexcess\PluginAbsorber\Tests\Support\TestException;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithRequestMethod;
+
+/**
+ * What the default resolver does once a conflict has been found, policy branch by policy branch.
+ *
+ * Who is allowed to have a conflict resolved is not asked here: that is `Conflict\Gatekeeper`, and it
+ * is settled before `resolve_all()` is called at all. So every resolution test in this file is already
+ * past the gate. Whether there is a conflict to resolve is not asked here either — `Conflict\Detector`
+ * answers that, on its own contract, and `DetectorTest` is where both the answer and the fact that
+ * asking changes nothing are pinned.
+ *
+ * The four collaborators are required constructor arguments, so the resolver under test is the one the
+ * container builds — the same object a host gets. A test that is about who the resolver talks to binds
+ * its own double, and *when* it binds depends on the kind of id: the provider stands down for an id
+ * the container could not answer unprompted, which is true of an interface and false of a class. So an
+ * interface seam is bound before the provider runs, exactly as a host would, and a concrete class after
+ * it, because `has()` is true for any class that exists and the provider rebinds it regardless. The
+ * rest let the real ones through and assert on what they left behind.
+ *
+ * @since 1.0.0
+ */
+class ResolverTest extends WPTestCase {
+	use UopzFunctions;
+	use WithContainer;
+	use WithHaltedRedirects;
+	use WithNoticeQueue;
+	use WithRequestMethod;
+
+	/**
+	 * Every deactivate_plugins() call, as the arguments it was made with.
+	 *
+	 * Recorded from the function rather than from a double, because two of these tests are about the
+	 * arguments core is left to default — which a double would only restate.
+	 *
+	 * @var array<int,array<string,mixed>>
+	 */
+	private $deactivations = [];
+
+	/**
+	 * @var string|null
+	 */
+	private $request_uri;
+
+	public function setUp(): void {
+		parent::setUp();
+
+		Absorber_State::reset();
+		Config_State::reset();
+		Config::set_hook_prefix( 'give' );
+		$this->set_up_container();
+		$this->clear_notices();
+
+		// uopz cannot stub a function that does not exist yet.
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+		$this->deactivations = [];
+
+		// The request the whole file describes: an admin GET of an ordinary screen. Both keys are set
+		// rather than inherited, because the redirect reads REQUEST_URI for the screen to re-request and
+		// $_SERVER outlives whichever test wrote to it last. The method itself gates nothing here — that
+		// is the gatekeeper's business — but a request with a destination and no method is not one.
+		$this->set_request_method( 'GET' );
+		$this->request_uri      = $_SERVER['REQUEST_URI'] ?? null;
+		$_SERVER['REQUEST_URI'] = '/wp-admin/options-general.php';
+
+		// Stated rather than inherited, because under CLI the real answer is whatever the test runner
+		// has printed so far: PHP records headers as sent the moment anything reaches the output layer,
+		// so an unstubbed headers_sent() would make every redirect assertion in this file depend on
+		// which printer PHPUnit was configured with. The test that is about the sent-headers branch says
+		// so itself.
+		$this->setFunctionReturn( 'headers_sent', false );
+
+		// uopz runs a replacement with no class scope, so $this and self:: are both fatal inside this
+		// closure. Bind a reference to the property instead. See tests/README.md.
+		$deactivations = &$this->deactivations;
+
+		$this->setFunctionReturn(
+			'deactivate_plugins',
+			static function ( $plugins, $silent = false, $network_wide = null ) use ( &$deactivations ) {
+				$deactivations[] = [
+					'plugins'      => $plugins,
+					'silent'       => $silent,
+					'network_wide' => $network_wide,
+				];
+			},
+			true
+		);
+	}
+
+	public function tearDown(): void {
+		if ( $this->request_uri === null ) {
+			unset( $_SERVER['REQUEST_URI'] );
+		} else {
+			$_SERVER['REQUEST_URI'] = $this->request_uri;
+		}
+
+		$this->restore_request_method();
+		$this->clear_notices();
+		Absorber_State::reset();
+		Config_State::reset();
+		$this->tear_down_container();
+		parent::tearDown();
+	}
+
+	public function test_the_loader_resolves_the_default_resolver(): void {
+		$this->assertInstanceOf( Resolver::class, Absorber::resolver() );
+	}
+
+	public function test_the_default_resolver_satisfies_the_contract(): void {
+		$this->assertInstanceOf( Resolver_Interface::class, $this->resolver() );
+	}
+
+	/**
+	 * The point of the required constructor arguments. Every peer arrives from the container, so a host
+	 * that rebinds one has it reached — and nothing in the run touches the option the default notice
+	 * queue is backed by, which is what makes the resolver testable without standing up global state.
+	 *
+	 * Detection arrives as a peer like any other, which is the shape the resolver gained when the probe
+	 * left its contract: how a conflict is found is `Conflict\Detector`'s to change, and what to do
+	 * about one is this class's.
+	 */
+	public function test_the_collaborators_come_from_the_container(): void {
+		$detector = new class() extends Detector {
+			/**
+			 * @var string[]
+			 */
+			public $asked = [];
+
+			/**
+			 * No plugin checker, and no parent constructor call. What this class stands in for is the
+			 * answer, not the way it is reached — and how a detector reaches one is DetectorTest's.
+			 */
+			public function __construct() {
+			}
+
+			/**
+			 * @param Sub_Plugin $sub_plugin Sub-plugin to test.
+			 *
+			 * @return bool
+			 */
+			public function is_in_conflict( Sub_Plugin $sub_plugin ): bool {
+				$this->asked[] = $sub_plugin->get_slug();
+
+				return true;
+			}
+		};
+
+		$deactivator = new class() implements Plugin_Deactivator_Interface {
+			/**
+			 * @var string[]
+			 */
+			public $deactivated = [];
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return void
+			 */
+			public function deactivate( string $basename ): void {
+				$this->deactivated[] = $basename;
+			}
+		};
+
+		$notices = new Spy_Queue();
+
+		// The interface seams go in first, which is where a host binds them and where the guarantee
+		// lives: nothing can build an interface unprompted, so the container answering to one means a
+		// binding was made, and the provider leaves it alone.
+		$container = new Test_Container();
+		$container->singleton(
+			Plugin_Deactivator_Interface::class,
+			static function () use ( $deactivator ): Plugin_Deactivator_Interface {
+				return $deactivator;
+			}
+		);
+		$container->singleton(
+			Queue_Interface::class,
+			static function () use ( $notices ): Queue_Interface {
+				return $notices;
+			}
+		);
+
+		$this->set_up_container( $container );
+
+		// The detector is a concrete class, so the same question has no answer before the provider
+		// runs: the container reports it can return a Detector whether or not anyone bound one, and
+		// the provider cannot tell a deliberate binding from mere autowirability. It therefore binds
+		// its own, and a double put in above would be silently replaced by the real class — asserted
+		// against here as a detector that was never asked.
+		$container->singleton(
+			Detector::class,
+			static function () use ( $detector ): Detector {
+				return $detector;
+			}
+		);
+
+		$this->register();
+
+		$this->capture_resolution();
+
+		$this->assertSame( [ 'give-recurring' ], $detector->asked );
+		$this->assertSame( [ 'give-recurring/give-recurring.php' ], $deactivator->deactivated );
+		$this->assertSame( [ 'give-recurring' ], $notices->merge_notices );
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'The bound queue stands in for the option-backed one, which must be left untouched.'
+		);
+		$this->assertSame(
+			[],
+			$this->deactivations,
+			'A bound deactivator is what deactivates; WordPress must not have been called as well.'
+		);
+	}
+
+	/**
+	 * The redirector is handed the current request, unslashed — not the referrer. What the user is
+	 * looking at is what has to be re-rendered without the standalone's code in memory, and core slashes
+	 * $_SERVER on the way in, so a query string with an apostrophe in it would otherwise gain a
+	 * backslash every time a conflict was resolved.
+	 */
+	public function test_it_asks_the_redirector_where_to_send_the_current_request(): void {
+		$redirector = new class() extends Redirector {
+			/**
+			 * @var string[]
+			 */
+			public $asked = [];
+
+			/**
+			 * @param mixed $request_uri Request URI under test.
+			 *
+			 * @return string
+			 */
+			public function after_deactivation( $request_uri ): string {
+				$this->asked[] = is_string( $request_uri ) ? $request_uri : '';
+
+				return admin_url( 'tools.php' );
+			}
+		};
+
+		// Bound after the provider has run, which for a concrete class is the only order that leaves the
+		// double in place: the container reports it can return a `Redirector` whether or not one was
+		// ever bound, so the provider cannot read an existing answer as a host's choice and binds its
+		// own over the top. Binding first — the order an interface seam wants — would hand the real
+		// redirector to the resolver and leave `$redirector->asked` empty for a reason no assertion
+		// here would name.
+		$container = $this->set_up_container();
+		$container->singleton(
+			Redirector::class,
+			static function () use ( $redirector ): Redirector {
+				return $redirector;
+			}
+		);
+
+		$this->standalone_is( true );
+		$this->register();
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=O\\\'Brien';
+
+		$location = $this->capture_resolution();
+
+		$this->assertSame( [ '/wp-admin/edit.php?s=O\'Brien' ], $redirector->asked );
+		$this->assertSame( admin_url( 'tools.php' ), $location );
+	}
+
+	/**
+	 * A request with no REQUEST_URI is not hypothetical: the too-late fallback runs this sequence
+	 * inline, and a host may have booted from something that never set one.
+	 */
+	public function test_it_survives_a_request_with_no_uri(): void {
+		$redirector = new class() extends Redirector {
+			/**
+			 * @var string[]
+			 */
+			public $asked = [];
+
+			/**
+			 * @param mixed $request_uri Request URI under test.
+			 *
+			 * @return string
+			 */
+			public function after_deactivation( $request_uri ): string {
+				$this->asked[] = is_string( $request_uri ) ? $request_uri : '';
+
+				return admin_url( 'plugins.php' );
+			}
+		};
+
+		// After the provider, for the reason the test above states: a concrete class id is one the
+		// provider rebinds whatever was there before it.
+		$container = $this->set_up_container();
+		$container->singleton(
+			Redirector::class,
+			static function () use ( $redirector ): Redirector {
+				return $redirector;
+			}
+		);
+
+		$this->standalone_is( true );
+		$this->register();
+		unset( $_SERVER['REQUEST_URI'] );
+
+		$location = $this->capture_resolution();
+
+		$this->assertSame( [ '' ], $redirector->asked );
+		$this->assertSame( admin_url( 'plugins.php' ), $location );
+	}
+
+	public function test_deactivate_deactivates_notifies_and_redirects(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
+
+		$location = $this->capture_resolution();
+
+		$this->assertCount( 1, $this->deactivations );
+		$this->assertSame( 'give-recurring/give-recurring.php', $this->deactivations[0]['plugins'] );
+		$this->assertArrayHasKey( 'give-recurring:merge', $this->queued_notices() );
+
+		// Through the real redirector, so the screen the user was on is the screen they get back. Which
+		// exact URL each referrer maps to is RedirectorTest's subject; that it is this screen and not
+		// some default is this one's.
+		$this->assertStringContainsString( 'options-general.php', $location );
+	}
+
+	/**
+	 * Two bundled plugins, both standalones active. Resolution has to reach the second one: an `exit`
+	 * inside the loop would leave its standalone running with nothing said about it, and would take the
+	 * load pass at the next priority down with it.
+	 *
+	 * One redirect, not two, is asserted by the shape of the stub — it throws, so a redirect taken on
+	 * the first sub-plugin could not have been followed by the second's deactivation.
+	 */
+	public function test_it_resolves_every_conflict_and_redirects_once(): void {
+		$this->standalone_is( true );
+		$this->register();
+		$this->register_fee_recovery();
+
+		$this->capture_resolution();
+
+		$this->assertSame(
+			[ 'give-recurring/give-recurring.php', 'give-fee-recovery/give-fee-recovery.php' ],
+			array_column( $this->deactivations, 'plugins' )
+		);
+
+		$queued = $this->queued_notices();
+		$this->assertArrayHasKey( 'give-recurring:merge', $queued );
+		$this->assertArrayHasKey( 'give-fee-recovery:merge', $queued, 'The second conflict is the one an early exit loses.' );
+	}
+
+	/**
+	 * The inline fallback runs immediately after a _doing_it_wrong() that prints on a debugging site, so
+	 * the headers are already gone by the time this code runs. Redirecting there sets no Location and
+	 * the exit behind it would end the request on a blank page — with the merge notice queued and
+	 * nothing left able to draw it.
+	 */
+	public function test_it_deactivates_without_redirecting_once_the_headers_are_sent(): void {
+		// Overrides the false setUp establishes for every other test here.
+		$this->setFunctionReturn( 'headers_sent', true );
+
+		$this->standalone_is( true );
+		$this->register();
+
+		$this->resolve_all();
+
+		$this->assertCount( 1, $this->deactivations );
+		$this->assertArrayHasKey(
+			'give-recurring:merge',
+			$this->queued_notices(),
+			'The request goes on rendering, so the notice it will render must still be there.'
+		);
+	}
+
+	public function test_deactivate_is_the_default_policy(): void {
+		$this->standalone_is( true );
+		$this->register();
+
+		$this->capture_resolution();
+
+		$this->assertCount( 1, $this->deactivations );
+	}
+
+	/**
+	 * Silent, and with no $network_wide argument — core's default of null is what handles both
+	 * scopes, and the standalone's deactivation hook must not run at plugins_loaded.
+	 *
+	 * Asserted here as well as in PluginDeactivatorTest, because this is the path that actually
+	 * deactivates a site's plugin: a resolver that reached WordPress by some other route would leave
+	 * that unit test green and the site 404ing.
+	 */
+	public function test_it_deactivates_silently_and_lets_core_decide_the_scope(): void {
+		$this->standalone_is( true );
+		$this->register();
+
+		$this->capture_resolution();
+
+		$this->assertTrue( $this->deactivations[0]['silent'], 'An unattended deactivation must be silent.' );
+		$this->assertNull(
+			$this->deactivations[0]['network_wide'],
+			'Core enters the network branch on false !== $network_wide and the blog branch on true !== $network_wide, so null takes both.'
+		);
+	}
+
+	/**
+	 * Against real core rather than a stub, because the whole reason the scope argument was
+	 * dropped is a claim about what core does with the default.
+	 */
+	public function test_it_really_deactivates_a_site_active_standalone(): void {
+		$this->unsetFunctionReturn( 'deactivate_plugins' );
+
+		$basename = 'absorber-fixture/absorber-fixture.php';
+		update_option( 'active_plugins', [ $basename ] );
+
+		$this->register( [ 'standalone_plugin_basename' => $basename ] );
+
+		$this->capture_resolution();
+
+		$this->assertNotContains( $basename, (array) get_option( 'active_plugins', [] ) );
+
+		delete_option( 'active_plugins' );
+	}
+
+	public function test_it_really_deactivates_a_network_active_standalone(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Network activation only exists on multisite.' );
+		}
+
+		$this->unsetFunctionReturn( 'deactivate_plugins' );
+
+		$basename = 'absorber-fixture/absorber-fixture.php';
+		update_site_option( 'active_sitewide_plugins', [ $basename => time() ] );
+
+		$this->register( [ 'standalone_plugin_basename' => $basename ] );
+
+		$this->capture_resolution();
+
+		$this->assertArrayNotHasKey(
+			$basename,
+			(array) get_site_option( 'active_sitewide_plugins', [] ),
+			'Omitting $network_wide must still clear a network activation.'
+		);
+
+		delete_site_option( 'active_sitewide_plugins' );
+	}
+
+	/**
+	 * The notice is queued after the deactivation, so it must not depend on the plugin still
+	 * being active — and it is the only record the site owner gets.
+	 */
+	public function test_the_merge_notice_is_queued_before_the_redirect_halts_the_request(): void {
+		$this->standalone_is( true );
+		$this->register();
+
+		$this->capture_resolution();
+
+		$this->assertArrayHasKey( 'give-recurring:merge', $this->queued_notices() );
+	}
+
+	public function test_defer_does_nothing_at_all(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => Conflict_Policy::DEFER ] );
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+		$this->assertSame( [], $this->queued_notices() );
+	}
+
+	public function test_notice_only_notifies_without_deactivating(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => Conflict_Policy::NOTICE_ONLY ] );
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+		$this->assertArrayHasKey( 'give-recurring:conflict', $this->queued_notices() );
+	}
+
+	/**
+	 * Mixed policies on one site. The talking branch and the deactivating branch both run, and the one
+	 * redirect at the end belongs to the deactivation — a notice-only conflict on its own never reaches
+	 * it, which is what `test_notice_only_notifies_without_deactivating` pins.
+	 */
+	public function test_a_notice_only_conflict_alongside_a_deactivation_still_redirects(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => Conflict_Policy::NOTICE_ONLY ] );
+		$this->register_fee_recovery( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
+
+		$this->capture_resolution();
+
+		$queued = $this->queued_notices();
+		$this->assertArrayHasKey( 'give-recurring:conflict', $queued );
+		$this->assertArrayHasKey( 'give-fee-recovery:merge', $queued );
+		$this->assertCount( 1, $this->deactivations, 'Only the deactivating sub-plugin is deactivated.' );
+	}
+
+	/**
+	 * A policy read from an option, or returned by someone else's filter, can be anything.
+	 * Falling through to the destructive branch on a typo would turn off a plugin the site owner
+	 * deliberately activated.
+	 *
+	 * @dataProvider unknown_policies
+	 *
+	 * @param string $policy Policy under test.
+	 */
+	public function test_an_unknown_policy_takes_the_conservative_branch( string $policy ): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => $policy ] );
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations, 'An unrecognised policy must never deactivate.' );
+		$this->assertArrayHasKey( 'give-recurring:conflict', $this->queued_notices() );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function unknown_policies(): Generator {
+		yield 'typo'       => [ 'defered' ];
+		yield 'empty'      => [ '' ];
+		yield 'wrong case' => [ 'DEACTIVATE' ];
+	}
+
+	public function test_a_callable_policy_selects_the_branch(): void {
+		$this->standalone_is( true );
+		$this->register(
+			[
+				'conflict_policy' => static function ( Sub_Plugin $sub_plugin ) {
+					return $sub_plugin->get_slug() === 'give-recurring'
+						? Conflict_Policy::DEFER
+						: Conflict_Policy::DEACTIVATE;
+				},
+			]
+		);
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations, 'The callable chose DEFER for this slug.' );
+	}
+
+	public function test_the_filter_can_override_the_policy(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'conflict_policy' => Conflict_Policy::DEACTIVATE ] );
+
+		add_filter(
+			'give/plugin_absorber/conflict_policy',
+			static function () {
+				return Conflict_Policy::DEFER;
+			}
+		);
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+	}
+
+	public function test_it_skips_a_disabled_sub_plugin(): void {
+		$this->standalone_is( true );
+		$this->register( [ 'enabled' => false ] );
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+		$this->assertSame( [], $this->queued_notices(), 'A skipped sub-plugin has nothing to say to the site owner.' );
+	}
+
+	public function test_it_skips_when_the_standalone_is_not_active(): void {
+		$this->standalone_is( false );
+		$this->register();
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+		$this->assertSame( [], $this->queued_notices(), 'There is no conflict to report when the standalone is gone.' );
+	}
+
+	public function test_it_skips_a_sub_plugin_with_no_standalone(): void {
+		$this->standalone_is( true );
+		Absorber::register(
+			[
+				'slug'                   => 'give-fee-recovery',
+				'bundled_plugin_file'    => '/tmp/give-fee-recovery.php',
+				'plugin_loaded_constant' => 'GIVE_FEE_RECOVERY_VERSION_FIXTURE',
+			]
+		);
+
+		$this->resolve_all();
+
+		$this->assertSame( [], $this->deactivations );
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'A sub-plugin that names no standalone can never be in conflict with one.'
+		);
+	}
+
+	public function test_resolve_all_needs_a_hook_prefix(): void {
+		$this->standalone_is( true );
+		$this->register();
+
+		$resolver  = $this->resolver();
+		$container = $this->container();
+
+		// The prefix goes, the container stays: this is about the missing prefix, and a resolver that
+		// could not reach its registrar would throw the same exception for the other reason.
+		Config_State::reset();
+		Config::set_container( $container );
+
+		$this->expectException( Config_Exception::class );
+
+		$resolver->resolve_all();
+	}
+
+	/**
+	 * The resolver the container builds, which is the one the conflict step reaches.
+	 *
+	 * @return Resolver_Interface
+	 */
+	private function resolver(): Resolver_Interface {
+		return $this->resolve( Resolver_Interface::class );
+	}
+
+	/**
+	 * Run resolution on a path that must not end the request.
+	 *
+	 * @return void
+	 */
+	private function resolve_all(): void {
+		$resolver = $this->resolver();
+
+		$this->without_ending_the_request(
+			static function () use ( $resolver ): void {
+				$resolver->resolve_all();
+			}
+		);
+	}
+
+	/**
+	 * Run something that must return rather than redirect.
+	 *
+	 * The redirect is stubbed to throw rather than left alone: unstubbed, a resolver that redirected
+	 * anyway would reach the real `wp_safe_redirect()` and the `exit` behind it, taking the whole test
+	 * process with it. Throwing instead turns that into one failed test naming the path it happened on.
+	 *
+	 * @param callable $action The call under test.
+	 *
+	 * @return void
+	 */
+	private function without_ending_the_request( callable $action ): void {
+		$message = 'The resolver must not end the request on this path.';
+
+		$this->setFunctionReturn(
+			'wp_safe_redirect',
+			static function () use ( $message ) {
+				throw new TestException( $message );
+			},
+			true
+		);
+
+		try {
+			$action();
+		} catch ( TestException $exception ) {
+			$this->fail( $exception->getMessage() );
+		} finally {
+			// In a finally block so a failed assertion cannot strand the stub for the rest of the
+			// process, where a later test's redirect would throw for no reason it can see.
+			$this->unsetFunctionReturn( 'wp_safe_redirect' );
+		}
+	}
+
+	/**
+	 * Run resolution on a path that must redirect and terminate, and return where it sent the user.
+	 *
+	 * @return string
+	 */
+	private function capture_resolution(): string {
+		$resolver = $this->resolver();
+
+		return $this->capture_redirect(
+			static function () use ( $resolver ): void {
+				$resolver->resolve_all();
+			}
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $overrides Config overrides.
+	 *
+	 * @return void
+	 */
+	private function register( array $overrides = [] ): void {
+		Absorber::register(
+			array_merge(
+				[
+					'slug'                       => 'give-recurring',
+					'bundled_plugin_file'        => '/tmp/give-recurring.php',
+					'plugin_loaded_constant'     => 'GIVE_RECURRING_VERSION_FIXTURE',
+					'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+				],
+				$overrides
+			)
+		);
+	}
+
+	/**
+	 * A second bundled sub-plugin, for the tests about a site that absorbed more than one.
+	 *
+	 * @param array<string,mixed> $overrides Config overrides.
+	 *
+	 * @return void
+	 */
+	private function register_fee_recovery( array $overrides = [] ): void {
+		$this->register(
+			array_merge(
+				[
+					'slug'                       => 'give-fee-recovery',
+					'bundled_plugin_file'        => '/tmp/give-fee-recovery.php',
+					'plugin_loaded_constant'     => 'GIVE_FEE_RECOVERY_VERSION_FIXTURE',
+					'standalone_plugin_basename' => 'give-fee-recovery/give-fee-recovery.php',
+				],
+				$overrides
+			)
+		);
+	}
+
+	/**
+	 * Only is_plugin_active(), which is the one function Plugin_Checker::is_active() calls — and it
+	 * ORs the network check in itself, so stubbing is_plugin_active_for_network() alongside it
+	 * would be inert and would read as though a network path were being exercised.
+	 *
+	 * @param bool $active Whether the standalone is active.
+	 *
+	 * @return void
+	 */
+	private function standalone_is( bool $active ): void {
+		$this->setFunctionReturn( 'is_plugin_active', $active );
+	}
+}

@@ -6,6 +6,7 @@
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Boot\Scheduler;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
@@ -63,6 +64,17 @@ final class Absorber {
 	 */
 	public static function notices(): Queue_Interface {
 		return self::collaborator( Queue_Interface::class );
+	}
+
+	/**
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no container has been set, or its binding is unusable.
+	 *
+	 * @return Resolver_Interface
+	 */
+	public static function resolver(): Resolver_Interface {
+		return self::collaborator( Resolver_Interface::class );
 	}
 
 	/**

@@ -9,6 +9,7 @@ use Codeception\TestCase\WPTestCase;
 use Generator;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
@@ -152,8 +153,9 @@ class AbsorberTest extends WPTestCase {
 	 * @return Generator<string,array{0:string,1:class-string}>
 	 */
 	public static function collaborator_accessors(): Generator {
-		yield 'the registrar'    => [ 'registrar', Registrar::class ];
-		yield 'the notice queue' => [ 'notices', Queue::class ];
+		yield 'the registrar'         => [ 'registrar', Registrar::class ];
+		yield 'the notice queue'      => [ 'notices', Queue::class ];
+		yield 'the conflict resolver' => [ 'resolver', Resolver::class ];
 	}
 
 	/**
@@ -175,8 +177,9 @@ class AbsorberTest extends WPTestCase {
 	 * @return Generator<string,array{0:string}>
 	 */
 	public static function accessor_names(): Generator {
-		yield 'the registrar'    => [ 'registrar' ];
-		yield 'the notice queue' => [ 'notices' ];
+		yield 'the registrar'         => [ 'registrar' ];
+		yield 'the notice queue'      => [ 'notices' ];
+		yield 'the conflict resolver' => [ 'resolver' ];
 	}
 
 	/**
