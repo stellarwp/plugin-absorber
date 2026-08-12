@@ -82,10 +82,67 @@ class LoaderTest extends WPTestCase {
 
 		Config::set_container( $container );
 
-		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( Registrar_Interface::class );
+		try {
+			Loader::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+			$this->assertStringContainsString(
+				'does not implement',
+				$exception->getMessage(),
+				'A binding that built fine and is simply the wrong type must not be reported as one '
+					. 'the container could not build: the two send the host to different files.'
+			);
+		}
+	}
 
-		Loader::registrar();
+	/**
+	 * A bound factory may throw, and a container asked for something it cannot build throws its own
+	 * exception type; the contract is explicit that has() true does not promise get() succeeds.
+	 * Left uncaught, the host gets a fatal from a vendor namespace at plugins_loaded that names
+	 * neither this library nor the binding at fault.
+	 */
+	public function test_it_reports_a_container_that_throws_as_a_configuration_error(): void {
+		$failure   = new RuntimeException( 'the host factory needed a database connection' );
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function () use ( $failure ): Registrar_Interface {
+				throw $failure;
+			}
+		);
+		$this->set_up_container( $container );
+
+		try {
+			Loader::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString(
+				Registrar_Interface::class,
+				$exception->getMessage(),
+				'The message has to name the binding that could not be built.'
+			);
+			$this->assertContains(
+				$failure,
+				$this->previous_chain( $exception ),
+				'The original failure has to stay reachable, or the real cause is lost.'
+			);
+		}
+	}
+
+	/**
+	 * The missing-container report is this library's own sentence, in its own words. Wrapping it in
+	 * the build-failure message would bury it a level deeper and name an interface the host never
+	 * bound anything to, when what it has to hear is that it set no container at all.
+	 */
+	public function test_a_missing_container_is_not_reported_as_a_failed_binding(): void {
+		try {
+			Loader::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringNotContainsString( 'failed to build', $exception->getMessage() );
+			$this->assertNull( $exception->getPrevious(), 'There is no earlier failure to point at.' );
+		}
 	}
 
 	/**
@@ -272,10 +329,6 @@ class LoaderTest extends WPTestCase {
 	 * A binding that cannot be built leaves the registrations buffered, so the read that comes after
 	 * the host fixes its container still has them. Emptying the buffer before the registrar resolved
 	 * would drop them silently and load nothing.
-	 *
-	 * What the container throws is the container's business — the contract is explicit that has()
-	 * true does not promise get() succeeds — so this catches Throwable rather than pinning a type
-	 * this library does not own.
 	 */
 	public function test_registrations_survive_a_registrar_the_container_cannot_build(): void {
 		$container = new Test_Container();
@@ -293,7 +346,7 @@ class LoaderTest extends WPTestCase {
 
 		try {
 			Loader::all();
-		} catch ( Throwable $exception ) {
+		} catch ( Config_Exception $exception ) {
 			$failed = true;
 		}
 
@@ -398,5 +451,25 @@ class LoaderTest extends WPTestCase {
 			'bundled_plugin_file'    => "/tmp/{$slug}/{$slug}.php",
 			'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION_FIXTURE',
 		];
+	}
+
+	/**
+	 * Every exception behind the given one, nearest first.
+	 *
+	 * Walked rather than read a single level deep: a container is entitled to wrap what a factory
+	 * threw in its own exception type before it reaches us, and it does.
+	 *
+	 * @param Throwable $exception Exception to walk.
+	 *
+	 * @return Throwable[]
+	 */
+	private function previous_chain( Throwable $exception ): array {
+		$chain = [];
+
+		for ( $previous = $exception->getPrevious(); $previous !== null; $previous = $previous->getPrevious() ) {
+			$chain[] = $previous;
+		}
+
+		return $chain;
 	}
 }

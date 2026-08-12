@@ -45,6 +45,18 @@ class RunnerTest extends WPTestCase {
 	private $constants = [];
 
 	/**
+	 * Every `_doing_it_wrong()` message seen since the recorder went on.
+	 *
+	 * @var string[]
+	 */
+	private $incorrect_usage_messages = [];
+
+	/**
+	 * @var callable|null
+	 */
+	private $incorrect_usage_message_listener = null;
+
+	/**
 	 * Every value the should_load filter was called with.
 	 *
 	 * A property rather than a local, because the recorder is a closure the filter keeps: a local
@@ -78,6 +90,7 @@ class RunnerTest extends WPTestCase {
 		$this->constants = [];
 
 		$this->stop_expecting_incorrect_usage();
+		$this->stop_recording_incorrect_usage_messages();
 		$this->clear_notices();
 		Loader_State::reset();
 		Config_State::reset();
@@ -442,6 +455,36 @@ class RunnerTest extends WPTestCase {
 	}
 
 	/**
+	 * The same guarantee for the read itself. Reading flushes the registration buffer, and the
+	 * registrar refuses a slug it already holds — a throw that arrives inside plugins_loaded, where it
+	 * would take down the front end and wp-admin together and lock the developer out of the screen
+	 * where the duplicate registration could be undone.
+	 */
+	public function test_a_duplicate_slug_is_reported_rather_than_fataling_the_request(): void {
+		// Two registrations of the default slug, each with a bundled fixture of its own — one file
+		// behind both would load once for the second registration and hide the skip under a dedupe.
+		$this->register();
+		$this->register();
+
+		$this->expect_incorrect_usage();
+		$this->record_incorrect_usage_messages();
+
+		$this->runner()->load_all();
+
+		// Reaching this line at all is half of what is under test: load_all() has to return.
+		$this->assertSame(
+			0,
+			$this->bundled_plugin_loads(),
+			'A read that failed has no list to load from, so nothing may load.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+		$this->assert_a_reported_message_contains(
+			'give-recurring',
+			'The report has to name the slug, or it could have been raised for any other reason.'
+		);
+	}
+
+	/**
 	 * Registration is buffered, which is what lets the container arrive after the sub-plugins do —
 	 * and the registry is only half of that: the load path resolves the notice queue as well. A
 	 * collaborator pinned by an eager resolve inside register() would leave the host's binding bound
@@ -532,6 +575,61 @@ class RunnerTest extends WPTestCase {
 			$this->should_load_calls,
 			'The recorder must catch a call that really happened.'
 		);
+	}
+
+	/**
+	 * Keep the *message* of every incorrect-usage report, which the shared trait deliberately does not.
+	 *
+	 * `WithIncorrectUsage` pins that the library reported something against itself, which is all most
+	 * tests need. A test about one particular failure needs more: a report raised for an unrelated
+	 * reason — no hook prefix, no container — would otherwise satisfy it just as well.
+	 *
+	 * @return void
+	 */
+	private function record_incorrect_usage_messages(): void {
+		$messages = &$this->incorrect_usage_messages;
+
+		$listener = static function ( $function_name, $message ) use ( &$messages ): void {
+			$messages[] = is_string( $message ) ? $message : '';
+		};
+
+		$this->incorrect_usage_message_listener = $listener;
+
+		add_action( 'doing_it_wrong_run', $listener, 10, 2 );
+	}
+
+	/**
+	 * @param string $needle  Text one report has to carry.
+	 * @param string $message Why it has to.
+	 *
+	 * @return void
+	 */
+	private function assert_a_reported_message_contains( string $needle, string $message ): void {
+		$this->assertNotSame( [], $this->incorrect_usage_messages, 'Nothing was reported at all.' );
+		$this->assertStringContainsString(
+			$needle,
+			implode( PHP_EOL, $this->incorrect_usage_messages ),
+			$message
+		);
+	}
+
+	/**
+	 * Take the recorder back off. Call from tearDown, for the same reason the trait's own removal is
+	 * there: a failing assertion would otherwise leave it listening for the rest of the process.
+	 *
+	 * Removed by identity rather than by clearing the hook, which WordPress and the rest of the suite
+	 * are also on.
+	 *
+	 * @return void
+	 */
+	private function stop_recording_incorrect_usage_messages(): void {
+		if ( $this->incorrect_usage_message_listener !== null ) {
+			remove_action( 'doing_it_wrong_run', $this->incorrect_usage_message_listener );
+
+			$this->incorrect_usage_message_listener = null;
+		}
+
+		$this->incorrect_usage_messages = [];
 	}
 
 	private function clear_notices(): void {

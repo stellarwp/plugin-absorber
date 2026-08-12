@@ -34,6 +34,13 @@ break it — a `<p>` of your own is left as it is rather than nested inside anot
 use Nexcess\PluginAbsorber\Notices\Queue;
 
 add_action( 'admin_init', function () {
+    // Gates the read, not just the delete: `admin_init` fires for every logged-in user, and
+    // draining the queue for one who cannot act on it destroys the only warning an
+    // administrator was going to get.
+    if ( ! current_user_can( 'activate_plugins' ) ) {
+        return;
+    }
+
     $notices = get_site_option( Queue::option_name(), [] );
 
     if ( ! is_array( $notices ) || ! $notices ) {
@@ -50,9 +57,7 @@ add_action( 'admin_init', function () {
 
 `admin_init` runs before `all_admin_notices`, where the built-in rendering happens, so deleting the
 option there leaves ours nothing to draw and the notice is shown once, by you. Do the deleting: a
-notice read and not cleared is shown on every request forever. And keep the capability check —
-reading the option directly skips the `activate_plugins` gate `Queue::render()` applies, and a
-consumed notice is gone for the administrator who could have acted on it.
+notice read and not cleared is shown on every request forever.
 
 The queue is three classes: `Notices\Queue` decides what a notice says and who may consume it,
 `Notices\Store` keeps it, `Notices\Renderer` draws it. `Queue` takes both as constructor arguments

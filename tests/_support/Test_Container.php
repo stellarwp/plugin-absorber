@@ -42,15 +42,33 @@ class Test_Container implements ContainerInterface {
 	}
 
 	/**
-	 * Reports whether the id is bound.
+	 * Reports whether the container can return an entry for the id.
 	 *
 	 * Inherits DI52's permissive semantics: any existing *class* name reports true even with
 	 * nothing bound, because DI52 falls back to `class_exists()`. Interface names are unaffected.
+	 * `isBound()` below is the narrower question — whether a binding was actually made — and this
+	 * adapter exposes it so that a caller distinguishing the two reaches the same method on a real
+	 * host container.
 	 *
 	 * @inheritDoc
 	 */
 	public function has( string $id ) {
 		return $this->container->has( $id );
+	}
+
+	/**
+	 * Whether something was bound to the id, autowirable class names excluded.
+	 *
+	 * Not part of `ContainerInterface`. It is on DI52, and on the adapters hosts wrap DI52 in — the
+	 * example adapter in `stellarwp/container-contract` forwards unknown calls through `__call()` —
+	 * so a collaborator probing for it finds it here as it would in production.
+	 *
+	 * @param string $id Identifier of the entry to look for.
+	 *
+	 * @return bool
+	 */
+	public function isBound( string $id ): bool {
+		return $this->container->isBound( $id );
 	}
 
 	/**

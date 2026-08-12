@@ -95,7 +95,21 @@ final class Provider implements Provider_Interface {
 	 *
 	 * The host binds first and wins: this library's defaults are what a container has when nobody
 	 * said otherwise, and a provider that overwrote a binding would make the order in which a host
-	 * calls `set_container()` and `boot()` decide which implementation it gets.
+	 * calls `set_container()` and `boot()` decide which implementation it gets. It is also what
+	 * keeps a second `register()` harmless, instead of swapping in a fresh registrar and losing
+	 * every sub-plugin registered so far.
+	 *
+	 * The `class_exists()` half is what makes that question answerable at all. `has()` means "can
+	 * return an entry", not "the host bound this" -- di52 answers it with `isBound() ||
+	 * class_exists()`, so for a class id it is true before anything has been bound. Asked alone it
+	 * stands down every binding above whose id is a class, the explicit factories included, leaving
+	 * those collaborators autowired where the container autowires, broken where it does not, and
+	 * singletons nowhere. An interface no container can build unprompted, so there the same call
+	 * answers exactly what is being asked.
+	 *
+	 * What that costs is a host rebinding one of the concrete workers, which has to happen after
+	 * boot: nothing here can tell that binding apart from the container's own willingness to build
+	 * the class. The interface seams -- the ones a host is invited to replace -- are unaffected.
 	 *
 	 * Singletons throughout. Every one of these is either a registry whose contents are the point
 	 * or a stateless worker, and a second registrar would hold a second, emptier list of
@@ -110,7 +124,7 @@ final class Provider implements Provider_Interface {
 	 * @return void
 	 */
 	private function bind_once( string $id, $implementation = null ): void {
-		if ( $this->container->has( $id ) ) {
+		if ( ! class_exists( $id ) && $this->container->has( $id ) ) {
 			return;
 		}
 

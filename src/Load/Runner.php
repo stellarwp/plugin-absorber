@@ -43,8 +43,8 @@ class Runner {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When the container cannot produce a usable registrar, or two
-	 *                          sub-plugins were registered under one slug.
+	 * @throws Config_Exception From loading a sub-plugin, which reads the hook prefix the guard
+	 *                          above has already established is set.
 	 *
 	 * @return void
 	 */
@@ -59,7 +59,29 @@ class Runner {
 		// Loader::all() rather than the registrar directly: it flushes the registrations still
 		// buffered on the facade before it reads, and a registrar asked on its own would miss
 		// anything registered since the last read.
-		foreach ( Loader::all() as $sub_plugin ) {
+		try {
+			$sub_plugins = Loader::all();
+		} catch ( Config_Exception $exception ) {
+			// The flush is where a duplicate slug is caught, and reading the registrar is where a
+			// missing container or an unusable binding is. All three are bootstrap mistakes, and
+			// all three arrive inside plugins_loaded: letting one out would fatal every request,
+			// front end and admin alike, and lock the developer out of the screen where the
+			// registration could be corrected. The hook this runs on exists to prevent a fatal, so
+			// it is the last place that may cause one -- the mistake is reported to the developer
+			// and the load is abandoned instead.
+			_doing_it_wrong(
+				self::class,
+				sprintf(
+					'The registered sub-plugins could not be read, so none were loaded: %s',
+					$exception->getMessage()
+				),
+				'1.0.0'
+			);
+
+			return;
+		}
+
+		foreach ( $sub_plugins as $sub_plugin ) {
 			$this->load( $sub_plugin );
 		}
 	}

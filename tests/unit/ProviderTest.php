@@ -83,9 +83,11 @@ class ProviderTest extends WPTestCase {
 
 	/**
 	 * The registrar holds the registrations and the queue holds its store, so a binding rebuilt per
-	 * call would hand the load loop a registry the flush never reached.
+	 * call would hand the load loop a registry the flush never reached. The rest are stateless, and
+	 * are here because a class id that resolves twice over is a class id the provider never bound:
+	 * the container is autowiring it, which means the explicit factory never ran.
 	 *
-	 * @dataProvider stateful_bindings
+	 * @dataProvider single_instance_bindings
 	 *
 	 * @param string $id Id that must resolve to one instance per container.
 	 */
@@ -98,14 +100,50 @@ class ProviderTest extends WPTestCase {
 	/**
 	 * @return Generator<string,array{0:string}>
 	 */
-	public static function stateful_bindings(): Generator {
-		yield 'the registrar'    => [ Registrar_Interface::class ];
-		yield 'the notice queue' => [ Queue_Interface::class ];
+	public static function single_instance_bindings(): Generator {
+		yield 'the registrar'       => [ Registrar_Interface::class ];
+		yield 'the notice queue'    => [ Queue_Interface::class ];
+		yield 'the notice store'    => [ Store::class ];
+		yield 'the notice renderer' => [ Renderer::class ];
+		yield 'the load runner'     => [ Runner::class ];
+		yield 'the boot scheduler'  => [ Scheduler::class ];
 	}
 
 	/**
-	 * The `! has()` guard, which is the whole reason a host can rebind anything: the provider runs
-	 * over the host's own container, so binding first has to be binding last.
+	 * A class id is the case the guard gets wrong for free: DI52 answers `has()` with
+	 * `isBound() || class_exists()`, so every id below reports true before anything is bound. A
+	 * provider trusting that reply binds none of them — the explicit factories written for a
+	 * container that does not autowire included — and nothing says so, because a container that
+	 * *does* autowire still hands back an object.
+	 *
+	 * @dataProvider class_id_bindings
+	 *
+	 * @param string $id Class id the provider must bind regardless.
+	 */
+	public function test_it_binds_a_class_id_the_container_reports_it_already_has( string $id ): void {
+		$container = new Test_Container();
+
+		$this->assertTrue( $container->has( $id ), 'has() is expected to be true for an existing class.' );
+		$this->assertFalse( $container->isBound( $id ), 'Nothing has bound the id yet.' );
+
+		( new Provider( $container ) )->register();
+
+		$this->assertTrue( $container->isBound( $id ) );
+	}
+
+	/**
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function class_id_bindings(): Generator {
+		yield 'the notice store'    => [ Store::class ];
+		yield 'the notice renderer' => [ Renderer::class ];
+		yield 'the load runner'     => [ Runner::class ];
+		yield 'the boot scheduler'  => [ Scheduler::class ];
+	}
+
+	/**
+	 * The guard, which is the whole reason a host can rebind anything: the provider runs over the
+	 * host's own container, so binding first has to be binding last.
 	 *
 	 * @dataProvider host_bindings
 	 *
@@ -127,8 +165,12 @@ class ProviderTest extends WPTestCase {
 	}
 
 	/**
-	 * The interfaces only. DI52 reports `has()` true for any *class* name that exists, bound or not,
-	 * so a concrete id cannot demonstrate the guard — it can only demonstrate DI52's autowiring.
+	 * Interface ids only, which is as far as the guard reaches. Nothing can build an interface
+	 * unprompted, so `has()` is true there only where a binding exists and the host's object
+	 * survives. A class id cannot be covered: di52 answers `has()` for one with the same true
+	 * whether or not anything was bound, so the provider cannot see the host's binding and
+	 * replaces it — a host rebinding `Store`, `Renderer`, `Load\Runner` or `Boot\Scheduler` has to
+	 * do it after boot.
 	 *
 	 * @return Generator<string,array{0:string,1:object}>
 	 */

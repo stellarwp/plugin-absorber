@@ -11,6 +11,7 @@ use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Throwable;
 
 /**
  * Static facade: registration, and the one call that starts everything.
@@ -183,13 +184,37 @@ final class Loader {
 	 *
 	 * @param class-string<T> $interface Collaborator interface to resolve.
 	 *
-	 * @throws Config_Exception When no container has been set, or its binding does not implement
-	 *                          the interface it was bound to.
+	 * @throws Config_Exception When no container has been set, when it throws while building the
+	 *                          binding, or when the binding does not implement the interface it was
+	 *                          bound to.
 	 *
 	 * @return T
 	 */
 	private static function collaborator( string $interface ): object {
-		$collaborator = Config::get_container()->get( $interface );
+		// Resolved outside the try: a missing container is this library's own configuration error
+		// already, reported in its own words, and re-wrapping it would bury that sentence one
+		// exception deeper for no gain.
+		$container = Config::get_container();
+
+		// A host factory closure is free to throw, and a container asked for a binding with an
+		// unsatisfiable dependency -- or for an interface nothing has bound yet, which is every
+		// interface before boot() runs the provider -- throws its own exception type. Uncaught,
+		// either one leaves the host's plugins_loaded with a fatal from a vendor namespace that
+		// names neither this library nor the binding at fault, so both are reported the same way as
+		// a binding of the wrong type. The original failure is kept as the previous exception.
+		try {
+			$collaborator = $container->get( $interface );
+		} catch ( Throwable $thrown ) {
+			throw new Config_Exception(
+				sprintf(
+					'The container failed to build the binding for %s: %s',
+					$interface,
+					$thrown->getMessage()
+				),
+				0,
+				$thrown
+			);
+		}
 
 		if ( ! $collaborator instanceof $interface ) {
 			throw new Config_Exception(
