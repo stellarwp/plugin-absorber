@@ -482,6 +482,8 @@ class RunnerTest extends WPTestCase {
 	 * when the second one's guard constant never gets defined.
 	 */
 	public function test_one_bundled_file_behind_two_registrations_loads_once(): void {
+		// The file's own guard constant is one neither registration names, so both of them still
+		// reach require_once and only the path dedupe can stop the second load.
 		$path = $this->make_bundled_plugin_file( $this->make_guard_constant() );
 
 		foreach ( [ 'give-recurring', 'give-fee-recovery' ] as $slug ) {

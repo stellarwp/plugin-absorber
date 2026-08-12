@@ -116,9 +116,21 @@ $this->assertSame( 1, $this->bundled_plugin_loads() );
 Every call writes a *new* file under a unique name, and every guard constant is
 unique too. Neither is tidiness: `require_once` dedupes by resolved path for
 the lifetime of the PHP process, so a shared fixture lets a later test pass
-without loading anything, and the fixture defines its constant for real, so a
-reused name makes a later sub-plugin read as already loaded. Call
-`remove_bundled_plugin_files()` from tearDown.
+without loading anything — including if the load logic were deleted outright —
+and the fixture defines its constant for real, so a reused name makes a later
+sub-plugin read as already loaded.
+
+The generated file does two things and nothing else: it increments a load
+counter in `$GLOBALS`, and it defines the constant inside a `defined()` check,
+the shape a real bundled sub-plugin has. The counter is what separates "loaded
+twice" and "never loaded" from "loaded once"; the constant alone cannot tell
+those three apart.
+
+`remove_bundled_plugin_files()` cleans up on the trait's own `@after` hook, and
+the tests that clear other state alongside it call it from tearDown as well.
+Never leave it to the end of a test body: a failed assertion aborts the test
+where it stands, so that is exactly the line that does not run on the day it
+matters.
 
 A fixture helper cannot be called `make()`, `makeEmpty()`, `construct()`, or
 `constructEmpty()`: those are public methods on `Codeception\Test\Unit`, which
@@ -289,3 +301,52 @@ $this->assert_the_library_reported_incorrect_usage();
 An unexpected report still fails the test, because everything the listener sees
 is recorded and asserted to belong to this library. Call
 `stop_expecting_incorrect_usage()` from tearDown.
+
+## The end-to-end suite
+
+`tests/unit/EndToEndTest.php` drives the library the way a host plugin does,
+against real WordPress state: the real `active_plugins` option, a real
+`deactivate_plugins()` that really writes it, and real site options behind the
+notice queue and the activation record. Nothing about the library is doubled,
+except in the two tests that are *about* a host binding its own collaborators.
+
+It reaches for no entry point a host does not have. The bootstrap is
+`Config::set_hook_prefix()`, `Config::set_container()`, `Loader::register()` and
+`Loader::boot()`, and everything after that arrives through the hooks boot()
+wired — a request is `do_action( 'plugins_loaded' )`, an admin page load is
+`do_action( 'all_admin_notices' )`. The container is handed over bare rather
+than through `WithContainer`, because `boot()` running the provider over it is
+one of the steps under test.
+
+Only two functions are stubbed: `wp_safe_redirect`, which throws so the request
+halts where production calls `exit`, and `wp_get_referer`, which is a request
+header no test can send and which decides where that redirect would have gone.
+
+Four preconditions have to hold before any of it means anything, and setUp
+establishes all four:
+
+- **An interactive admin GET** — `set_current_screen( 'plugins' )` plus
+  `$_SERVER['REQUEST_METHOD'] = 'GET'`. `Conflict\Gatekeeper` turns away
+  anything else, so without both of these every policy test would pass while
+  resolving nothing at all.
+- **A user who can `activate_plugins`** — `WithUsers::become_plugin_administrator()`.
+  The gatekeeper checks the capability before anything is resolved, and the
+  queue checks the same one before it renders, so as nobody the suite would be
+  asserting that a no-op is a no-op.
+- **The hook prefix** — `Config::set_hook_prefix()`. Both plugins_loaded steps
+  report and return without one, and the queue and activation option names are
+  derived from it.
+- **A rewound `plugins_loaded` counter** — the harness dispatched the hook
+  before any test ran, so `boot()` would rightly report that it is too late to
+  wire and run everything inline. tearDown puts the count back.
+
+The screen, the request method and that counter are all process-global, so all
+three are restored in teardown; leaving any of them set turns an unrelated later
+test into an admin request.
+
+Run both legs — `slic run unit` and `slic run unit --env multisite`. Multisite
+is not a formality here: `deactivate_plugins()` is network-aware,
+`activate_plugins` maps through `manage_network_plugins` so the administrator
+who passes on singlesite is not the one who passes on multisite, and the queue
+and activation record are `get_site_option()` values, which are network options
+there. Every precondition above resolves differently on the second leg.

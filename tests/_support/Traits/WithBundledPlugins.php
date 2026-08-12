@@ -30,6 +30,14 @@ trait WithBundledPlugins {
 	/**
 	 * Write a bundled plugin that counts its own loads and defines its guard constant.
 	 *
+	 * The counter is what separates "loaded twice" and "never loaded" from "loaded once". The
+	 * constant alone cannot tell those three apart, because it ends up defined exactly once either
+	 * way.
+	 *
+	 * The constant is defined inside a `defined()` check, because the file stands in for a real
+	 * plugin: a bundled copy that redeclared a constant the standalone had already defined would
+	 * raise a notice, and the guard is what a plugin actually ships.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param string $constant Guard constant the file defines, as a bundled plugin's own header would.
@@ -100,7 +108,14 @@ trait WithBundledPlugins {
 	}
 
 	/**
-	 * Remove every fixture this test wrote. Call from tearDown.
+	 * Remove every fixture this test wrote.
+	 *
+	 * Runs itself, as PHPUnit's own `@after` hook, and is safe to call from tearDown as well — which
+	 * is where the tests that clear other state alongside it do call it. A test body must never be
+	 * the only thing that removes these: a failed assertion aborts the test where it stands, so a
+	 * cleanup line at the end of the body is exactly the one that does not run on the day it matters.
+	 *
+	 * @after
 	 *
 	 * @since 1.0.0
 	 *

@@ -295,7 +295,9 @@ level 9, so most breakage surfaces from `composer test:analysis` without standin
 
 ### Task 15 — `15-e2e-suite`
 
-- [ ] The end-to-end bootstrap now builds a container and calls `Provider::register()` before `Loader::boot()`.
+- [x] The end-to-end bootstrap now hands `Config::set_container()` a bare container and lets `Loader::boot()`
+  run `Provider::register()` over it, which is the sequence a host runs. A test about a rebinding host binds
+  its own implementations into that container first.
 
 ### Task 16 — `16-readme-release`
 
