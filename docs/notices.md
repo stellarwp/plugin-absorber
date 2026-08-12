@@ -23,15 +23,16 @@ administrator, not the site administrator who installed the plugin, who sees the
 
 ## Rendering them yourself
 
-`Notices\Queue::option_name()` is public, so you can render the queue yourself without replacing
-anything. The value is an `array<string,string>` keyed `slug:type` — `give-recurring:merge`, for
+`Absorber::notices()->option_name()` tells you where the queue is kept, so you can render it
+yourself without replacing anything — and it answers for whichever queue the site is running, so a
+rebound implementation keeping its notices elsewhere still gives you the right name. The value is an `array<string,string>` keyed `slug:type` — `give-recurring:merge`, for
 example — and the messages may contain markup; the default rendering passes them through
 `wp_kses_post()`, so a link, emphasis or a list survives while scripts and event handlers are
 stripped. Paragraphs come from `wpautop()`, so send the message unwrapped and let a blank line
 break it — a `<p>` of your own is left as it is rather than nested inside another.
 
 ```php
-use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Absorber;
 
 add_action( 'admin_init', function () {
     // Gates the read, not just the delete: `admin_init` fires for every logged-in user, and
@@ -41,7 +42,8 @@ add_action( 'admin_init', function () {
         return;
     }
 
-    $notices = get_site_option( Queue::option_name(), [] );
+    $option  = Absorber::notices()->option_name();
+    $notices = get_site_option( $option, [] );
 
     if ( ! is_array( $notices ) || ! $notices ) {
         return;
@@ -51,7 +53,7 @@ add_action( 'admin_init', function () {
         my_plugin_enqueue_notice( $key, $message );
     }
 
-    delete_site_option( Queue::option_name() );
+    delete_site_option( $option );
 } );
 ```
 

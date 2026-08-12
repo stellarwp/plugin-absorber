@@ -24,9 +24,13 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  */
 class Store {
 	/**
-	 * The option name backing the queue. Read it directly to render these notices yourself — and
-	 * read it from here rather than composing it, since the hook prefix is normalised on its way
-	 * into a storage key.
+	 * The option name backing the queue. Read it from here rather than composing it, since the hook
+	 * prefix is normalised on its way into a storage key.
+	 *
+	 * An instance method, not a static one: it is the answer for *this* store, and a host that binds
+	 * a queue keeping its notices somewhere else has to be able to give a different one. A static
+	 * would answer for the default implementation whatever the site actually uses, which is the
+	 * wrong answer stated with confidence.
 	 *
 	 * @since 1.0.0
 	 *
@@ -34,7 +38,7 @@ class Store {
 	 *
 	 * @return string
 	 */
-	public static function option_name(): string {
+	public function option_name(): string {
 		return Config::get_option_name( 'notices' );
 	}
 
@@ -50,7 +54,7 @@ class Store {
 	public function all(): array {
 		// Outside multisite `get_site_option()` is `get_option()`, so this reads back whatever
 		// put() wrote on either install type.
-		$queue = get_site_option( self::option_name(), [] );
+		$queue = get_site_option( $this->option_name(), [] );
 
 		if ( ! is_array( $queue ) ) {
 			return [];
@@ -82,7 +86,7 @@ class Store {
 		// `update_option( $option, $value, false )`, or `add_option( $option, $value, '', false )`
 		// the first time — either way autoload is off, which is exactly what this queue wants: it
 		// is empty on almost every request and only ever read in the admin.
-		update_site_option( self::option_name(), $queue );
+		update_site_option( $this->option_name(), $queue );
 	}
 
 	/**
@@ -94,6 +98,6 @@ class Store {
 	 */
 	public function clear(): void {
 		// Outside multisite `delete_site_option()` is `delete_option()`.
-		delete_site_option( self::option_name() );
+		delete_site_option( $this->option_name() );
 	}
 }

@@ -85,4 +85,20 @@ interface Queue_Interface {
 	 * @return void
 	 */
 	public function render(): void;
+
+	/**
+	 * Where these notices are kept, so a host can render them itself without replacing the queue.
+	 *
+	 * On the contract rather than on the default implementation, and an instance method rather than
+	 * a static one, because the honest answer depends on which queue a site is running: an
+	 * implementation bound in place of the default keeps its notices where it likes, and a host
+	 * reading a name off the default class would read an option nothing writes to.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return string
+	 */
+	public function option_name(): string;
 }
