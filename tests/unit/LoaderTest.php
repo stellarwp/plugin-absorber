@@ -22,6 +22,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use RuntimeException;
 
 /**
@@ -38,6 +39,7 @@ class LoaderTest extends WPTestCase {
 	use WithBundledPlugins;
 	use WithContainer;
 	use WithIncorrectUsage;
+	use WithNoticeQueue;
 
 	/**
 	 * Guard constants a test defined through uopz.
@@ -219,7 +221,7 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
-		$this->assertArrayHasKey( 'give-recurring:dependency', $this->notice_queue() );
+		$this->assertArrayHasKey( 'give-recurring:dependency', $this->queued_notices() );
 	}
 
 	public function test_it_skips_when_the_guard_constant_is_already_defined(): void {
@@ -275,7 +277,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->loader()->load_all();
 
-		$this->assertSame( [], $this->notice_queue() );
+		$this->assertSame( [], $this->queued_notices() );
 		$this->assert_the_library_reported_incorrect_usage();
 	}
 
@@ -350,7 +352,7 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( 0, $checked );
-		$this->assertSame( [], $this->notice_queue(), 'No notice for a plugin that is already running.' );
+		$this->assertSame( [], $this->queued_notices(), 'No notice for a plugin that is already running.' );
 	}
 
 	public function test_the_should_load_filter_can_veto_the_load(): void {
@@ -615,7 +617,7 @@ class LoaderTest extends WPTestCase {
 		);
 		$this->assertSame(
 			[],
-			$this->notice_queue(),
+			$this->queued_notices(),
 			'The default queue must not have been resolved alongside it.'
 		);
 	}
@@ -719,22 +721,6 @@ class LoaderTest extends WPTestCase {
 		}
 
 		$this->incorrect_usage_messages = [];
-	}
-
-	private function clear_notices(): void {
-		delete_site_option( 'give_plugin_absorber_notices' );
-	}
-
-	/**
-	 * The queue is stored as a site option on every install — on single site that call falls through
-	 * to the plain option table — so there is one place to read it from.
-	 *
-	 * @return array<string,string>
-	 */
-	private function notice_queue(): array {
-		$queue = get_site_option( 'give_plugin_absorber_notices', [] );
-
-		return is_array( $queue ) ? $queue : [];
 	}
 
 	/**

@@ -125,6 +125,21 @@ A fixture helper cannot be called `make()`, `makeEmpty()`, `construct()`, or
 `WPTestCase` extends, and redeclaring one with narrower visibility is a fatal at
 class-compile time. The suite does not fail, it fails to start.
 
+## Users and capabilities
+
+Two of the library's gates turn on `activate_plugins`, so a test that reaches
+either needs a user who has it. `WithUsers` owns both halves:
+
+```php
+$this->become_plugin_administrator();      // someone who may resolve a conflict
+$this->create_user( 'subscriber' );        // someone who may not
+```
+
+`become_plugin_administrator()` is not just `create_user( 'administrator' )`. On
+multisite `activate_plugins` maps through `manage_network_plugins`, which a site
+administrator does not have — so it grants super admin there and sets the current
+user either way. A test about *that* difference creates the administrator itself.
+
 ## Stubbing functions
 
 Use `UopzFunctions` from wp-browser. Do not add a local `WithUopz` trait — this
