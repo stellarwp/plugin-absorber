@@ -123,7 +123,8 @@ yet at the moment the guard is read, and the bundled copy would load on top of i
 
 **Version negotiation.** The library never compares versions, so it will not spare a standalone that
 is newer than the bundled copy. Express that yourself: check the version and return
-`Conflict_Policy::DEFER` from the `conflict_policy` [filter](filters.md), which has the final say.
+`Conflict_Policy::DEFER` from the `conflict_policy` [filter](filters.md), which has the final say —
+[the recipe](recipes.md#defer-to-a-newer-standalone) is ten lines.
 
 **Renamed standalone directories.** `standalone_plugin_basename` is the path as installed. A site
 that renamed the standalone's directory is not detected, and there is no fallback that derives the

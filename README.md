@@ -57,6 +57,8 @@ configuration doc.
 
 - [Installing][installing] — Composer, Strauss, and the constants Strauss must leave alone.
 - [Configuration][configuration] — the hook prefix, the container, every sub-plugin key.
+- [Recipes][recipes] — a settings toggle, a manifest of add-ons, and staging the absorption across
+  releases.
 - [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
 - [Filters][filters] — the runtime overrides for policies and notice text.
 - [Notices][notices] — where the queue lives, who may see it, and how to render it yourself.
@@ -69,6 +71,7 @@ source.
 
 [installing]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/installing.md
 [configuration]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/configuration.md
+[recipes]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/recipes.md
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
 [notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
