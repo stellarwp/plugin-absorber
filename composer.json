@@ -37,7 +37,7 @@
     },
     "scripts": {
         "test:analysis": [
-            "phpstan analyse -c phpstan.neon.dist --memory-limit=512M"
+            "phpstan analyse -c phpstan.neon.dist --memory-limit=1G"
         ],
         "test:unit": [
             "slic run unit"
