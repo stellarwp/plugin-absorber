@@ -113,7 +113,9 @@ class Resolver implements Resolver_Interface {
 			return;
 		}
 
-		$deactivated = false;
+		// "A standalone is gone", not "a deactivation was attempted". The redirect below is only ever
+		// worth taking on the first of those, and taking it on the second is a loop.
+		$standalone_gone = false;
 
 		// The reader rather than a registrar of our own: it drains the registrations still buffered
 		// on the facade before it reads, and a registrar asked directly would miss anything
@@ -132,7 +134,7 @@ class Resolver implements Resolver_Interface {
 				}
 
 				if ( $this->resolve( $sub_plugin ) ) {
-					$deactivated = true;
+					$standalone_gone = true;
 				}
 			} catch ( Throwable $thrown ) {
 				_doing_it_wrong(
@@ -151,7 +153,12 @@ class Resolver implements Resolver_Interface {
 		// active, and an `exit` on the first would leave the second's standalone running with no
 		// notice raised about it — and would take the load pass at the next priority with it, so
 		// nothing bundled loaded on the request that was supposed to fix the conflict.
-		if ( $deactivated ) {
+		//
+		// And only where a standalone really did go away. A request that deactivated nothing has
+		// nothing to shed from memory, so re-requesting the screen would arrive at the same conflict
+		// — while the notices this pass queued are waiting on a request that reaches
+		// `all_admin_notices`, which a redirect never does.
+		if ( $standalone_gone ) {
 			$this->redirect();
 		}
 	}
@@ -163,7 +170,7 @@ class Resolver implements Resolver_Interface {
 	 *
 	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
 	 *
-	 * @return bool Whether the standalone was deactivated.
+	 * @return bool Whether the standalone is gone -- not whether deactivating it was attempted.
 	 */
 	protected function resolve( Sub_Plugin $sub_plugin ): bool {
 		$policy = $sub_plugin->get_conflict_policy();
@@ -183,7 +190,17 @@ class Resolver implements Resolver_Interface {
 			case Conflict_Policy::DEACTIVATE:
 				$this->deactivate( $sub_plugin );
 
-				return true;
+				// Asked again rather than assumed, because turning the standalone off is not the same
+				// event as the standalone being off. A site or mu-plugin filtering
+				// `option_active_plugins` puts it straight back, a host may have rebound
+				// `Plugin\Contracts\Deactivator_Interface` to something that does nothing, and a
+				// rebound `Plugin\Contracts\Checker_Interface` may mean by "active" something
+				// `deactivate_plugins()` never touches. Answering true on a standalone that is still
+				// running redirects to the screen the user asked for, where the next request detects
+				// the same conflict and redirects again -- until the browser gives up and the whole of
+				// wp-admin is out of reach, with the merge notice never drawn because every one of
+				// those requests exits before `all_admin_notices`.
+				return ! $this->detector->is_in_conflict( $sub_plugin );
 
 			// NOTICE_ONLY, and anything is_valid() would accept that this switch has grown no
 			// branch for. The default sits on the branch that only talks, never on the one that
