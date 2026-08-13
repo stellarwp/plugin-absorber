@@ -8,9 +8,11 @@ namespace Nexcess\PluginAbsorber\Tests\Unit;
 use Codeception\TestCase\WPTestCase;
 use Generator;
 use Nexcess\PluginAbsorber\Boot\Scheduler;
+use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
+use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
@@ -28,6 +30,7 @@ use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Resolver;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use StellarWP\ContainerContract\ContainerInterface;
 
@@ -82,6 +85,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the notice renderer'   => [ Renderer::class, Renderer::class ];
 		yield 'the plugin checker'    => [ Plugin_Checker_Interface::class, Plugin_Checker::class ];
 		yield 'the deactivator'       => [ Plugin_Deactivator_Interface::class, Plugin_Deactivator::class ];
+		yield 'the conflict resolver' => [ Resolver_Interface::class, Resolver::class ];
 		yield 'the conflict detector' => [ Detector::class, Detector::class ];
 		yield 'the redirector'        => [ Redirector::class, Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class, Gatekeeper::class ];
@@ -114,6 +118,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the notice queue'      => [ Queue_Interface::class ];
 		yield 'the notice store'      => [ Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class ];
+		yield 'the conflict resolver' => [ Resolver_Interface::class ];
 		yield 'the conflict detector' => [ Detector::class ];
 		yield 'the redirector'        => [ Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class ];
@@ -191,8 +196,9 @@ class ProviderTest extends WPTestCase {
 	 * @return Generator<string,array{0:string,1:object}>
 	 */
 	public static function host_bindings(): Generator {
-		yield 'the registrar'    => [ Registrar_Interface::class, new Spy_Registrar() ];
-		yield 'the notice queue' => [ Queue_Interface::class, new Spy_Queue() ];
+		yield 'the registrar'         => [ Registrar_Interface::class, new Spy_Registrar() ];
+		yield 'the notice queue'      => [ Queue_Interface::class, new Spy_Queue() ];
+		yield 'the conflict resolver' => [ Resolver_Interface::class, new Spy_Resolver() ];
 	}
 
 	/**

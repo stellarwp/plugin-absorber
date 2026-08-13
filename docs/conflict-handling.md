@@ -10,8 +10,28 @@ When a sub-plugin's standalone counterpart is still active:
 | `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
 | `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
 
-Set one per sub-plugin with the `conflict_policy` key, or decide it at runtime with the
-`conflict_policy` [filter](filters.md), which has the final say.
+Set one per sub-plugin with the `conflict_policy` key — a constant, or a `callable( Sub_Plugin ):
+string`. The `conflict_policy` [filter](filters.md) runs after that and has the final say:
+
+```php
+// In the config: stand down when a newer standalone supersedes the bundled copy.
+'conflict_policy' => static fn( Sub_Plugin $sub ) => give_standalone_is_newer( $sub )
+    ? Conflict_Policy::DEFER
+    : Conflict_Policy::DEACTIVATE,
+
+// Anywhere, and last:
+add_filter( 'give/plugin_absorber/conflict_policy', static function ( $policy, $sub ) {
+    return $sub->get_slug() === 'give-recurring' ? Conflict_Policy::NOTICE_ONLY : $policy;
+}, 10, 2 );
+```
+
+**An unrecognised policy is treated as `NOTICE_ONLY`**, never as consent to deactivate.
+`Conflict_Policy::is_valid()` decides, so a typo like `'defered'` — in a policy a host persisted in
+an option, or in whatever that filter returned — only produces a notice. A value nobody chose must
+not turn off a plugin somebody chose.
+
+A policy is only reached for a sub-plugin that is enabled, names a `standalone_plugin_basename`, and
+whose standalone is active right now; everything else is skipped before any policy is read.
 
 ## The load guard
 
