@@ -5,6 +5,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;

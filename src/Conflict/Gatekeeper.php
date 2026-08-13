@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Conflict;
 
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
