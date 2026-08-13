@@ -134,6 +134,76 @@ class ReaderTest extends WPTestCase {
 	}
 
 	/**
+	 * The buffer is emptied before it is handed over, so a collision that aborted the hand-over would
+	 * take everything registered behind the colliding entry with it: the buffered copies are gone, the
+	 * registrar never saw them, and the pass's own catch reports only the duplicate. A host left with a
+	 * sub-plugin that is simply absent, named by nothing anywhere, is the worse of the two failures.
+	 */
+	public function test_a_duplicate_slug_does_not_discard_the_registrations_behind_it(): void {
+		$this->set_up_container();
+		$this->register( 'give-recurring' );
+		$this->register( 'give-recurring', '/tmp/give-recurring-again.php' );
+		$this->register( 'give-fee-recovery' );
+
+		$reader = $this->reader();
+
+		try {
+			$reader->all();
+			$this->fail( 'Expected a Config_Exception naming the duplicated slug.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
+			$this->assertStringContainsString(
+				'/tmp/give-recurring-again.php',
+				$exception->getMessage(),
+				'The report has to name the registration that lost, or the host cannot find it.'
+			);
+		}
+
+		$this->assertSame(
+			[ 'give-recurring', 'give-fee-recovery' ],
+			array_keys( $reader->all() ),
+			'Everything registered after the collision has to reach the registrar regardless.'
+		);
+	}
+
+	/**
+	 * Two collisions in one buffer is one bootstrap mistake made twice, and the host reads the report
+	 * from the top: the first is rethrown, and the second is what the next request reports once the
+	 * first is fixed. Letting a later collision overwrite the first would move the report around
+	 * between requests for no gain.
+	 */
+	public function test_it_reports_the_first_duplicate_when_more_than_one_collides(): void {
+		$this->set_up_container();
+		$this->register( 'give-recurring' );
+		$this->register( 'give-recurring', '/tmp/give-recurring-again.php' );
+		$this->register( 'give-fee-recovery' );
+		$this->register( 'give-fee-recovery', '/tmp/give-fee-recovery-again.php' );
+
+		$reader = $this->reader();
+
+		try {
+			$reader->all();
+			$this->fail( 'Expected a Config_Exception naming the duplicated slug.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
+			$this->assertStringNotContainsString(
+				'give-fee-recovery',
+				$exception->getMessage(),
+				'The first collision is the one reported; a later one must not overwrite it.'
+			);
+		}
+
+		$all = $reader->all();
+
+		$this->assertSame( [ 'give-recurring', 'give-fee-recovery' ], array_keys( $all ) );
+		$this->assertSame(
+			'/tmp/give-fee-recovery.php',
+			$all['give-fee-recovery']->get_bundled_plugin_file(),
+			'The registration that arrived first under a slug is the one that stands.'
+		);
+	}
+
+	/**
 	 * A registrar the container cannot build leaves the registrations where they are: the reader is
 	 * what drains the buffer, and it is never built at all if its own argument cannot be.
 	 */
@@ -155,6 +225,17 @@ class ReaderTest extends WPTestCase {
 			$this->reader();
 		} catch ( Throwable $exception ) {
 			$failed = true;
+
+			// On the message rather than on the type: the container wraps what a factory throws in
+			// its own exception class, so the type says which container the test ran against while
+			// the message is the only thing carrying the failure the host has to fix. Asserting the
+			// flag alone would let an unrelated fault -- a typo in the binding, a missing class --
+			// pass this test for the wrong reason.
+			$this->assertStringContainsString(
+				'the host factory needed a database connection',
+				$exception->getMessage(),
+				'The original failure has to stay readable, or the real cause is lost.'
+			);
 		}
 
 		$this->assertTrue( $failed, 'A registrar that cannot be built has to surface, not be swallowed.' );
@@ -179,14 +260,17 @@ class ReaderTest extends WPTestCase {
 
 	/**
 	 * @param string $slug Slug to register under.
+	 * @param string $file Bundled file to register with; derived from the slug when omitted. Two
+	 *                     registrations under one slug need different files for the duplicate report
+	 *                     to be able to tell them apart.
 	 *
 	 * @return void
 	 */
-	private function register( string $slug ): void {
+	private function register( string $slug, string $file = '' ): void {
 		Absorber::register(
 			[
 				'slug'                   => $slug,
-				'bundled_plugin_file'    => sprintf( '/tmp/%s.php', $slug ),
+				'bundled_plugin_file'    => $file !== '' ? $file : sprintf( '/tmp/%s.php', $slug ),
 				'plugin_loaded_constant' => strtoupper( str_replace( '-', '_', $slug ) ) . '_VERSION_FIXTURE',
 			]
 		);
