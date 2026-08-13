@@ -107,6 +107,21 @@ implementing this very contract, exposes it as `App::container()`, and already h
 Validation and Harbor. The plugins with no container are the add-ons being absorbed, not the hosts
 doing the absorbing.
 
+**The container is typed as `container-contract`'s `ContainerInterface`, not
+`stellarwp/foundation-container`'s.** Not a rejection of Foundation — the two are the same target.
+`StellarWP\Foundation\Container\Contracts\Container` *extends* `ContainerInterface`, so
+`ContainerAdapter` already satisfies `Config::set_container()` and a Foundation host needs nothing
+from us; typing against the superset would only subtract. It would floor us at PHP 8.3, which every
+released `foundation-container` (1.0 through 1.3) pins, against our 7.4. It would add
+`lucatume/di52 >=4.1`, `adbario/php-dot-notation` and `vlucas/phpdotenv` as production dependencies
+of a library Strauss copies into a host plugin that already bundles its own di52 — and a `.env`
+loader has nothing to do inside a WordPress plugin. And it would narrow the hint from *any*
+container-contract implementation to Foundation's alone, disqualifying `learndash-core`'s
+`App::container()`, which is the host this library exists for. What it buys is `callback()`,
+`register()` and contextual binding; `callback()` is the only one ever wanted, and `Boot\Scheduler`'s
+closures already provide the lazy resolution that was the actual requirement. Revisit if the PHP
+floor ever reaches 8.3 *and* something needs `when()`/`needs()` — not before.
+
 **One provider, one method.** `Provider::register()` performs every binding, behind a
 `Contracts\Provider_Interface` declaring `register(): void` and nothing else — Harbor's shape, not
 `stellarwp/foundation`'s. Foundation floors at PHP 8.3 against our 7.4, hard-depends on
