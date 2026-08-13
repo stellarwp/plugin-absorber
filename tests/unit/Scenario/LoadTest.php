@@ -163,6 +163,117 @@ class LoadTest extends Bootstrap_Test_Case {
 	}
 
 	/**
+	 * A host module that registers from its own `plugins_loaded` callback, which is the shape
+	 * `Registry\Reader` drains at read time rather than at boot to support.
+	 *
+	 * The callback goes on at the priority the conflict pass already occupies, and after `boot()` wired
+	 * it — so WordPress runs it *behind* a pass that has already read the registry and emptied the
+	 * buffer on its way past. A registrar asked directly, or a buffer drained once at boot, would leave
+	 * this registration in a list nothing reads again and the sub-plugin would silently never load.
+	 */
+	public function test_a_sub_plugin_registered_after_boot_still_loads_in_the_same_request(): void {
+		$first = $this->register();
+
+		$this->boot();
+
+		// Named up front rather than returned from the callback: the guard has to be assertable whether
+		// or not the callback ran, which is the failure this scenario is about.
+		$second = $this->make_guard_constant();
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			function () use ( $second ): void {
+				$this->register( [ 'slug' => 'absorber-fee-recovery' ], $second );
+			},
+			5
+		);
+
+		$this->run_request();
+
+		$this->assertSame( 2, $this->bundled_plugin_loads(), 'A registration made mid-request still reaches the load pass.' );
+		$this->assertTrue( defined( $first ) );
+		$this->assertTrue( defined( $second ) );
+	}
+
+	/**
+	 * Two registrations under one slug. The collision is the registrar's exception and it is raised
+	 * long after both `Absorber::register()` calls returned — the buffer only reaches the registrar
+	 * when something reads it, which is inside `plugins_loaded`, the hook this library exists to keep a
+	 * site off the floor on. So the read is guarded at both passes: the conflict pass at priority 5
+	 * reads first and reports the mistake, and the load pass behind it finds the buffer already drained
+	 * and gets on with the load.
+	 *
+	 * What the sub-plugin registered *after* the collision does is the part worth pinning. The whole
+	 * batch is registered and the collision raised afterwards, so a host with a duplicate two entries
+	 * up keeps everything it registered behind it — where a throw out of the middle of the flush would
+	 * have left those in no registrar and in no buffer, silently, for the rest of the process.
+	 */
+	public function test_a_duplicate_slug_is_reported_and_the_registration_behind_it_still_loads(): void {
+		$this->expect_incorrect_usage();
+
+		$first = $this->register();
+
+		// The same slug, a different bundled file: the mistake a host makes when two of its own modules
+		// register the sub-plugin they share.
+		$duplicate = $this->register();
+		$behind    = $this->register( [ 'slug' => 'absorber-fee-recovery' ] );
+
+		$this->boot();
+		$this->run_request();
+
+		$this->assertTrue( defined( $first ), 'The first registration under the slug is the one that stands.' );
+		$this->assertFalse( defined( $duplicate ), 'The second is refused rather than allowed to replace it.' );
+		$this->assertTrue( defined( $behind ), 'And what was registered after the collision still loads.' );
+		$this->assertSame( 2, $this->bundled_plugin_loads() );
+		$this->assert_the_library_reported_incorrect_usage();
+
+		// The screen the registration has to be corrected from still draws, and this is a developer's
+		// mistake rather than something the site owner can act on — so nothing was left for them.
+		$rendered = $this->render_admin_notices();
+
+		$this->assertSame( [], $this->queued_notices() );
+		$this->assertStringNotContainsString( self::SLUG, $rendered );
+	}
+
+	/**
+	 * A bundled file that is not there is a broken build in the host plugin, not a misconfigured site:
+	 * nobody who reads wp-admin can put the file back, so the report goes to the developer through
+	 * `_doing_it_wrong()` and the notice queue stays empty.
+	 *
+	 * The broken sub-plugin carries a `dependency_notice_message` it must not be told through. That is
+	 * the sentence a file gate folded into the dependency gate would print, and it would send the owner
+	 * after a version requirement that is met, for a plugin whose file was never shipped.
+	 */
+	public function test_a_missing_bundled_file_is_reported_to_the_developer_and_not_to_the_owner(): void {
+		$this->expect_incorrect_usage();
+
+		$missing = $this->register(
+			[
+				'bundled_plugin_file'       => $this->missing_bundled_plugin_file(),
+				'dependency_notice_message' => static fn() => 'GiveWP 3.0 or later is required.',
+			]
+		);
+
+		// Registered behind it, because the gate has to skip one sub-plugin rather than end the pass.
+		$behind = $this->register( [ 'slug' => 'absorber-fee-recovery' ] );
+
+		$this->boot();
+		$this->run_request();
+
+		$this->assertFalse( defined( $missing ), 'There was no file to define it.' );
+		$this->assertTrue( defined( $behind ), 'The sub-plugin behind the broken one still loads.' );
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+		$this->assert_the_library_reported_incorrect_usage();
+
+		$this->assertSame( [], $this->queued_notices(), 'A broken build is nothing the site owner can act on.' );
+
+		$rendered = $this->render_admin_notices();
+
+		$this->assertStringNotContainsString( 'GiveWP 3.0 or later is required.', $rendered );
+		$this->assertStringNotContainsString( self::SLUG, $rendered );
+	}
+
+	/**
 	 * All the way to the screen: the load is skipped, the host's own explanation is queued, the render
 	 * draws it as an error, and the render consumes the queue so the owner is told once rather than on
 	 * every admin page load for ever.

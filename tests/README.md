@@ -321,6 +321,7 @@ and `Absorber::boot()`, and everything after that arrives through the hooks
 | `run_halted_request()` | the same, for a request that must end in a redirect; returns where the user was sent |
 | `render_admin_notices()` | `do_action( 'all_admin_notices' )`, and returns what was printed |
 | `register()` | `Absorber::register()`, backed by a bundled fixture file that really exists |
+| `pin_headers_as_sent()` | says this scenario's output has already started, for every request it goes on to make |
 
 The container is handed over bare rather than through `WithContainer`, because
 `boot()` running the provider over it is one of the steps under test. Calling
@@ -330,10 +331,19 @@ step wired into a dispatch window that had already closed, a resolution ordered
 behind the load pass.
 
 Only two functions are stubbed: `wp_safe_redirect`, which throws so the request
-halts where production calls `exit`, and `wp_get_referer`, which is a request
-header no test can send. `preventExit()` is never used — it would let a request
-carry on past the line production never returns from, which turns a failure into
-a pass.
+halts where production calls `exit`, and `headers_sent`, which under CLI answers
+for the test runner's output rather than for this request. `preventExit()` is
+never used — it would let a request carry on past the line production never
+returns from, which turns a failure into a pass.
+
+`headers_sent` answers `false` unless a scenario says otherwise with
+`pin_headers_as_sent()`. Both directions are load-bearing: left to the runtime,
+`run_halted_request()` fails because the resolver takes the sent-headers branch,
+and `run_request()` *passes* for the same reason — a request that cannot
+redirect satisfies "this one must not redirect" without anything having been
+tested. Saying so deliberately is what the late-boot conflict scenario is about,
+because that is the one request production really does serve with its output
+already started.
 
 ### Four preconditions
 
@@ -356,6 +366,14 @@ None of it means anything unless all four hold, and setUp establishes all four:
 The screen, the request method and that counter are all process-global, so all
 three are restored in tearDown; leaving any of them set turns an unrelated later
 test into an admin request.
+
+Two scenarios take the first precondition back off again, and that is the point
+of them: `Conflict\Gatekeeper` is the only thing keeping this library off a
+visitor's page view and out of the middle of an activation, so a suite where
+every request satisfies the gate never watches it refuse one. They restate the
+request rather than skipping setUp — a front-end screen and a URI naming none,
+or the same admin GET with an `action` arg — so the only difference between them
+and the scenario that deactivates is the one under test.
 
 Run both legs. Multisite is not a formality here: `deactivate_plugins()` is
 network-aware, `activate_plugins` maps through `manage_network_plugins` so the
@@ -390,8 +408,10 @@ sequenceDiagram
 
 #### `Scenario/LoadTest.php` — a bundled plugin nothing is fighting over
 
-No standalone is in the way in any of these, so priority 5 finds nothing to do
-and what is under test is the chain priority 6 walks, in the order it walks it:
+No standalone is in the way in any of these, so priority 5 finds no conflict to
+resolve — it still reads the registry, which is what the duplicate-slug scenario
+below turns on — and what is under test is the chain priority 6 walks, in the
+order it walks it:
 
 ```mermaid
 flowchart LR
@@ -537,6 +557,82 @@ sequenceDiagram
     Q->>Q: clears the queue
 ```
 
+**A sub-plugin registered after boot still loads in the same request.** The shape
+`Registry\Reader` drains at read time rather than at boot to support: a second
+host module registers from its own `plugins_loaded` callback, added at the
+priority the conflict pass already occupies and therefore running *behind* a
+pass that has read the registry and emptied the buffer on its way past. A
+registrar asked directly, or a buffer drained once at boot, would leave this
+registration in a list nothing reads again.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host plugin
+    participant WP as WordPress
+    participant R as Registry Reader
+    participant L as Loader
+
+    Host->>WP: boot() wires priority 5 and 6
+    Host->>WP: add_action( plugins_loaded, register, 5 )
+    WP->>R: priority 5 — the conflict pass reads, draining the buffer
+    WP->>Host: priority 5 — the host registers its second sub-plugin
+    Host->>R: buffered
+    WP->>L: priority 6 — the load pass reads
+    R-->>L: drained again: both sub-plugins
+    L->>L: both load
+```
+
+**A duplicate slug is reported, and what was registered behind it still loads.**
+The collision is the registrar's exception and it is raised long after both
+`Absorber::register()` calls returned, from inside `plugins_loaded` — the hook
+this library exists to keep a site off the floor on. Both passes guard the read,
+so the conflict pass reports it and the load pass, finding the buffer already
+drained, gets on with the load. The whole batch is registered before the
+collision is rethrown, which is what keeps a host from silently losing every
+sub-plugin it registered after the mistake.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host plugin
+    participant R as Registry Reader
+    participant Reg as Registrar
+    participant L as Loader
+
+    Host->>R: register A, A again, B
+    Note over R: first read — the conflict pass, priority 5
+    R->>Reg: A, then A again, then B
+    Reg-->>R: the second A collides
+    R-->>R: whole batch registered, the first collision rethrown after it
+    Note over R: the pass reports it and abandons its own step
+    Note over R: second read — priority 6, buffer already drained
+    R-->>L: A and B
+    L->>L: both load
+```
+
+**A missing bundled file is the developer's problem, not the owner's.** Nobody
+reading wp-admin can put a file back, so a broken build reports through
+`_doing_it_wrong()` and the queue stays empty — including the sub-plugin's own
+`dependency_notice_message`, which is the sentence a file gate folded into the
+dependency gate would print and the wrong problem entirely. The sub-plugin
+registered behind the broken one still loads.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant L as Loader
+    participant Q as Notice queue
+    participant Dev as The developer
+
+    WP->>L: plugins_loaded priority 6
+    L->>L: is_file() and is_readable() — neither
+    L->>Dev: _doing_it_wrong()
+    L--xQ: nothing queued
+    L->>L: the next sub-plugin loads as usual
+```
+
 #### `Scenario/ConflictTest.php` — a standalone copy is still installed
 
 Each of these puts a real basename into the real `active_plugins` option, so
@@ -668,6 +764,32 @@ sequenceDiagram
     Note over WP: the standalone is still in active_plugins
 ```
 
+**The conflict sits behind a sub-plugin that has none.** Every other multi-entry
+scenario puts the conflicting sub-plugin first, where a detector that looked no
+further than the head of the registry would still pass. Here the first has no
+standalone at all and the second is the one in conflict, so the standalone is
+deactivated, exactly one notice is queued and it is keyed to the second slug —
+and the innocent sub-plugin's own bundled copy loads on the request after,
+exactly as it would on a site with no standalone anywhere.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant D as Conflict Detector
+    participant R as Conflict Resolver
+    participant L as Loader
+
+    WP->>D: plugins_loaded priority 5
+    D->>D: first sub-plugin — no standalone configured
+    D->>D: second — its standalone is active
+    D-->>R: there is a conflict
+    R->>R: resolves the second, and only the second
+    R->>WP: redirect and exit
+    Note over WP: next request — the standalone is gone
+    WP->>L: both bundled copies load
+```
+
 **A user who cannot activate plugins resolves nothing.** The gate that survives
 every policy and every rebinding: whoever cannot activate a plugin must not be
 able to deactivate one by loading an admin page. Nothing is consumed by
@@ -689,6 +811,62 @@ sequenceDiagram
     WP->>G: user_may_resolve()
     G-->>WP: true
     WP->>R: resolve_all() — deactivates and queues
+```
+
+**A visitor's front-end request never deactivates or redirects.** The worst thing
+this library could do to a site. `plugins_loaded` fires on every request one
+serves, so the standalone is every bit as active on a checkout page view as it is
+on the admin GET the first scenario resolves on — and resolving here would
+deactivate a plugin and `exit` with a 302 on somebody who is not signed in and
+cannot see wp-admin. The load pass behind it is asserted to have run, and that is
+what makes the rest mean anything: it has no request gate of its own, so a
+bootstrap that wired nothing at all would satisfy every other assertion.
+
+**The activation request core replays is left alone.**
+`plugins.php?action=activate` is what `plugin_sandbox_scrape()` replays while
+WordPress activates a plugin, so resolving on it does not merely interrupt the
+work: core reads a request that ended early as the plugin having fataled, and
+tells the owner the plugin they just pressed Activate on is broken. The gate
+refuses any action arg at all rather than a list of the dangerous ones, so this
+one request stands for every screen in wp-admin that performs work on a GET.
+
+```mermaid
+flowchart TD
+    A[plugins_loaded priority 5] --> B{request_may_resolve?}
+    B -- "a visitor's front-end GET" --> Z[return, having resolved no user]
+    B -- "an admin GET carrying an action" --> Z
+    Z --> Y[active_plugins untouched, queue empty, no redirect]
+    Y --> X[plugins_loaded priority 6 — the load pass runs anyway]
+```
+
+**A late boot with a conflict resolves inline, before the load.** The two halves
+of the fallback meeting, and the redirect is the part that cannot survive it:
+`Boot\Scheduler` opens the inline sequence with a `_doing_it_wrong()`, which
+prints on a site with `display_errors` on, so by the time the conflict pass
+reaches its redirect the headers are gone. `wp_safe_redirect()` would warn, set
+no `Location` and leave the `exit` behind it to end the request on a blank page —
+with the merge notice queued and nothing left to draw it. `Conflict\Resolver`
+reads `headers_sent()` and stands the redirect down instead, which is what lets
+the load pass run at all, one step behind on the same call stack. The order is
+recorded from WordPress rather than from the library: the option write core's own
+`deactivate_plugins()` makes, then the activation callback that runs immediately
+after the require.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant Abs as Absorber
+    participant R as Conflict Resolver
+    participant L as Loader
+
+    WP->>WP: plugins_loaded begins dispatching
+    WP->>Abs: host calls boot() at priority 10 — too late to wire
+    Abs->>R: step one, inline
+    R->>R: deactivates, queues the merge notice
+    R->>R: headers_sent() — the redirect stands down
+    Abs->>L: step two, inline
+    L->>L: the bundled copy loads on the same request
 ```
 
 **A reactivation attempt yields the friendly message.** The one conflict the

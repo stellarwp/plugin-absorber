@@ -50,6 +50,10 @@ use WP_Hook;
  * request where production stops it — never `preventExit()`, which would let a test run past that
  * point and report a failure as a pass. And `headers_sent()`, because a request served over HTTP has
  * sent nothing by `plugins_loaded` and one run under CLI has sent whatever the test runner printed.
+ * That second one is answered `false` unless a scenario says otherwise through
+ * `pin_headers_as_sent()`, which is the shape a late boot really takes on a debugging site: the
+ * `_doing_it_wrong()` the fallback opens with has already printed, so the redirect at the end of the
+ * conflict pass has no headers left to send.
  *
  * Abstract, and named `_Test_Case` rather than `…Test`, so the runner collects the scenario files
  * that extend it and never this one.
@@ -106,6 +110,13 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 	 * @var int
 	 */
 	private $plugins_loaded_count = 0;
+
+	/**
+	 * What `headers_sent()` answers for the duration of a dispatched request.
+	 *
+	 * @var bool
+	 */
+	private $headers_sent = false;
 
 	/**
 	 * The request URI as the harness left it, put back in tearDown.
@@ -235,7 +246,7 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 		$halted  = false;
 		$message = self::halted_at_exit_message();
 
-		$this->pin_headers_as_unsent();
+		$this->pin_headers();
 
 		// The stub raises the flag itself. Catching the TestException here would never fire: every
 		// plugins_loaded step wraps itself in `catch ( Throwable )` so that a hook this library owns
@@ -291,7 +302,7 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 		$location = '';
 		$message  = self::halted_at_exit_message();
 
-		$this->pin_headers_as_unsent();
+		$this->pin_headers();
 
 		// Emptying the hook is a statement about this request and not about the process, so what was
 		// on it is put back afterwards. Cloned rather than aliased: the stub empties the object in
@@ -337,6 +348,27 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 		$this->assert_the_library_reported_incorrect_usage();
 
 		return $location;
+	}
+
+	/**
+	 * Describe a request whose output has already started, for the rest of this scenario.
+	 *
+	 * The opposite of what every other scenario assumes, and it has exactly one shape in production:
+	 * `Boot\Scheduler` opens its inline fallback with a `_doing_it_wrong()`, which on a site with
+	 * display_errors on prints — so by the time the conflict pass reaches its redirect the headers are
+	 * gone. `Conflict\Resolver` reads `headers_sent()` there and stands the redirect down rather than
+	 * ending the request on a blank page, which is what lets the load pass behind it run at all.
+	 *
+	 * Set before the request rather than passed to it, because it is a fact about the scenario and not
+	 * about one dispatch: a scenario that says the output has started says it for every request it goes
+	 * on to make.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return void
+	 */
+	protected function pin_headers_as_sent(): void {
+		$this->headers_sent = true;
 	}
 
 	/**
@@ -501,7 +533,7 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 	}
 
 	/**
-	 * State what every scenario here assumes: a request that has sent nothing yet.
+	 * State what a scenario assumes about its own output, rather than leaving it to the runtime.
 	 *
 	 * `Conflict\Resolver` reads `headers_sent()` to decide whether it may redirect at all, and under
 	 * CLI the real answer is not about this request but about the test runner: PHP records headers as
@@ -510,7 +542,7 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 	 * own vendor tree emits while booting are that line — which is why leaving this to the runtime
 	 * passed on 7.4 and failed on 8.5.
 	 *
-	 * Both halves matter, so both request helpers pin it. Unstubbed, `run_halted_request()` fails
+	 * Both halves matter, so both request helpers pin it. Unpinned, `run_halted_request()` fails
 	 * because the resolver takes the sent-headers branch and never redirects — and, far worse,
 	 * `run_request()` *passes* for the same reason, since a request that cannot redirect satisfies
 	 * "this one must not redirect" without anything having been tested.
@@ -522,7 +554,7 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 	 *
 	 * @return void
 	 */
-	private function pin_headers_as_unsent(): void {
-		$this->setFunctionReturn( 'headers_sent', false );
+	private function pin_headers(): void {
+		$this->setFunctionReturn( 'headers_sent', $this->headers_sent );
 	}
 }
