@@ -715,3 +715,99 @@ sequenceDiagram
     Rw->>Rw: screen is plugins, arg names a registered standalone, nonce verifies
     Rw-->>WP: core's sentence swapped for the host's, wrapper untouched
 ```
+
+#### `Scenario/HostTest.php` — the host's own wiring
+
+Not what the library does with a sub-plugin, but what it does with the *host*:
+that booting late still works, and that a host's own implementations are the
+objects the request actually reaches.
+
+**Where a host may bind, and when.** These scenarios are the worked example of a
+rule that is easy to get wrong, so they show both halves side by side:
+
+```mermaid
+flowchart TD
+    A[host builds a container] --> B{interface id or concrete class id?}
+    B -- "interface, e.g. Resolver_Interface" --> C[bind BEFORE boot]
+    B -- "class, e.g. Conflict Gatekeeper" --> D[bind AFTER boot]
+    C --> E[Provider skips it: nothing can build an interface unprompted, so has is true only when bound]
+    D --> F[Provider would overwrite it: di52 answers has true for any class that exists, bound or not]
+    E --> G[the request reaches the host's object]
+    F --> G
+```
+
+Binding a class after `boot()` still works because `Boot\Scheduler` wires
+closures that resolve when the hook fires rather than objects built at boot — so
+a host may rebind right up until `plugins_loaded`. `tests/unit/ProviderTest.php`
+states the same rule from the provider's side.
+
+**A host that boots too late still gets its sub-plugins.** Booting from
+`plugins_loaded` at the default priority is the commonest hook mistake there is,
+and an `add_action()` at a priority the running dispatch has already passed is
+accepted and then never fires. The library reports the mistake through
+`_doing_it_wrong()` and runs the sequence inline, so the site still gets its
+bundled plugins.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant Abs as Absorber
+    participant L as Loader
+
+    WP->>WP: plugins_loaded begins dispatching
+    WP->>Abs: host calls boot() at priority 10 — too late to wire 5 or 6
+    Abs->>Abs: reports incorrect usage
+    Abs->>L: runs the whole sequence inline, in hook order
+    L-->>WP: the bundled plugin is loaded anyway
+```
+
+**A host binding reaches every step of the request.** Five interface seams bound
+before boot — registrar, plugin checker, plugin deactivator, notice writer,
+activator — each asserted to be the object the request used. The defaults are
+asserted *not* to have run beside them: a library that quietly resolved a second
+copy behind the host's back would satisfy every positive assertion here. Two
+requests, because a DEACTIVATE resolution ends in a redirect and `exit`, so the
+load pass belongs to the request after it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host container
+    participant WP as WordPress
+    participant Spy as The host's objects
+    participant Def as The library's defaults
+
+    Host->>Host: binds 5 interface ids, then boot()
+    WP->>Spy: request one — checker, deactivator, writer
+    Spy-->>WP: redirect and exit
+    WP->>Spy: request two — registrar, activator, the load
+    Note over Def: active_plugins untouched, both options unwritten
+    Def-->>Def: never resolved at all
+```
+
+**A host binding replaces the gatekeeper and the resolver.** The same guarantee
+for the two the conflict step resolves itself. A host owns what a conflict
+*means* — but not who may have one resolved, which is why the gate is asked
+first, separately, and is asserted here to have been asked at all. Both gates
+are counted, because they are asked at different moments and a single counter
+would read "never got past the request gate" as "passed both".
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host container
+    participant G as The host's gatekeeper
+    participant R as The host's resolver
+    participant L as Loader
+
+    Host->>Host: binds Resolver_Interface, then boot(), then Gatekeeper
+    Host->>G: request_may_resolve()
+    G-->>Host: true
+    Host->>Host: a standalone is active — there is a conflict
+    Host->>G: user_may_resolve()
+    G-->>Host: true
+    Host->>R: resolve_all() — this host's does nothing
+    Note over R: so nothing is deactivated and nothing is queued
+    Host->>L: the load pass still runs behind it
+```
