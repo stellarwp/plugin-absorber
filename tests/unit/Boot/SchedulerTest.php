@@ -14,6 +14,7 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
+use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Loader;
@@ -21,6 +22,7 @@ use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Rewriter;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
@@ -126,6 +128,10 @@ class SchedulerTest extends WPTestCase {
 		// leak an admin screen into every test that runs after it, since is_admin() checks the
 		// current screen before WP_ADMIN.
 		set_current_screen( 'front' );
+
+		// Same reasoning for the activation-error request one test builds: left standing, it turns
+		// every later test's apply_filters() into a rewrite nobody asked for.
+		unset( $_GET['plugin'], $_GET['_error_nonce'] );
 
 		// Only what these tests added by hand. What boot() wired comes off in Absorber_State::reset().
 		foreach ( $this->added_actions as [ $hook, $callback, $priority ] ) {
@@ -503,6 +509,99 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
+	 * The activation-error rewrite is wired next to the notice step and under the same guard: both
+	 * only ever have work to do on an admin screen. It is a named static callback rather than a
+	 * closure, so unlike the plugins_loaded steps it can be asserted on by identity — and, for the
+	 * same reason, taken back off by a host that wants core's wording.
+	 */
+	public function test_it_wires_the_activation_error_filter_in_the_admin(): void {
+		set_current_screen( 'plugins' );
+
+		Absorber::boot();
+
+		// After boot, because `Provider::bind_once()` rebinds a class id whatever a host put there
+		// first -- it cannot tell a deliberate binding from a container's willingness to autowire the
+		// class. Bound before it, this double would be replaced by the real rewriter. The filter
+		// resolves when it fires, which is what makes binding this late work at all.
+		$rewriter = $this->bind_spy_rewriter();
+
+		$this->assertNotFalse(
+			has_filter( 'wp_admin_notice_markup', [ Absorber::class, 'filter_activation_error_markup' ] )
+		);
+		$this->assertSame(
+			$rewriter->rewritten_markup,
+			apply_filters( 'wp_admin_notice_markup', '<p>Core.</p>', '', [] ),
+			'The wired filter has to reach the bound rewriter.'
+		);
+	}
+
+	/**
+	 * The whole chain on the default bindings, which nothing else asserts end to end: a host's
+	 * `register()` call buffers, the provider hands the queue a reader over the same registrar the
+	 * passes read, and the wired filter finds that registration on the screen core redirects to. The
+	 * tests either side of this one stand a spy or a stub in the middle, so each of them would go on
+	 * passing if the provider handed the queue a reader of its own — with nothing registered in it.
+	 */
+	public function test_the_wired_filter_rewrites_a_registered_standalones_activation_error(): void {
+		set_current_screen( 'plugins' );
+
+		$standalone = 'give-recurring/give-recurring.php';
+		$constant   = $this->make_guard_constant();
+
+		Absorber::register(
+			[
+				'slug'                       => 'give-recurring',
+				'bundled_plugin_file'        => $this->missing_bundled_plugin_file(),
+				'plugin_loaded_constant'     => $constant,
+				'standalone_plugin_basename' => $standalone,
+				'conflict_notice_message'    => static fn() => 'Recurring Donations ships with Give now.',
+			]
+		);
+
+		$_GET['plugin']       = $standalone;
+		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-activation-error_' . $standalone );
+
+		Absorber::boot();
+
+		$filtered = apply_filters(
+			'wp_admin_notice_markup',
+			'<div class="notice notice-error"><p>Plugin could not be activated because it triggered a'
+				. ' <strong>fatal error</strong>.</p></div>',
+			'',
+			[]
+		);
+
+		$this->assertIsString( $filtered );
+		$this->assertStringContainsString( 'Recurring Donations ships with Give now.', $filtered );
+		$this->assertStringNotContainsString( 'fatal error', $filtered );
+	}
+
+	/**
+	 * `wp_admin_notice_markup` is a general-purpose hook another plugin is free to apply anywhere,
+	 * and the rewrite only ever has work to do on an activation-error request in wp-admin.
+	 */
+	public function test_it_does_not_wire_the_activation_error_filter_on_the_front_end(): void {
+		set_current_screen( 'front' );
+
+		Absorber::boot();
+
+		$observed = [ has_filter( 'wp_admin_notice_markup', [ Absorber::class, 'filter_activation_error_markup' ] ) ];
+
+		// Wired by hand and read a second time. Without that reading, a probe that could never
+		// report this callback at all — a renamed method, a mistyped hook name — would satisfy the
+		// assertion below however boot() had behaved.
+		$this->add_tracked_filter( 'wp_admin_notice_markup', [ Absorber::class, 'filter_activation_error_markup' ] );
+
+		$observed[] = has_filter( 'wp_admin_notice_markup', [ Absorber::class, 'filter_activation_error_markup' ] );
+
+		$this->assertSame(
+			[ false, 10 ],
+			$observed,
+			'The filter must be admin-only, and the probe must be able to see a registration.'
+		);
+	}
+
+	/**
 	 * Adding an action at a priority the running dispatch has already passed is accepted and then
 	 * never fires. Booting from plugins_loaded at the default priority instead of 0 would otherwise
 	 * load nothing at all, on a site that looks completely healthy.
@@ -636,14 +735,16 @@ class SchedulerTest extends WPTestCase {
 	public function test_the_state_helper_unwires_the_hooks_boot_added(): void {
 		set_current_screen( 'dashboard' );
 
-		$load_step   = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
-		$notice_step = $this->callbacks_at( 'all_admin_notices' );
+		$load_step        = $this->callbacks_at( 'plugins_loaded', self::load_priority() );
+		$notice_step      = $this->callbacks_at( 'all_admin_notices' );
+		$activation_error = $this->callbacks_at( 'wp_admin_notice_markup' );
 
 		Absorber::boot();
 		Absorber_State::reset();
 
 		$this->assertSame( $load_step, $this->callbacks_at( 'plugins_loaded', self::load_priority() ) );
 		$this->assertSame( $notice_step, $this->callbacks_at( 'all_admin_notices' ) );
+		$this->assertSame( $activation_error, $this->callbacks_at( 'wp_admin_notice_markup' ) );
 	}
 
 	/**
@@ -742,6 +843,29 @@ class SchedulerTest extends WPTestCase {
 		}
 
 		return $total;
+	}
+
+	/**
+	 * Bind a recording rewriter in place of the default one, into the container already standing.
+	 *
+	 * Called *after* boot, unlike the queue below, because the id is a class: a container answers for
+	 * every class that exists whether or not anything was bound to it, so the provider cannot tell a
+	 * deliberate binding from that and rebinds regardless. Late is safe here — the filter resolves
+	 * when it fires, not when it is wired.
+	 *
+	 * @return Spy_Rewriter
+	 */
+	private function bind_spy_rewriter(): Spy_Rewriter {
+		$rewriter = new Spy_Rewriter();
+
+		$this->container()->singleton(
+			Rewriter::class,
+			static function () use ( $rewriter ): Rewriter {
+				return $rewriter;
+			}
+		);
+
+		return $rewriter;
 	}
 
 	/**
@@ -1019,5 +1143,22 @@ class SchedulerTest extends WPTestCase {
 		$this->added_actions[] = [ $hook, $callback, $priority ];
 
 		add_action( $hook, $callback, $priority );
+	}
+
+	/**
+	 * The same, for a filter. Spelled separately from add_tracked_action() even though WordPress
+	 * keeps actions and filters in one registry, so a reader is never left wondering whether a
+	 * filter was wired by an add_action() on purpose.
+	 *
+	 * @param string   $hook     Hook to add to.
+	 * @param callable $callback Callback to add.
+	 * @param int      $priority Priority to add it at.
+	 *
+	 * @return void
+	 */
+	private function add_tracked_filter( string $hook, callable $callback, int $priority = 10 ): void {
+		$this->added_actions[] = [ $hook, $callback, $priority ];
+
+		add_filter( $hook, $callback, $priority );
 	}
 }

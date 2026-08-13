@@ -105,6 +105,14 @@ class Scheduler {
 			// superadmin working in the network admin -- exactly where a network-wide
 			// deactivation gets noticed -- would never see the queue rendered.
 			add_action( 'all_admin_notices', [ Absorber::class, 'render_notices' ] );
+
+			// A named static trampoline like the notice step above, not a closure. Both resolve
+			// their collaborator when they fire, so neither builds anything at boot, but a named
+			// callback can also be taken back with remove_filter() -- which matters most here, on
+			// the one hook that rewrites a screen WordPress drew rather than adding one of our own.
+			// The closures below are shaped that way for a reason these two do not share: the
+			// plugins_loaded sequence has to be runnable inline as well as wirable.
+			add_filter( 'wp_admin_notice_markup', [ Absorber::class, 'filter_activation_error_markup' ] );
 		}
 
 		// Adding an action at a priority the current dispatch has already passed is accepted and

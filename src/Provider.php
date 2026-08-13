@@ -11,6 +11,7 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
@@ -96,6 +97,13 @@ final class Provider implements Provider_Interface {
 			Registry_Reader::class,
 			static function () use ( $container ): Registry_Reader {
 				return new Registry_Reader( $container->get( Registrar_Interface::class ) );
+			}
+		);
+
+		$this->bind_once(
+			Rewriter::class,
+			static function () use ( $container ): Rewriter {
+				return new Rewriter( $container->get( Registry_Reader::class ) );
 			}
 		);
 

@@ -75,9 +75,9 @@ seams a host may rebind:
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
 The rest — `Boot\Scheduler`, `Loader`, `Registry_Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
-`Conflict\Redirector`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` — are bound as concrete
-classes. A host that wants one of them different rebinds the class name; there is no interface because
-nothing in the library dispatches on one.
+`Conflict\Redirector`, `Conflict\Rewriter`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` —
+are bound as concrete classes. A host that wants one of them different rebinds the class name; there
+is no interface because nothing in the library dispatches on one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
@@ -169,13 +169,13 @@ the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-The re-activation rewrite — `Absorber::filter_activation_error_markup()` on `wp_admin_notice_markup` —
-is not built yet. Currently:
+Every behaviour described above is built; nothing in `src/` is still owed. What is left in the plan
+is the end-to-end suite and the release pass.
 
 | Path | What |
 |---|---|
 | `src/Config.php` | Static facade: hook prefix + container. |
-| `src/Absorber.php` | Static facade: registration, `boot()`, and the accessors. Holds no collaborator's state. |
+| `src/Absorber.php` | Static facade: registration, `boot()`, the accessors, and the two notice trampolines. Holds no collaborator's state. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
 | `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
@@ -185,7 +185,7 @@ is not built yet. Currently:
 | `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
 | `src/Registry_Reader.php` | The registration buffer, drained into the registrar on the way past; the object every pass reads the registry through. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
-| `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
+| `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
@@ -253,10 +253,11 @@ them after the wrong problem. `docs/filters.md` and the spec agree.
 
 `Registry_Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
 host may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
-the interface signature — so it is filtered once where the untrusted value enters. Both passes read
-through the reader they were constructed with rather than through the registrar they could resolve for
-themselves, because it drains the pending registrations before it reads and a registrar asked directly
-would miss anything registered since the last flush.
+the interface signature — so it is filtered once where the untrusted value enters. All three readers —
+the load pass, the conflict pass and `Conflict\Rewriter` — read through the reader they were
+constructed with rather than through the registrar they could resolve for themselves, because it
+drains the pending registrations before it reads and a registrar asked directly would miss anything
+registered since the last flush.
 
 **Both passes also catch `Config_Exception` around that read.** A duplicate slug is only found when
 the buffer reaches the registrar, which is a read — long after both `register()` calls returned — and
@@ -331,6 +332,35 @@ switch, never decided by wherever a `switch` happens to fall through — a typo 
 otherwise deactivate a plugin the site owner deliberately turned on. The `default:` branch that
 remains is the one that only queues a notice, so a policy nobody wrote is never read as consent to
 turn a plugin off.
+
+**The activation-error rewrite is its own class, `Conflict\Rewriter`, not a method on
+`Notices\Writer`.** It is the one conflict the load guard cannot prevent — core includes the plugin
+being activated *after* the bundled copy is in memory, so the re-declaration really does fatal — and
+all this library gets to do about it is reword the sentence core's sandbox prints. That sentence is
+`conflict_notice_message`, the same message the merge notice carries, but wording it is as far as the
+two share: nothing in `Rewriter` is stored, drawn or authored through the notice machinery — it reads
+the request, checks the screen, verifies a nonce and edits markup core already wrote. Putting it on
+`Writer` anyway would have needed a `Registry_Reader` argument for the one method that used it — a
+collaborator only that method needs — and would have forced every host binding its own
+`Notices\Contracts\Writer_Interface` to implement an error screen just to get its notices worded. It
+sits in `Conflict\` rather than `Notices\` because what it is about is the standalone conflict — the
+same subject `Detector`, `Resolver` and `Redirector` share — not because it touches notice machinery.
+`Absorber::filter_activation_error_markup()` is the trampoline, and it
+takes an **untyped** argument: a filter receives whatever the filter before it returned, and a
+`string` declaration would turn another plugin's sloppy return into a TypeError raised from here, on
+the screen least able to afford a second one. The rewrite refuses unless the screen is `plugins` or
+`plugins-network` — `wp-admin/network/plugins.php` is a one-line require of the other and draws the
+identical error, and on a default multisite it is the only screen an absorbed standalone can be
+reactivated from — the `plugin` query arg names a registered standalone and `_error_nonce` verifies.
+And it sanitises with `wp_kses_post()` *before* testing for emptiness, since a message that filters
+down to nothing must leave core's wording standing rather than blank the notice box.
+
+**`Boot\Scheduler` wires `wp_admin_notice_markup` as a named static callback, not a closure.** Both
+admin-only hooks are `[ Absorber::class, … ]` pairs that resolve their own collaborator — the
+presenter, or `Conflict\Rewriter` — when they fire, so neither builds anything at boot; what the name buys on
+this one is `remove_filter()`, which a host wanting core's wording back has no other way to reach.
+The `plugins_loaded` steps are closures for a reason these two do not share — that sequence has to be
+runnable inline as well as wirable.
 
 ### Keys
 

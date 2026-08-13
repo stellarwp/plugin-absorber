@@ -25,6 +25,15 @@ site administrators hold `activate_plugins` directly. Conflict resolution theref
 `manage_network_plugins` by name rather than relying on the mapping — see
 [conflict handling](conflict-handling.md#when-resolution-runs).
 
+## `conflict_notice_message` is used twice
+
+The same message backs the queued notice raised when the standalone is deactivated *and* the
+activation-error screen a user meets if they try to re-activate it — the latter is rewritten by
+`Conflict\Rewriter`, not by anything in this layer; see
+[conflict handling](conflict-handling.md#what-the-guard-cannot-do). Write one sentence that reads
+sensibly both as a report of something already done and as the explanation standing in for a
+fatal-error warning.
+
 ## Rendering them yourself
 
 `Absorber::notices()->option_name()` tells you where the queue is kept, so you can render it
