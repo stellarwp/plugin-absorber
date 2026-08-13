@@ -6,7 +6,6 @@
 namespace Nexcess\PluginAbsorber\Plugin;
 
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
-use Nexcess\PluginAbsorber\Traits\Loads_Plugin_Functions;
 
 /**
  * Plugin state, straight from WordPress.

@@ -194,11 +194,11 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
-| `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
+| `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
-| `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
+| `src/Traits/` | `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). Cross-cutting only: a trait used by one folder lives in that folder. |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Activator_Interface`, `Config_Exception`. |
 
@@ -549,7 +549,7 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
 - **`deactivate_plugins()` is called silent, with no `$network_wide` argument.** Silent because a
   `flush_rewrite_rules()` in the standalone's deactivation hook at `plugins_loaded` 404s the site.
   The `null` default takes both the network and blog branches; a computed `true` strands an entry.
-- **`Traits\Loads_Plugin_Functions` guards on `deactivate_plugins()`**, not `is_plugin_active()` —
+- **`Plugin\Loads_Plugin_Functions` guards on `deactivate_plugins()`**, not `is_plugin_active()` —
   the latter is a common third-party shim.
 - **Strauss must not rewrite `plugin_loaded_constant` values.** They are shared runtime constants;
   prefixing them defeats the entire mechanism.

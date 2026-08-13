@@ -6,7 +6,6 @@
 namespace Nexcess\PluginAbsorber\Plugin;
 
 use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
-use Nexcess\PluginAbsorber\Traits\Loads_Plugin_Functions;
 
 /**
  * Turns a plugin off, the way WordPress's own unattended paths do.

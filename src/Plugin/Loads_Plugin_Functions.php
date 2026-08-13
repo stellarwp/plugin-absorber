@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Traits;
+namespace Nexcess\PluginAbsorber\Plugin;
 
 /**
  * Makes WordPress's plugin functions available to the class using it.
