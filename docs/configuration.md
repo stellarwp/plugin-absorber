@@ -45,7 +45,7 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | Interface | Default | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
-| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
+| `Notices\Contracts\Writer_Interface` | `Notices\Writer` | Words the admin notices. |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |

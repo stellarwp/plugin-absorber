@@ -41,7 +41,7 @@ guarantee those tests exist to pin:
 
 ```php
 $container = new Test_Container();
-$container->singleton( Queue_Interface::class, static fn() => $notices );
+$container->singleton( Writer_Interface::class, static fn() => $notices );
 
 $this->set_up_container( $container );
 ```

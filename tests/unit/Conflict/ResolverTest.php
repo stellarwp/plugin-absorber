@@ -19,12 +19,12 @@ use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
-use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Writer;
 use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
@@ -269,7 +269,7 @@ class ResolverTest extends WPTestCase {
 			}
 		};
 
-		$notices = new Spy_Queue();
+		$notices = new Spy_Writer();
 
 		// The interface seams go in first, which is where a host binds them and where the guarantee
 		// lives: nothing can build an interface unprompted, so the container answering to one means a
@@ -282,8 +282,8 @@ class ResolverTest extends WPTestCase {
 			}
 		);
 		$container->singleton(
-			Queue_Interface::class,
-			static function () use ( $notices ): Queue_Interface {
+			Writer_Interface::class,
+			static function () use ( $notices ): Writer_Interface {
 				return $notices;
 			}
 		);

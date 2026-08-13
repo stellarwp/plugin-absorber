@@ -30,9 +30,9 @@ class Renderer {
 	 * @var array<string,string>
 	 */
 	private const CLASSES = [
-		Queue::TYPE_MERGE      => 'notice-warning',
-		Queue::TYPE_CONFLICT   => 'notice-warning',
-		Queue::TYPE_DEPENDENCY => 'notice-error',
+		Writer::TYPE_MERGE      => 'notice-warning',
+		Writer::TYPE_CONFLICT   => 'notice-warning',
+		Writer::TYPE_DEPENDENCY => 'notice-error',
 	];
 
 	/**

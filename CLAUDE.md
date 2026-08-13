@@ -68,21 +68,32 @@ seams a host may rebind:
 | Interface | Bound to | Responsibility |
 |---|---|---|
 | `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
-| `Notices\Contracts\Queue_Interface` | `Notices\Queue` | notice queue + activation-error rewrite |
+| `Notices\Contracts\Writer_Interface` | `Notices\Writer` | what each notice says |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | one method: which policy branch a conflict takes |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | deactivates the standalone, network-aware |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
 The rest — `Boot\Scheduler`, `Loader`, `Registry_Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
-`Conflict\Redirector`, `Notices\Store`, `Notices\Renderer` — are bound as concrete classes. A host
-that wants one of them different rebinds the class name; there is no interface because nothing in the
-library dispatches on one.
+`Conflict\Redirector`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` — are bound as concrete
+classes. A host that wants one of them different rebinds the class name; there is no interface because
+nothing in the library dispatches on one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
 implementations sit at the root — `Registrar`, `Plugin_Deactivator`, `Plugin_Checker`, `Activator` —
 plus `Provider_Interface`.
+
+**`Notices\Writer` and `Notices\Presenter` split because they change for different reasons.** One
+answers "what does this notice say", the other "who may see the pending set, and is it gone once they
+have" — a host already running `stellarwp/admin-notices` has an opinion about the first and none about
+the second. Only `Writer` earns `Writer_Interface`: wording is what a host rebinds, and nothing in the
+library dispatches on how a notice reaches the screen, since the trampoline on `all_admin_notices` is
+`Presenter`'s only caller — a host that wants no rendering of ours removes that callback rather than
+binding a no-op. The capability check stays on `Presenter`, next to the render-then-clear, rather than
+moving to `Renderer` alongside the markup: it guards the clearing as much as the drawing, so deciding
+those two separately would let a user who may not see the queue destroy it anyway, through a class
+that never checked.
 
 **The container is required.** `Config::get_container()` throws `Config_Exception` when unset, which
 is what `uplink`, `telemetry`, `schema` and `harbor` all do; `has_container()` stays as the probe.
@@ -161,7 +172,7 @@ is not built yet. Currently:
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
-| `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
+| `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
@@ -211,7 +222,7 @@ loaded → dependencies met → file exists → `should_load` filter → `requir
 callback (only after a *successful* require).
 
 The activation callback is the last of those and runs through `Activator`, which `Loader` takes
-as a constructor argument like the notice queue and the registry reader. Last, because a bundled plugin is included rather
+as a constructor argument like the writer and the registry reader. Last, because a bundled plugin is included rather
 than activated: `register_activation_hook()` never fires for it, so the callback stands in for
 whatever that hook would have done, and it has to run with the plugin's own code already in memory.
 Only after a require that happened, because creating tables and seeding options for a sub-plugin
@@ -241,7 +252,7 @@ the screens the mistaken registration would have to be corrected from.
 
 The container is no longer the other half of that. A pass is handed a reader that already holds its
 registrar, so a container that cannot supply one fails while the *pass* is being built — where an
-unbuildable `Queue_Interface` or `Plugin_Checker_Interface` has always failed. Read-time and
+unbuildable `Writer_Interface` or `Plugin_Checker_Interface` has always failed. Read-time and
 build-time failures stopped being the same event when the registry became an argument, and the
 registrar now fails like every other binding rather than being the one collaborator whose broken
 binding surfaced late and politely.
@@ -249,7 +260,7 @@ binding surfaced late and politely.
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
 the worked example of required injection — `Conflict\Detector` to say which sub-plugins are in
-conflict, `Plugin_Deactivator_Interface` to turn the standalone off, `Queue_Interface` for the notice
+conflict, `Plugin_Deactivator_Interface` to turn the standalone off, `Writer_Interface` for the notice
 and `Conflict\Redirector` for the destination, all four constructor arguments with no default — so
 the object a test builds is the object the provider builds, and a host's rebinding of either plugin
 seam reaches it, the deactivator directly and the checker through the detector, without the resolver
@@ -297,7 +308,7 @@ resolve. The detector reports and changes nothing, so it is the cheap question t
 the expensive one. All three live in the step rather than in the resolver, so a host binding its own
 cannot drop one by omission — and a request that fails any of them never builds a resolver. The
 capability gate covers every policy, not just the destructive one, and that is free: the other
-branches only queue a notice, and `Notices\Queue::render()` refuses to render *or clear* for a user
+branches only queue a notice, and `Notices\Presenter::render()` refuses to render *or clear* for a user
 without the same capability, so queuing earlier would only park it until a capable admin arrives.
 
 An unknown policy is normalised to `NOTICE_ONLY` through `Conflict_Policy::is_valid()` before the

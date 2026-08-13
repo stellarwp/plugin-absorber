@@ -5,26 +5,26 @@
 
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
- * A notice queue that records what was asked of it, for tests about who the library talks to.
+ * A notice writer that records what was asked of it, for tests about who the library talks to.
  *
- * A named class rather than an anonymous one: a test reading `$spy->render_calls` off a value typed as
- * `Queue_Interface` is reading a property the interface does not declare, and static analysis rightly
- * rejects it. Named, the spy's own type carries the counters.
+ * A named class rather than an anonymous one: a test reading `$spy->merge_notices` off a value typed
+ * as `Writer_Interface` is reading a property the interface does not declare, and static analysis
+ * rightly rejects it. Named, the spy's own type carries the counters.
  *
- * It stores nothing, which is the point — a test that binds this one proves the default queue was
+ * It stores nothing, which is the point — a test that binds this one proves the default writer was
  * never resolved by asserting the option is still absent.
  *
  * @since 1.0.0
  */
-class Spy_Queue implements Queue_Interface {
+class Spy_Writer implements Writer_Interface {
 	/**
 	 * The option this spy would keep notices in, if it kept any.
 	 *
-	 * Deliberately not the default queue's name: a test that reads the real option while a spy is
+	 * Deliberately not the default writer's name: a test that reads the real option while a spy is
 	 * bound is reading somewhere nothing was written, and should say so rather than agree.
 	 *
 	 * @var string
@@ -53,13 +53,6 @@ class Spy_Queue implements Queue_Interface {
 	public $dependency_notices = [];
 
 	/**
-	 * How many times render() was called.
-	 *
-	 * @var int
-	 */
-	public $render_calls = 0;
-
-	/**
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
 	 *
 	 * @return void
@@ -84,13 +77,6 @@ class Spy_Queue implements Queue_Interface {
 	 */
 	public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void {
 		$this->dependency_notices[] = $sub_plugin->get_slug();
-	}
-
-	/**
-	 * @return void
-	 */
-	public function render(): void {
-		++$this->render_calls;
 	}
 
 	/**

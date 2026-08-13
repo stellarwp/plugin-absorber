@@ -10,7 +10,8 @@ use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
 use Throwable;
 
@@ -53,10 +54,10 @@ final class Absorber {
 	 *
 	 * @throws Config_Exception When no container has been set, or its binding is unusable.
 	 *
-	 * @return Queue_Interface
+	 * @return Writer_Interface
 	 */
-	public static function notices(): Queue_Interface {
-		return self::collaborator( Queue_Interface::class );
+	public static function notices(): Writer_Interface {
+		return self::collaborator( Writer_Interface::class );
 	}
 
 	/**
@@ -162,12 +163,12 @@ final class Absorber {
 			return;
 		}
 
-		// The queue is a rebindable seam and the messages inside it are host callables, so rendering
-		// runs somebody else's code -- on all_admin_notices, which every admin screen fires. A throw
-		// out of here would white-screen wp-admin, which is exactly where a site owner would go to
-		// undo whatever caused it. The notice is worth less than the screen it would be read on.
+		// The messages a presenter draws were worded by host callables, so rendering runs somebody
+		// else's code -- on all_admin_notices, which every admin screen fires. A throw out of here
+		// would white-screen wp-admin, which is exactly where a site owner would go to undo whatever
+		// caused it. The notice is worth less than the screen it would be read on.
 		try {
-			self::notices()->render();
+			self::collaborator( Presenter::class )->render();
 		} catch ( Throwable $thrown ) {
 			_doing_it_wrong(
 				self::class . '::render_notices',

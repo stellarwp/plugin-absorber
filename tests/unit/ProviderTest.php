@@ -20,10 +20,11 @@ use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
-use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
+use Nexcess\PluginAbsorber\Notices\Writer;
 use Nexcess\PluginAbsorber\Plugin_Checker;
 use Nexcess\PluginAbsorber\Plugin_Deactivator;
 use Nexcess\PluginAbsorber\Provider;
@@ -31,8 +32,8 @@ use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Activator;
-use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Writer;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Resolver;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use StellarWP\ContainerContract\ContainerInterface;
@@ -83,9 +84,10 @@ class ProviderTest extends WPTestCase {
 	public static function default_bindings(): Generator {
 		yield 'the registrar'         => [ Registrar_Interface::class, Registrar::class ];
 		yield 'the registry reader'   => [ Registry_Reader::class, Registry_Reader::class ];
-		yield 'the notice queue'      => [ Queue_Interface::class, Queue::class ];
+		yield 'the notice writer'     => [ Writer_Interface::class, Writer::class ];
 		yield 'the notice store'      => [ Store::class, Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class, Renderer::class ];
+		yield 'the notice presenter'  => [ Presenter::class, Presenter::class ];
 		yield 'the plugin checker'    => [ Plugin_Checker_Interface::class, Plugin_Checker::class ];
 		yield 'the deactivator'       => [ Plugin_Deactivator_Interface::class, Plugin_Deactivator::class ];
 		yield 'the activator'         => [ Activator_Interface::class, Activator::class ];
@@ -119,9 +121,10 @@ class ProviderTest extends WPTestCase {
 	public static function single_instance_bindings(): Generator {
 		yield 'the registrar'         => [ Registrar_Interface::class ];
 		yield 'the registry reader'   => [ Registry_Reader::class ];
-		yield 'the notice queue'      => [ Queue_Interface::class ];
+		yield 'the notice writer'     => [ Writer_Interface::class ];
 		yield 'the notice store'      => [ Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class ];
+		yield 'the notice presenter'  => [ Presenter::class ];
 		yield 'the conflict resolver' => [ Resolver_Interface::class ];
 		yield 'the conflict detector' => [ Detector::class ];
 		yield 'the redirector'        => [ Redirector::class ];
@@ -159,6 +162,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the registry reader'   => [ Registry_Reader::class ];
 		yield 'the notice store'      => [ Store::class ];
 		yield 'the notice renderer'   => [ Renderer::class ];
+		yield 'the notice presenter'  => [ Presenter::class ];
 		yield 'the conflict detector' => [ Detector::class ];
 		yield 'the redirector'        => [ Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class ];
@@ -194,14 +198,14 @@ class ProviderTest extends WPTestCase {
 	 * unprompted, so `has()` is true there only where a binding exists and the host's object
 	 * survives. A class id cannot be covered: di52 answers `has()` for one with the same true
 	 * whether or not anything was bound, so the provider cannot see the host's binding and
-	 * replaces it — a host rebinding `Store`, `Renderer`, `Loader` or `Boot\Scheduler` has to
-	 * do it after boot.
+	 * replaces it — a host rebinding `Store`, `Renderer`, `Presenter`, `Loader` or
+	 * `Boot\Scheduler` has to do it after boot.
 	 *
 	 * @return Generator<string,array{0:string,1:object}>
 	 */
 	public static function host_bindings(): Generator {
 		yield 'the registrar'         => [ Registrar_Interface::class, new Spy_Registrar() ];
-		yield 'the notice queue'      => [ Queue_Interface::class, new Spy_Queue() ];
+		yield 'the notice writer'     => [ Writer_Interface::class, new Spy_Writer() ];
 		yield 'the conflict resolver' => [ Resolver_Interface::class, new Spy_Resolver() ];
 
 		// "Once, ever" is recorded in an option here, which is one opinion among several — a host

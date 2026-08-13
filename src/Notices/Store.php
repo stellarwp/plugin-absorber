@@ -17,7 +17,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * is raised once and never again, so losing it means a site owner is never told their plugin was
  * deactivated. This queue is not a cache.
  *
- * Separate from Queue so that changing where notices are kept does not mean touching how they are
+ * Separate from Writer so that changing where notices are kept does not mean touching how they are
  * worded or drawn.
  *
  * @since 1.0.0
