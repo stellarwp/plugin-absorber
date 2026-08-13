@@ -289,6 +289,26 @@ class DetectorTest extends WPTestCase {
 	}
 
 	/**
+	 * The short-circuit is a `return true`, not a `return`. A host that bundles two plugins and has a
+	 * standalone still installed for the *second* of them has to have that conflict found: a probe
+	 * answering from the first registration alone would leave the standalone active, nothing
+	 * deactivated and nothing said — and every other multi-registration case in this file puts the
+	 * conflicting sub-plugin first, so it would go on passing.
+	 */
+	public function test_it_walks_past_a_sub_plugin_that_is_not_in_conflict(): void {
+		$this->bind_checker_active_for( [ 'give-fee-recovery/give-fee-recovery.php' ] );
+		$this->register();
+		$this->register_fee_recovery();
+
+		$this->assertTrue( $this->detector()->has_conflict() );
+		$this->assertSame(
+			[ 'give-recurring/give-recurring.php', 'give-fee-recovery/give-fee-recovery.php' ],
+			$this->asked,
+			'Both standalones have to be asked about, in registration order.'
+		);
+	}
+
+	/**
 	 * The probe reads the registry and nothing else, which is what keeps it cheap enough to ask of
 	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still raise,
 	 * because it is only found when the buffer reaches the registrar. The conflict step catches this
@@ -465,16 +485,87 @@ class DetectorTest extends WPTestCase {
 	}
 
 	/**
-	 * Bind the recording checker in place of the default one.
+	 * A checker that logs like the one above but answers per basename.
 	 *
-	 * Bound before the provider runs, which is the only order that leaves it bound.
+	 * One fixed answer cannot express the site this library is written for: several sub-plugins
+	 * bundled, and a standalone still installed for only one of them.
+	 *
+	 * @param string[] $active Basenames reported active; every other one is reported inactive.
+	 *
+	 * @return Checker_Interface
+	 */
+	private function checker_active_for( array $active ): Checker_Interface {
+		$asked = &$this->asked;
+
+		$record = static function ( string $basename ) use ( &$asked ): void {
+			$asked[] = $basename;
+		};
+
+		return new class( $record, $active ) implements Checker_Interface {
+			/**
+			 * @var callable
+			 */
+			private $record;
+
+			/**
+			 * @var string[]
+			 */
+			private $active;
+
+			/**
+			 * @param callable $record Logs the basename asked about.
+			 * @param string[] $active Basenames reported active.
+			 */
+			public function __construct( callable $record, array $active ) {
+				$this->record = $record;
+				$this->active = $active;
+			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_active( string $basename ): bool {
+				( $this->record )( $basename );
+
+				return in_array( $basename, $this->active, true );
+			}
+		};
+	}
+
+	/**
+	 * Bind the recording checker in place of the default one.
 	 *
 	 * @param bool $active Whether every standalone is reported active.
 	 *
 	 * @return void
 	 */
 	private function bind_checker( bool $active ): void {
-		$checker   = $this->recording_checker( $active );
+		$this->install_checker( $this->recording_checker( $active ) );
+	}
+
+	/**
+	 * Bind a checker that reports only the named basenames active.
+	 *
+	 * @param string[] $active Basenames reported active.
+	 *
+	 * @return void
+	 */
+	private function bind_checker_active_for( array $active ): void {
+		$this->install_checker( $this->checker_active_for( $active ) );
+	}
+
+	/**
+	 * Put a checker into a container of its own, and configure the library with it.
+	 *
+	 * Bound before the provider runs, which is the only order that leaves it bound.
+	 *
+	 * @param Checker_Interface $checker Checker the detector is to be built with.
+	 *
+	 * @return void
+	 */
+	private function install_checker( Checker_Interface $checker ): void {
 		$container = new Test_Container();
 		$container->singleton(
 			Checker_Interface::class,

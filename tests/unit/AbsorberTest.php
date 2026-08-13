@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
@@ -11,9 +13,11 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict\Rewriter;
+use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Writer;
+use Nexcess\PluginAbsorber\Provider;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Registry\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
@@ -23,23 +27,35 @@ use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Rewriter;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use RuntimeException;
+use StellarWP\ContainerContract\ContainerInterface;
 use stdClass;
 use Throwable;
 
 /**
  * The public surface: the accessors, registration, and the two notice trampolines.
  *
- * Boot timing lives in `Boot\SchedulerTest` and the load loop in `LoaderTest`, which is where
- * those behaviours moved. What is left here is what a host actually calls.
+ * Boot timing lives in `Boot\SchedulerTest` and the load loop in `LoaderTest`, which is where those
+ * behaviours moved. What is left here is what a host actually calls — `boot()` included, for the two
+ * decisions the method makes itself rather than delegates: which provider runs, and when the flag
+ * that makes it idempotent is set.
  *
  * @since 1.0.0
  */
 class AbsorberTest extends WPTestCase {
+	use WithBundledPlugins;
 	use WithContainer;
 	use WithIncorrectUsage;
+
+	/**
+	 * What `did_action( 'plugins_loaded' )` reported before a test rewound it, or null.
+	 *
+	 * @var int|null
+	 */
+	private $plugins_loaded_count = null;
 
 	public function setUp(): void {
 		parent::setUp();
@@ -47,10 +63,19 @@ class AbsorberTest extends WPTestCase {
 		Absorber_State::reset();
 		Config_State::reset();
 		Config::set_hook_prefix( 'give' );
+		$this->reset_bundled_plugin_loads();
 	}
 
 	public function tearDown(): void {
+		// The counter is process-global, so a test that left it rewound would tell the next one it is
+		// still early enough to wire a plugins_loaded callback.
+		if ( $this->plugins_loaded_count !== null ) {
+			$GLOBALS['wp_actions']['plugins_loaded'] = $this->plugins_loaded_count;
+			$this->plugins_loaded_count              = null;
+		}
+
 		$this->stop_expecting_incorrect_usage();
+		$this->remove_bundled_plugin_files();
 		Absorber_State::reset();
 		Config_State::reset();
 		$this->tear_down_container();
@@ -98,6 +123,52 @@ class AbsorberTest extends WPTestCase {
 					. 'the container could not build: the two send the host to different files.'
 			);
 		}
+	}
+
+	/**
+	 * The same report for a binding that is not an object at all — a configuration array a host meant
+	 * to pass somewhere else, or a class name left as the string it was written as. `get_class()`
+	 * fatals on every one of those, so the type is what the sentence names, and it has to be this
+	 * sentence that arrives rather than a TypeError from inside this library.
+	 *
+	 * @dataProvider non_object_bindings
+	 *
+	 * @param mixed  $bound    What the host's binding resolves to.
+	 * @param string $reported How the report has to name it.
+	 */
+	public function test_a_binding_that_is_not_an_object_is_reported_by_type( $bound, string $reported ): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function () use ( $bound ) {
+				return $bound;
+			}
+		);
+		$this->set_up_container( $container );
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+			$this->assertStringContainsString(
+				sprintf( 'returned %s', $reported ),
+				$exception->getMessage(),
+				'A host reading this has to be told what it bound, and a type is all there is to tell.'
+			);
+		}
+	}
+
+	/**
+	 * A class name is the likeliest of these by far: it is what the host meant to bind, one `::class`
+	 * short of having bound it.
+	 *
+	 * @return Generator<string,array{0:mixed,1:string}>
+	 */
+	public static function non_object_bindings(): Generator {
+		yield 'a class name left as a string' => [ Registrar::class, 'string' ];
+		yield 'a configuration array'         => [ [ 'registrar' => true ], 'array' ];
+		yield 'a count'                       => [ 3, 'integer' ];
 	}
 
 	/**
@@ -381,6 +452,107 @@ class AbsorberTest extends WPTestCase {
 		$this->assertSame( [], Absorber::all() );
 	}
 
+	/**
+	 * The boot flag is set last, after the wiring rather than in front of it, and this is the failure
+	 * that ordering exists to prevent. A boot that threw on the way through — no container, a binding
+	 * the container cannot build — has wired nothing at all, so a host that fixes its bootstrap and
+	 * calls again has to get a working library. Set first, the second call returns early: nothing
+	 * loads, nothing is reported, and the site looks entirely healthy.
+	 *
+	 * Asserted by loading a sub-plugin rather than by counting hooks, because "boot() ran again" is
+	 * not the promise — the promise is that the library works afterwards.
+	 */
+	public function test_a_boot_that_failed_can_be_booted_again(): void {
+		$this->rewind_plugins_loaded();
+
+		$failed = false;
+
+		try {
+			Absorber::boot();
+		} catch ( Config_Exception $exception ) {
+			$failed = true;
+		}
+
+		$this->assertTrue( $failed, 'Booting with no container has to fail, or this test is about nothing.' );
+
+		$this->set_up_container();
+		$this->register_bundled_sub_plugin();
+
+		Absorber::boot();
+
+		$this->assertSame( 0, $this->bundled_plugin_loads(), 'The second boot must wire the load rather than run it.' );
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'The boot after the failure has to leave a working library.' );
+	}
+
+	/**
+	 * boot() binds a `Provider_Interface` of its own only when nothing answers to one already, so a
+	 * host may replace the whole set of bindings rather than rebinding them one at a time.
+	 *
+	 * What says the library's own provider stood down is an interface id: a container reports it can
+	 * answer for any class that exists, bound or not, so a concrete binding would look present either
+	 * way. Nothing can build an interface unprompted, so there `has()` means what it says.
+	 */
+	public function test_a_host_provider_replaces_the_default_bindings(): void {
+		$this->rewind_plugins_loaded();
+
+		$calls = [];
+
+		$record = static function () use ( &$calls ): void {
+			$calls[] = 'register';
+		};
+
+		$provider = new class( $record ) implements Provider_Interface {
+			/**
+			 * @var callable
+			 */
+			private $record;
+
+			/**
+			 * @param callable $record Logs the call.
+			 */
+			public function __construct( callable $record ) {
+				$this->record = $record;
+			}
+
+			/**
+			 * @return void
+			 */
+			public function register(): void {
+				( $this->record )();
+			}
+		};
+
+		$container = $this->bare_container();
+		$container->singleton(
+			Provider_Interface::class,
+			static function () use ( $provider ): Provider_Interface {
+				return $provider;
+			}
+		);
+
+		Config::set_container( $container );
+
+		Absorber::boot();
+
+		$this->assertSame( [ 'register' ], $calls, 'The host\'s provider is the one boot() has to run.' );
+		$this->assertFalse(
+			$container->has( Registrar_Interface::class ),
+			'The library\'s own provider must not have run beside it.'
+		);
+
+		// The probe has to be shown to work: an interface this library never binds and one it binds
+		// through a provider that never ran look exactly alike from here.
+		( new Provider( $container ) )->register();
+
+		$this->assertTrue(
+			$container->has( Registrar_Interface::class ),
+			'The default provider really does bind what the assertion above looked for.'
+		);
+	}
+
 	public function test_render_notices_delegates_to_the_bound_presenter(): void {
 		$presenter = $this->bind_presenter();
 
@@ -586,6 +758,60 @@ class AbsorberTest extends WPTestCase {
 		);
 
 		return $rewriter;
+	}
+
+	/**
+	 * A container with nothing in it but a way to reach itself.
+	 *
+	 * `WithContainer::set_up_container()` runs this library's own provider over the container on the
+	 * way past, which is the very thing the provider test is about not happening. What is kept is the
+	 * container's binding to its own contract: `Boot\Scheduler` takes one, and boot() resolves the
+	 * scheduler whichever provider ran.
+	 *
+	 * @return Test_Container
+	 */
+	private function bare_container(): Test_Container {
+		$container = new Test_Container();
+		$container->singleton(
+			ContainerInterface::class,
+			static function () use ( $container ): ContainerInterface {
+				return $container;
+			}
+		);
+
+		return $container;
+	}
+
+	/**
+	 * Register a sub-plugin whose bundled file records that it was loaded.
+	 *
+	 * @return void
+	 */
+	private function register_bundled_sub_plugin(): void {
+		$constant = $this->make_guard_constant();
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => $this->make_bundled_plugin_file( $constant ),
+				'plugin_loaded_constant' => $constant,
+			]
+		);
+	}
+
+	/**
+	 * Put plugins_loaded back where a host bootstrap finds it.
+	 *
+	 * The harness has to dispatch the hook before it can run anything, so a boot in a test would
+	 * rightly report that it is too late to wire and run the sequence inline instead. tearDown puts
+	 * the counter back.
+	 *
+	 * @return void
+	 */
+	private function rewind_plugins_loaded(): void {
+		$this->plugins_loaded_count = did_action( 'plugins_loaded' );
+
+		unset( $GLOBALS['wp_actions']['plugins_loaded'] );
 	}
 
 	/**
