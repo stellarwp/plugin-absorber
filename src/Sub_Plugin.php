@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
@@ -96,7 +98,13 @@ class Sub_Plugin {
 	public function __construct( array $config ) {
 		foreach ( self::REQUIRED_KEYS as $required ) {
 			if ( ! isset( $config[ $required ] ) ) {
-				throw new Config_Exception( "Sub-plugin config is missing required key: {$required}" );
+				throw new Config_Exception(
+					sprintf(
+						'Sub-plugin config %1$s: required key "%2$s" is missing.',
+						$this->describe_config_entry( $config ),
+						$required
+					)
+				);
 			}
 
 			// Not just a truthiness check. An array survives one of those and then casts to the
@@ -104,7 +112,12 @@ class Sub_Plugin {
 			// registry key, its activation-tracking key, and its notice id.
 			if ( ! is_string( $config[ $required ] ) || $config[ $required ] === '' ) {
 				throw new Config_Exception(
-					"Sub-plugin config key must be a non-empty string: {$required}"
+					sprintf(
+						'Sub-plugin config %1$s: key "%2$s" must be a non-empty string, %3$s given.',
+						$this->describe_config_entry( $config ),
+						$required,
+						$this->describe_value( $config[ $required ] )
+					)
 				);
 			}
 		}
@@ -115,7 +128,14 @@ class Sub_Plugin {
 		// let the load proceed into the fatal it exists to prevent.
 		foreach ( self::CALLABLE_KEYS as $key ) {
 			if ( isset( $config[ $key ] ) && ! is_callable( $config[ $key ] ) ) {
-				throw new Config_Exception( "Sub-plugin config key must be callable: {$key}" );
+				throw new Config_Exception(
+					sprintf(
+						'Sub-plugin config %1$s: key "%2$s" must be callable, %3$s given.',
+						$this->describe_config_entry( $config ),
+						$key,
+						$this->describe_value( $config[ $key ] )
+					)
+				);
 			}
 		}
 
@@ -125,7 +145,12 @@ class Sub_Plugin {
 		foreach ( self::STRING_KEYS as $key ) {
 			if ( isset( $config[ $key ] ) && ! is_string( $config[ $key ] ) ) {
 				throw new Config_Exception(
-					"Sub-plugin config key must be a string: {$key}"
+					sprintf(
+						'Sub-plugin config %1$s: key "%2$s" must be a string, %3$s given.',
+						$this->describe_config_entry( $config ),
+						$key,
+						$this->describe_value( $config[ $key ] )
+					)
 				);
 			}
 		}
@@ -140,7 +165,13 @@ class Sub_Plugin {
 
 			if ( ! is_string( $config[ $key ] ) && ! is_callable( $config[ $key ] ) ) {
 				throw new Config_Exception(
-					"Sub-plugin config key must be a string, or a callable that is not one: {$key}"
+					sprintf(
+						'Sub-plugin config %1$s: key "%2$s" must be a policy string or a non-string'
+							. ' callable, %3$s given.',
+						$this->describe_config_entry( $config ),
+						$key,
+						$this->describe_value( $config[ $key ] )
+					)
 				);
 			}
 		}
@@ -157,7 +188,15 @@ class Sub_Plugin {
 
 			if ( is_string( $config[ $key ] ) || ! is_callable( $config[ $key ] ) ) {
 				throw new Config_Exception(
-					"Sub-plugin config key must be a callable that is not a string: {$key}"
+					sprintf(
+						'Sub-plugin config %1$s: key "%2$s" must be a non-string callable, %3$s'
+							. ' given. Wrap the text in a callable, e.g.'
+							. " static function () { return __( 'text' ); }, so that it is"
+							. ' translated after init rather than while the config array is built.',
+						$this->describe_config_entry( $config ),
+						$key,
+						$this->describe_value( $config[ $key ] )
+					)
 				);
 			}
 		}
@@ -453,5 +492,61 @@ class Sub_Plugin {
 	 */
 	private function as_string( $value ): string {
 		return is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
+	 * Name the entry a rejection is about, for a host registering several from one loop.
+	 *
+	 * Registering from a manifest is the shape the docs recommend, and it puts every entry through
+	 * the same line of the host's code: the key at fault says what is wrong, and nothing but this
+	 * says which of five sub-plugins it was wrong on.
+	 *
+	 * The slug first, because it is what every other message about a sub-plugin names, and the
+	 * bundled file when the slug is itself the key at fault -- it identifies the entry just as well,
+	 * and it names the file the host has to go and look at. Both are read defensively, since either
+	 * may be the missing or malformed key being reported; when neither can be read, saying so is
+	 * still better than a message that quietly names nothing.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param array<string,mixed> $config Configuration exactly as the host supplied it.
+	 *
+	 * @return string
+	 */
+	private function describe_config_entry( array $config ): string {
+		foreach ( [ 'slug', 'bundled_plugin_file' ] as $identifier ) {
+			$value = $config[ $identifier ] ?? null;
+
+			if ( is_string( $value ) && $value !== '' ) {
+				return sprintf( 'for "%s"', $value );
+			}
+		}
+
+		return 'with no usable slug or bundled_plugin_file';
+	}
+
+	/**
+	 * Name the type a key was given, so that a stray value can be found rather than hunted for.
+	 *
+	 * An object reports its class: "object given" leaves a Closure and a WP_Error looking the same,
+	 * and they are very different mistakes. The empty string is named as one, because "string given"
+	 * under a key that must be a non-empty string says nothing the host does not already know.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param mixed $value Value the host put under the key.
+	 *
+	 * @return string
+	 */
+	private function describe_value( $value ): string {
+		if ( is_object( $value ) ) {
+			return get_class( $value );
+		}
+
+		if ( $value === '' ) {
+			return 'empty string';
+		}
+
+		return gettype( $value );
 	}
 }
