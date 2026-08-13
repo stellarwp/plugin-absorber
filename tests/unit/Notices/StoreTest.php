@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Tests\Unit\Notices;
 
 use Codeception\TestCase\WPTestCase;
@@ -11,6 +13,9 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use RuntimeException;
+use WP_Error;
+use WP_Network;
 
 /**
  * The storage half of the queue, exercised without going through Queue.
@@ -28,6 +33,13 @@ class StoreTest extends WPTestCase {
 
 	private const OPTION_NORMALISED = 'give_core_plugin_absorber_notices';
 
+	/**
+	 * The second site the network-scope test reads the queue from, once it has one.
+	 *
+	 * @var int|null
+	 */
+	private $second_site_id = null;
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -37,6 +49,7 @@ class StoreTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
+		$this->delete_second_site();
 		delete_site_option( self::OPTION );
 		delete_site_option( self::OPTION_WOO );
 		delete_site_option( self::OPTION_NORMALISED );
@@ -82,6 +95,10 @@ class StoreTest extends WPTestCase {
 	public function test_clear_removes_the_row_entirely(): void {
 		$store = new Store();
 		$store->put( 'give-recurring:merge', 'Bundled now.' );
+
+		// The row has to be there before it can be taken away: a store that wrote nothing at all
+		// would satisfy every assertion below without ever having cleared anything.
+		$this->assertNotFalse( get_site_option( self::OPTION, false ), 'The queue must exist before it is cleared.' );
 
 		$store->clear();
 
@@ -178,5 +195,111 @@ class StoreTest extends WPTestCase {
 		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
 		$this->assertNotContains( self::OPTION, array_keys( wp_load_alloptions() ) );
+	}
+
+	/**
+	 * The queue is one option for the whole network, not one per site.
+	 *
+	 * `get_site_option()`/`update_site_option()` rather than the plain pair is the only thing making
+	 * that true, and outside multisite the two are the same function — so nothing on the singlesite
+	 * leg can tell them apart, and swapping them would leave every other test in this class green.
+	 * The scope has to match the act it reports: `deactivate_plugins()` takes the standalone out of
+	 * the *network's* active plugins, and the merge notice explaining that is raised exactly once, so
+	 * a per-site queue would file it against whichever site the request happened to land on and no
+	 * administrator elsewhere would ever be told.
+	 */
+	public function test_the_queue_is_one_option_for_the_whole_network(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Outside multisite there is one site, so there is no scope to cross.' );
+		}
+
+		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
+
+		$this->assertSame(
+			[ 'give-recurring:merge' => 'Bundled now.' ],
+			( new Store() )->all(),
+			'The queue must be readable where it was written, or reading it elsewhere proves nothing.'
+		);
+
+		$this->second_site_id = $this->create_second_site();
+
+		switch_to_blog( $this->second_site_id );
+
+		try {
+			$elsewhere = ( new Store() )->all();
+		} finally {
+			// In a finally block so a read that throws cannot leave the rest of the suite running
+			// against the second site.
+			restore_current_blog();
+		}
+
+		$this->assertSame(
+			[ 'give-recurring:merge' => 'Bundled now.' ],
+			$elsewhere,
+			'The queue must reach every site on the network, not only the one that wrote it.'
+		);
+	}
+
+	/**
+	 * A second site on the current network, created with the same domain and a path of its own so
+	 * that it is unique on a subdomain install and a subdirectory one alike.
+	 *
+	 * @throws RuntimeException When there is no network, or the site cannot be created.
+	 *
+	 * @return int
+	 */
+	private function create_second_site(): int {
+		$network = get_network();
+
+		if ( ! $network instanceof WP_Network ) {
+			throw new RuntimeException( 'The multisite env has no current network.' );
+		}
+
+		// Creating a site runs core's populate_options(), which calls delete_expired_transients(), whose
+		// DELETE self-joins the options table under two aliases. The suite runs inside a transaction on
+		// TEMPORARY tables, and MySQL cannot open one of those twice in a statement -- so the query
+		// fails, harmlessly, on a site that has no transients to expire. Suppressed for the one call
+		// rather than left to print a WordPress database error into every CI log.
+		global $wpdb;
+
+		$suppressing = $wpdb->suppress_errors( true );
+
+		$site_id = wpmu_create_blog(
+			$network->domain,
+			$network->path . 'absorber-queue-scope/',
+			'Queue scope',
+			0,
+			[],
+			get_current_network_id()
+		);
+
+		$wpdb->suppress_errors( $suppressing );
+
+		// `wpmu_create_blog()` puts WordPress into installing mode and never takes it back out, so
+		// without this every later test in the process runs as though the site were mid-install.
+		// Core's own blog factory ends with the same line, for the same reason.
+		wp_installing( false );
+
+		if ( $site_id instanceof WP_Error ) {
+			throw new RuntimeException( 'Could not create a second site: ' . $site_id->get_error_message() );
+		}
+
+		return $site_id;
+	}
+
+	/**
+	 * Creating a site is DDL, which MySQL commits outside the transaction the suite rolls back, so
+	 * the tables it made have to be dropped by hand rather than left to the rollback.
+	 *
+	 * @return void
+	 */
+	private function delete_second_site(): void {
+		if ( $this->second_site_id === null ) {
+			return;
+		}
+
+		wp_delete_site( $this->second_site_id );
+
+		$this->second_site_id = null;
 	}
 }

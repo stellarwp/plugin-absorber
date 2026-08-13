@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Tests\Unit\Notices;
 
 use Codeception\TestCase\WPTestCase;
@@ -161,6 +163,26 @@ class RendererTest extends WPTestCase {
 		// So would a message that filtering empties: `wp_kses_post()` keeps the text a disallowed
 		// tag wrapped, and here there is none.
 		yield 'a message that is only disallowed markup' => [ '<script></script>' ];
+	}
+
+	/**
+	 * Skipping is per message, not for the rest of the queue: an entry a host left empty — or one
+	 * `wp_kses_post()` emptied for it — must not take the notices behind it off the screen with it.
+	 * That is the difference between a `continue` and a `return`, and every case above holds a single
+	 * message, so none of them can see it.
+	 */
+	public function test_an_empty_message_does_not_stop_the_ones_behind_it(): void {
+		$output = $this->render(
+			[
+				'a:merge'      => 'First.',
+				'b:merge'      => '<script></script>',
+				'c:dependency' => 'Second.',
+			]
+		);
+
+		$this->assertStringContainsString( 'First.', $output );
+		$this->assertStringContainsString( 'Second.', $output );
+		$this->assertSame( 2, substr_count( $output, '<div class="notice' ), 'Two messages in, two notices out.' );
 	}
 
 	public function test_an_empty_queue_prints_nothing(): void {

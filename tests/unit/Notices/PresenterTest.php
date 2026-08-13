@@ -132,6 +132,11 @@ class PresenterTest extends WPTestCase {
 	public function test_render_clears_the_queue(): void {
 		$this->queue_notice( 'queue_merge_notice' );
 
+		// The queue has to be there before rendering can be what took it away: a writer that never
+		// wrote, or an option name the two halves disagree about, would satisfy the assertion below
+		// without a presenter having cleared anything.
+		$this->assertTrue( $this->queue_exists(), 'The queue must exist before it is rendered.' );
+
 		$presenter = $this->make_presenter();
 		$this->render_to_string( $presenter );
 
@@ -202,14 +207,81 @@ class PresenterTest extends WPTestCase {
 			}
 		};
 
+		$presenter = $this->make_presenter( null, $renderer );
+
+		// The control belongs in this test rather than in a sibling: a presenter that reached no
+		// renderer at all, or a renderer this one never received, would satisfy the assertion at the
+		// end for a reason that has nothing to do with the capability.
+		$this->queue_notice( 'queue_merge_notice' );
+
+		$this->render_to_string( $presenter );
+
+		$this->assertTrue( $renderer->called, 'This renderer must be reachable for someone who may consume the queue.' );
+
+		$renderer->called = false;
+
 		$this->queue_notice( 'queue_merge_notice' );
 
 		wp_set_current_user( $this->create_user( 'subscriber' ) );
 
-		$this->render_to_string( $this->make_presenter( null, $renderer ) );
+		$this->render_to_string( $presenter );
 
 		$this->assertFalse( $renderer->called );
 		$this->assertTrue( $this->queue_exists() );
+	}
+
+	/**
+	 * The capability is asked before the queue is read, not after.
+	 *
+	 * The gate gets its authority from being in front of both halves: reading is what the clearing
+	 * follows from, so a presenter that read the queue and then decided who may see it would already
+	 * have taken the notice out of the store by the time it turned the subscriber away. Asserting on
+	 * the output alone cannot see that difference, so the store here counts the calls it receives.
+	 */
+	public function test_the_capability_is_checked_before_the_queue_is_read(): void {
+		$store = new class() extends Store {
+			/**
+			 * @var int
+			 */
+			public $reads = 0;
+
+			/**
+			 * @var int
+			 */
+			public $clears = 0;
+
+			/**
+			 * @return array<string,string>
+			 */
+			public function all(): array {
+				++$this->reads;
+
+				return [ 'give-recurring:merge' => 'Bundled now.' ];
+			}
+
+			/**
+			 * @return void
+			 */
+			public function clear(): void {
+				++$this->clears;
+			}
+		};
+
+		$presenter = $this->make_presenter( $store );
+
+		wp_set_current_user( $this->create_user( 'subscriber' ) );
+
+		$this->assertSame( '', $this->render_to_string( $presenter ) );
+		$this->assertSame( 0, $store->reads, 'The queue must not be read at all for a user who may not consume it.' );
+		$this->assertSame( 0, $store->clears, 'And it must certainly not be cleared.' );
+
+		// The recorder has to be shown working, or "never read" and "never wired to anything" are the
+		// same result: the same store, in the same presenter, for a user who does have the capability.
+		$this->become_plugin_administrator();
+
+		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( $presenter ) );
+		$this->assertSame( 1, $store->reads );
+		$this->assertSame( 1, $store->clears );
 	}
 
 	/**
