@@ -3,10 +3,11 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Registry;
 
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
  * Default registry: a plain slug => Sub_Plugin map.

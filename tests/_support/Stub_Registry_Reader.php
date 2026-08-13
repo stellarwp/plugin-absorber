@@ -7,7 +7,7 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
@@ -24,7 +24,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  *
  * @since 1.0.0
  */
-class Stub_Registry_Reader extends Registry_Reader {
+class Stub_Registry_Reader extends Reader {
 	/**
 	 * What every read hands back, keyed by slug.
 	 *

@@ -9,7 +9,7 @@ namespace Nexcess\PluginAbsorber\Conflict;
 
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
@@ -34,7 +34,7 @@ class Detector {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Registry_Reader
+	 * @var Reader
 	 */
 	private $registry;
 
@@ -48,10 +48,10 @@ class Detector {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Registry_Reader          $registry       Which sub-plugins are registered.
+	 * @param Reader                   $registry       Which sub-plugins are registered.
 	 * @param Plugin_Checker_Interface $plugin_checker Whether the standalone is active.
 	 */
-	public function __construct( Registry_Reader $registry, Plugin_Checker_Interface $plugin_checker ) {
+	public function __construct( Reader $registry, Plugin_Checker_Interface $plugin_checker ) {
 		$this->registry       = $registry;
 		$this->plugin_checker = $plugin_checker;
 	}

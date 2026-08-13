@@ -8,7 +8,7 @@ namespace Nexcess\PluginAbsorber\Tests\Support;
 use Closure;
 use LogicException;
 use Nexcess\PluginAbsorber\Absorber;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use ReflectionClass;
 use ReflectionFunction;
 use ReflectionProperty;
@@ -29,7 +29,7 @@ class Absorber_State {
 	/**
 	 * The value each static property of the boot path starts life with, by the class holding it.
 	 *
-	 * Two classes, because the registration buffer belongs to `Registry_Reader` — a host registers
+	 * Two classes, because the registration buffer belongs to `Registry\Reader` — a host registers
 	 * before there is a container to reach a registrar through, so the pre-store is static, and it
 	 * sits with the object that reads it rather than with the facade that writes to it. A test that
 	 * cleared only the facade would leave one test's registrations to drain into the next test's
@@ -43,7 +43,7 @@ class Absorber_State {
 	 */
 	protected const DEFAULTS = [
 		Absorber::class        => [ 'booted' => false ],
-		Registry_Reader::class => [ 'pending' => [] ],
+		Reader::class => [ 'pending' => [] ],
 	];
 
 	/**

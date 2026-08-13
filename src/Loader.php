@@ -8,6 +8,7 @@ namespace Nexcess\PluginAbsorber;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
 use Throwable;
 
@@ -26,7 +27,7 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Registry_Reader
+	 * @var Reader
 	 */
 	private $registry;
 
@@ -47,12 +48,12 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Registry_Reader     $registry  Which sub-plugins are registered.
-	 * @param Writer_Interface     $notices   Where a sub-plugin that could not load says so.
+	 * @param Reader              $registry  Which sub-plugins are registered.
+	 * @param Writer_Interface    $notices   Where a sub-plugin that could not load says so.
 	 * @param Activator_Interface $activator Runs the activation callback of one that did.
 	 */
 	public function __construct(
-		Registry_Reader $registry,
+		Reader $registry,
 		Writer_Interface $notices,
 		Activator_Interface $activator
 	) {

@@ -16,13 +16,15 @@ use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Notices\Writer;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
+use Nexcess\PluginAbsorber\Registry\Registrar;
 use StellarWP\ContainerContract\ContainerInterface;
 
 /**
@@ -94,16 +96,16 @@ final class Provider implements Provider_Interface {
 		);
 
 		$this->bind_once(
-			Registry_Reader::class,
-			static function () use ( $container ): Registry_Reader {
-				return new Registry_Reader( $container->get( Registrar_Interface::class ) );
+			Reader::class,
+			static function () use ( $container ): Reader {
+				return new Reader( $container->get( Registrar_Interface::class ) );
 			}
 		);
 
 		$this->bind_once(
 			Rewriter::class,
 			static function () use ( $container ): Rewriter {
-				return new Rewriter( $container->get( Registry_Reader::class ) );
+				return new Rewriter( $container->get( Reader::class ) );
 			}
 		);
 
@@ -111,7 +113,7 @@ final class Provider implements Provider_Interface {
 			Detector::class,
 			static function () use ( $container ): Detector {
 				return new Detector(
-					$container->get( Registry_Reader::class ),
+					$container->get( Reader::class ),
 					$container->get( Plugin_Checker_Interface::class )
 				);
 			}
@@ -121,7 +123,7 @@ final class Provider implements Provider_Interface {
 			Resolver_Interface::class,
 			static function () use ( $container ): Resolver {
 				return new Resolver(
-					$container->get( Registry_Reader::class ),
+					$container->get( Reader::class ),
 					$container->get( Detector::class ),
 					$container->get( Plugin_Deactivator_Interface::class ),
 					$container->get( Writer_Interface::class ),
@@ -134,7 +136,7 @@ final class Provider implements Provider_Interface {
 			Loader::class,
 			static function () use ( $container ): Loader {
 				return new Loader(
-					$container->get( Registry_Reader::class ),
+					$container->get( Reader::class ),
 					$container->get( Writer_Interface::class ),
 					$container->get( Activator_Interface::class )
 				);
