@@ -131,11 +131,53 @@ class RewriterTest extends WPTestCase {
 	}
 
 	/**
+	 * Core mints the activation-error nonce from `wp_unslash( $_REQUEST['plugin'] )` and nothing
+	 * else (wp-admin/plugins.php), so the value this class verifies against has to be the same one.
+	 * Sanitizing it first signs one action and checks another, and the rewrite then declines on
+	 * exactly the screen it exists to improve — silently, because declining looks identical to
+	 * "this plugin is none of ours".
+	 *
+	 * @dataProvider standalones_sanitizing_would_alter
+	 *
+	 * @param string $standalone Basename of a standalone whose folder name sanitizing changes.
+	 */
+	public function test_it_rewrites_for_a_standalone_whose_basename_sanitizing_would_alter( string $standalone ): void {
+		$rewriter = $this->make_rewriter(
+			$this->make_sub_plugin(
+				[
+					'standalone_plugin_basename' => $standalone,
+					'conflict_notice_message'    => static fn() => 'Ours.',
+				]
+			)
+		);
+
+		$_GET['plugin']       = $standalone;
+		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-activation-error_' . $standalone );
+
+		$this->assertStringContainsString( 'Ours.', $rewriter->rewrite( self::MARKUP ) );
+	}
+
+	/**
+	 * Every one of these is a directory a plugin can really be unzipped into, and every one of them
+	 * comes back changed from `sanitize_text_field()`: '%xx' sequences are deleted outright, a bare
+	 * '<' is entity-encoded, and leading whitespace is trimmed.
+	 *
+	 * @return Generator<string,array{0:string}>
+	 */
+	public static function standalones_sanitizing_would_alter(): Generator {
+		yield 'a folder name holding a percent sequence' => [ 'give%20recurring/give-recurring.php' ];
+		yield 'a folder name holding a less-than'        => [ 'give<recurring/give-recurring.php' ];
+		yield 'a folder name holding a leading space'    => [ ' give-recurring/give-recurring.php' ];
+	}
+
+	/**
 	 * Nothing draws an admin notice on the front end, and `get_current_screen()` does not exist
 	 * there — the guard is what keeps this filter from fataling if another plugin ever applies
 	 * `wp_admin_notice_markup` outside wp-admin.
 	 */
 	public function test_it_leaves_the_markup_alone_outside_the_admin(): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => 'Ours.' ] ) );
 
 		set_current_screen( 'front' );
@@ -149,6 +191,8 @@ class RewriterTest extends WPTestCase {
 	 * quoting it — is somebody else's.
 	 */
 	public function test_it_leaves_the_markup_alone_off_the_plugins_screen(): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => 'Ours.' ] ) );
 
 		set_current_screen( 'dashboard' );
@@ -176,6 +220,8 @@ class RewriterTest extends WPTestCase {
 	 * for that plugin is the accurate one.
 	 */
 	public function test_it_leaves_the_markup_alone_for_a_plugin_no_sub_plugin_claims(): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => 'Ours.' ] ) );
 
 		$_GET['plugin']       = 'akismet/akismet.php';
@@ -190,6 +236,8 @@ class RewriterTest extends WPTestCase {
 	 * @param callable $arrange Turns the request in setUp() into the one this case is about.
 	 */
 	public function test_it_leaves_the_markup_alone( callable $arrange ): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => 'Ours.' ] ) );
 
 		$arrange();
@@ -258,6 +306,8 @@ class RewriterTest extends WPTestCase {
 	 * core's sentence in place is the better of the two bad outcomes.
 	 */
 	public function test_a_message_that_sanitises_away_leaves_the_markup_alone(): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter(
 			$this->standalone_owner( [ 'conflict_notice_message' => static fn() => '<script></script>' ] )
 		);
@@ -269,6 +319,8 @@ class RewriterTest extends WPTestCase {
 	 * A message that is only whitespace is the same failure with a friendlier shape.
 	 */
 	public function test_a_whitespace_only_message_leaves_the_markup_alone(): void {
+		$this->assert_the_arrangement_rewrites();
+
 		$rewriter = $this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => "  \n\t" ] ) );
 
 		$this->assertSame( self::MARKUP, $rewriter->rewrite( self::MARKUP ) );
@@ -299,6 +351,23 @@ class RewriterTest extends WPTestCase {
 		// The disallowed tag goes and the text it wrapped stays, so the payload survives as inert
 		// text rather than as markup the browser would run.
 		$this->assertStringContainsString( 'alert(2)', $filtered );
+	}
+
+	/**
+	 * The request setUp() leaves behind really does earn a rewrite.
+	 *
+	 * Every "leaves the markup alone" test asserts that the markup came back unchanged, and unchanged
+	 * markup is also what a broken arrangement produces: a renamed screen id, a nonce action core
+	 * reworded, a fixture that stopped claiming the standalone. Without a control saying the
+	 * arrangement was rewriting a moment ago, all of those pass instead of failing. It builds its own
+	 * rewriter with a message of its own, so the tests about the *message* are controlled too.
+	 */
+	private function assert_the_arrangement_rewrites(): void {
+		$this->assertStringContainsString(
+			'Ours.',
+			$this->make_rewriter( $this->standalone_owner( [ 'conflict_notice_message' => static fn() => 'Ours.' ] ) )
+				->rewrite( self::MARKUP )
+		);
 	}
 
 	/**
