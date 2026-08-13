@@ -1,12 +1,12 @@
 # Configuration
 
-## Host configuration
+## Setting up
 
 ```php
 use Nexcess\PluginAbsorber\Config;
 
 Config::set_hook_prefix( 'give' );          // required — keys hooks and options
-Config::set_container( give()->container ); // required — every collaborator resolves from it
+Config::set_container( give()->container ); // required — everything is resolved from it
 ```
 
 The hook prefix accepts letters, numbers, hyphens, and underscores. Anything else throws
@@ -14,115 +14,82 @@ The hook prefix accepts letters, numbers, hyphens, and underscores. Anything els
 option names lowercase it and turn hyphens into underscores, so `Give-Core` hooks
 `Give-Core/plugin_absorber/should_load` and stores `give_core_plugin_absorber_notices`.
 
-## The container
+Any implementation of StellarWP's `ContainerInterface` will do — the one your plugin already
+hands to Telemetry, Uplink or Harbor. It is required: `Config::get_container()` throws
+`Config_Exception` when none is set, and `Config::has_container()` is the probe. To replace one
+of the library's own pieces, see [Extending](extending.md).
 
-Both calls are required, and both belong at `plugins_loaded` priority 0, in your own container
-block rather than in a service provider.
+Both calls belong at `plugins_loaded` priority 0, in the block that owns your container rather
+than in a service provider. Priority matters twice, for unrelated reasons:
 
-Any implementation of StellarWP's `ContainerInterface` will do — the one your plugin already hands
-to Telemetry, Uplink or Harbor. `Config::get_container()` throws `Config_Exception` when none is
-set; `Config::has_container()` is the probe if you need to ask.
+- Conflict resolution runs at `plugins_loaded` priority 5 and the load at 6, and WordPress
+  ignores a callback added at or past the priority it is already dispatching. Boot after that
+  and the whole sequence runs inline, reported with `_doing_it_wrong()`.
+- A host that builds its container lazily may *replace* it at priority 0. Hand this library the
+  container before that happens and it holds an orphan whose bindings were discarded.
 
-Priority matters twice, for two unrelated reasons. Conflict resolution runs at `plugins_loaded`
-priority 5 and the load at priority 6, and WordPress silently ignores a callback added at or past the
-priority it is already dispatching — so boot has to land before 5, which leaves 0 through 4. And a
-host that builds its container lazily may *replace* it at priority 0; hand us the container before
-that happens and we hold an orphan whose bindings were discarded. It is that second one that picks 0
-out of the five, so if your container is already built by then, anywhere below 5 works.
+Only the second reason picks 0 out of 0 through 4; if your container is already built by then,
+anywhere below 5 works. Order among the configuration calls does not matter, so long as they all
+precede `Absorber::boot()`.
 
-## Rebinding a collaborator
-
-`Absorber::boot()` binds the defaults, and skips any *interface* your container already answers for
-— so a binding against one of the ids in the table below wins whether you make it before boot or
-after. A *class* id must be bound after boot: di52 reports `has()` true for any class that exists,
-bound or not, so the provider cannot tell your binding from the container's own willingness to build
-`Notices\Store`, `Conflict\Gatekeeper` or any other concrete collaborator, and replaces it. Booting
-resolves only the two objects that do the booting; every collaborator below is built by the hook
-that needs it, when it fires:
-
-```php
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
-
-$container->singleton( Registrar_Interface::class, My_Registrar::class );
-```
-
-| Interface | Default | Responsibility |
-|---|---|---|
-| `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
-| `Notices\Contracts\Writer_Interface` | `Notices\Writer` | Words the admin notices. |
-| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
-| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
-| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |
-| `Contracts\Activator_Interface` | `Activator` | Runs a sub-plugin's activation callback once, ever. |
-
-`Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
-`site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
-`is_plugin_active()` then does not report what is in the database.
-
-Rebinding `Resolver_Interface` does not put you in charge of *when* resolution may run. The gates —
-[an interactive admin `GET` that carries no action, and the capability to deactivate across the
-network](conflict-handling.md#when-resolution-runs) — live in `Conflict\Gatekeeper`, which the hook
-consults before it resolves the resolver at all, so an implementation that never thought about
-either is still safe. Everything the resolver *does* — which policy branch, what the notice says,
-where the user lands — is yours.
-
-`set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
-the configuration calls: it may come before or after your `Absorber::register()` calls, so long as it
-comes before boot. Registering buffers the sub-plugin and resolves nothing, so nothing is decided
-until the first read.
-
-The accessors — `Absorber::registrar()`, `notices()` and `resolver()` — check what your container
-hands back and throw a `Config_Exception` naming the interface and the class that failed it, because a
-binding that does not implement its interface would otherwise be a `TypeError` blaming this library
-for your typo, raised inside `plugins_loaded` where nobody is looking. Whatever your container
-raises for a binding it cannot build at all comes through unwrapped: that one is already yours, and
-already says so. The one narrowing anywhere is `Absorber::all()`, which drops anything a rebound
-registrar returns that is not a `Sub_Plugin` rather than letting it fatal inside `plugins_loaded`.
-
-The container does not decide when anything runs. Each hook resolves its collaborator inside the
-callback, so wiring instantiates nothing and a request that reaches none of them builds none of
-them. The two admin hooks are named `[ Absorber::class, … ]` callbacks precisely so you can
-`remove_filter()` them; the two `plugins_loaded` steps are closures over the container.
-
-## Sub-plugin keys
+## Registering a sub-plugin
 
 | Key | Type | Required | Meaning |
 |---|---|:--:|---|
 | `slug` | `string` | ✔ | Unique id — registry key, notice id, activation-tracking key. |
 | `bundled_plugin_file` | `string` | ✔ | Absolute path to the **bundled** plugin's main file. This is what gets `require_once`d. |
-| `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads. Both copies must define the *same* name, **at file scope**. See [Conflict handling](conflict-handling.md). **Load guard only.** |
-| `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename. Used for `is_plugin_active()` and `deactivate_plugins()`. Omit when there is no standalone. **Detection only.** |
+| `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads. Both copies must define the *same* name, **at file scope**. **Load guard only** — see [Conflict handling](conflict-handling.md#the-load-guard). |
+| `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename, used to detect and deactivate it. Omit when there is no standalone. **Detection only.** |
 | `enabled` | `bool\|callable` | | `true` by default. A `callable( Sub_Plugin ): bool` is re-evaluated on every call, not cached. |
-| `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. |
+| `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. See [Conflict handling](conflict-handling.md#policies). |
 | `conflict_notice_message` | `callable` | | Used in all three places a conflict is reported — the merge notice, the still-active notice, and the rewritten activation-error screen. Each falls back to its own generic sentence naming the slug. |
 | `dependency_notice_message` | `callable` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
 | `activation_callback` | `callable( Sub_Plugin )` | | Runs **once, ever**, per slug, after a successful load. Make it idempotent. |
 | `dependency_check` | `callable( Sub_Plugin ): bool` | | Skips the load and queues a notice when it returns false. |
 
-The load guard and the standalone basename are deliberately two separate keys. No constant does
-double duty as both a guard and a path resolver.
+Sub-plugins load in **registration order**, so register a dependency before anything that
+extends it at include time, and register each slug exactly once. A config array the library
+cannot use throws `Config_Exception` on the spot, in the call you can see in your own stack
+trace; a duplicate slug is the exception that surfaces later, on `plugins_loaded`, since
+registrations are buffered until the first read.
 
-## Registration
+Register unconditionally and put anything you cannot decide up front — a licence, a setting the
+site owner can change — in `enabled`, which is re-evaluated on every load. See
+[Toggle a sub-plugin from a setting](recipes.md#toggle-a-sub-plugin-from-a-setting).
 
-Sub-plugins load in **registration order**, so register a dependency before anything that extends it
-at include time.
+## How a sub-plugin loads
 
-Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
-activation record, so a second registration under the same slug is refused with a
-`Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Registrations are buffered and handed to the registrar at the first read — the conflict pass
-at `plugins_loaded` priority 5, or the load pass at 6 — so that collision surfaces there rather than
-from the second `register()` call, reported with `_doing_it_wrong()` instead of thrown out of a core
-hook; a config array the library cannot use is still rejected on the spot, in the call you can see
-in your own stack trace.
-Register unconditionally and put anything you cannot decide up front — a licence that may not be
-active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+Each sub-plugin passes five gates, in order, and is skipped on the first failure:
+
+```mermaid
+flowchart TD
+    A["enabled"] -->|false| S1["skipped, silently"]
+    A -->|true| B["plugin_loaded_constant already defined?"]
+    B -->|yes| S2["skipped: a copy is already running"]
+    B -->|no| C["dependency_check"]
+    C -->|false| S3["skipped, dependency notice queued"]
+    C -->|true| D["bundled file is readable?"]
+    D -->|no| S4["skipped, reported with _doing_it_wrong"]
+    D -->|yes| E["should_load filter"]
+    E -->|false| S5["skipped, silently"]
+    E -->|true| F["require_once"]
+    F --> G["activation_callback, once ever"]
+```
+
+Only the dependency gate says anything to the site owner — see [Notices](notices.md). An
+unreadable `bundled_plugin_file` is a broken build in your plugin, so it is reported with
+`_doing_it_wrong()` instead.
+
+The guard constant is checked **before** the dependency check, so a plugin the admin can watch
+working is never reported as missing its requirements. The
+[`should_load` filter](filters.md#the-load-gate) sits last and can only veto: it cannot force a
+load past a copy already in memory.
 
 ## Activation
 
-A bundled plugin is `require_once`d, not activated, so `register_activation_hook()` never fires for
-it — whatever that hook would have done, creating a table or seeding options, would otherwise never
-happen at all. [`activation_callback`](#sub-plugin-keys) fills that gap:
+A bundled plugin is `require_once`d, not activated, so `register_activation_hook()` never fires
+for it. Whatever that hook would have done — create a table, seed options — goes in
+`activation_callback` instead:
 
 ```php
 'activation_callback' => static function ( Sub_Plugin $sub_plugin ) {
@@ -130,34 +97,24 @@ happen at all. [`activation_callback`](#sub-plugin-keys) fills that gap:
 },
 ```
 
-It runs once ever per slug, is passed the `Sub_Plugin`, and runs only after a require that actually
-happened — never for a sub-plugin whose load was skipped, because a schema appearing for a plugin
-that is not loaded is worse than no schema at all.
+It runs once ever per slug, is passed the `Sub_Plugin`, and only after a require that actually
+happened — never for a sub-plugin whose load was skipped. The record lives in the
+`{option_prefix}_plugin_absorber_activations` option, a network option on multisite, and is
+written *after* the callback returns, so a callback that throws is reported with
+`_doing_it_wrong()` and retried next request rather than marked done for good.
 
 **Write it to be idempotent.** "Once, ever" is bookkeeping, not a lock: the record is read, the
-callback runs, and the record is written, so two requests arriving together on a site that has never
-run it can both pass the check, and a callback that fails is deliberately left unrecorded to be
-retried. A `dbDelta()` migration or a `CREATE TABLE IF NOT EXISTS` already survives both; a blind
-`INSERT` of seed rows does not.
+callback runs, and the record is written, so two first requests arriving together can both pass
+the check. A `dbDelta()` migration survives that; a blind `INSERT` of seed rows does not.
 
-The record lives in the `{option_prefix}_plugin_absorber_activations` option, a network option on
-multisite for the same reason the [notice queue](notices.md) is one: `deactivate_plugins()` is
-network-wide, so a merge that happened network-wide must not re-run the callback on every site. The
-slug is recorded *after* the callback returns, so a callback that fails is retried on the next
-request rather than marked done and silently skipped forever. A callback that throws cannot take the
-site down with it: the load pass reports it with `_doing_it_wrong()`, loads the sub-plugins behind it
-as usual, and leaves the record unwritten.
+One record for the network is also one *run* for the network, in whichever site's request
+reached the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is
+yours to loop over: see [Do per-site work on multisite](recipes.md#do-per-site-work-on-multisite).
 
-One record for the network also means one *run* for the network, in whichever site's request reached
-the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is the callback's
-own job to loop over `get_sites()` for, or bind `Activator_Interface` and record "once, ever"
-somewhere else: your own migration table, or a per-site option.
+## What changes for the bundled plugin
 
-## The bundled file is included from a function, not from global scope
-
-WordPress includes plugins from `wp-settings.php` at global scope; this library includes them from
-inside a method. Variables assigned at the top level of the bundled file are therefore function-local
-and do not become globals:
+WordPress includes plugins at global scope; this library includes them from inside a method, so
+variables assigned at the top level of the bundled file are function-local, not globals:
 
 ```php
 // In the bundled plugin's main file.
@@ -165,16 +122,14 @@ $my_plugin = new My_Plugin();             // Not a global. `global $my_plugin;` 
 $GLOBALS['my_plugin'] = new My_Plugin();  // Works.
 ```
 
-Everything else — function and class declarations, `define()`, hook registration, `__FILE__` — is
-unaffected. Bundle a plugin that publishes its instance through `$GLOBALS`, a singleton or a
-container, which is what plugins written in the last decade do anyway. No amount of wrapping on this
-side can hand a required file the global scope it would have had.
+Everything else — function and class declarations, `define()`, hook registration, `__FILE__` —
+is unaffected.
 
 ## Messages are callables, never strings
 
-Your config array is built at plugin load — before `init`, and before your textdomain. Calling
-`__()` there is what raises WordPress's `_load_textdomain_just_in_time` notice. So the two message
-keys take something to call, and refuse a string outright:
+Your config array is built at plugin load — before `init`, and before your textdomain, so
+calling `__()` there raises WordPress's `_load_textdomain_just_in_time` notice. The two message
+keys therefore take something to call, and refuse a string outright:
 
 ```php
 'conflict_notice_message' => static fn() => __( 'Recurring ships with Give now.', 'give' ),
@@ -183,40 +138,33 @@ keys take something to call, and refuse a string outright:
 ```
 
 ```php
-// Config_Exception at registration. Translated or not, a string here can only have been produced
-// too early -- and nothing in the value says which it was.
+// Config_Exception at registration: translated or not, a string here was produced too early.
 'conflict_notice_message' => __( 'Recurring ships with Give now.', 'give' ),
 ```
 
-Each callable is passed the `Sub_Plugin` and called on every read, so nothing is resolved at
-registration. A return that will not cast to a string is treated as though nothing were configured.
+Each callable is passed the `Sub_Plugin` and called on every read; a return that will not cast
+to a string is treated as though nothing were configured.
 
-**A plain function name is text, not a call.** `date`, `flush` and `key` are all real functions and
-all plausible values, so wherever a string *is* accepted it is the value itself. That bars both
-string spellings of a callable — `'give_recurring_conflict_message'` and
-`'Give_Recurring::get_conflict_message'` — in favour of the array and closure forms above.
+**A plain function name is text, not a call.** `date`, `flush` and `key` are all real functions
+and all plausible values, so wherever a string *is* accepted it is the value itself — which bars
+`'Give_Recurring::get_conflict_message'` as much as `'give_recurring_conflict_message'`.
 
-`conflict_policy` is the one key that takes either. A policy is usually a `Conflict_Policy`
-constant with nothing to defer, and it is never text a user reads:
+`conflict_policy` is the one key that takes either, since a policy is never text a user reads:
 
 ```php
 'conflict_policy' => Conflict_Policy::DEFER,
 'conflict_policy' => static fn( Sub_Plugin $sub_plugin ) => give_conflict_policy_for( $sub_plugin ),
 ```
 
-`standalone_plugin_basename` takes a string only: it names a file already on disk, so there is
-nothing to wait for.
+`standalone_plugin_basename` takes a string only: it names a file already on disk.
+`dependency_check` and `activation_callback` have nothing a string could collide with, so they
+accept every callable form, a plain function name included.
 
-`dependency_check`, `activation_callback` and `enabled` have nothing a string could collide with, so
-they accept every callable form, a plain function name included.
-
-Every typed key rejects a shape it cannot use at registration rather than at read time — including a
-`[ class, method ]` pair naming a method that does not exist. `enabled` is the exception: it is read
-as a boolean if it is not callable, so an array or an object there passes registration and then
-evaluates as enabled. Give it a `bool` or a `callable`, and nothing else.
-
-The [filters](filters.md) are the other way in, and they run last — after the configured value and
-any fallback, so they see the default text too.
+Every typed key rejects a shape it cannot use at registration rather than at read time —
+including a `[ class, method ]` pair naming a method that does not exist. `enabled` is the
+exception: it is read as a boolean if it is not callable, so an array or an object there passes
+registration and evaluates as enabled. Give it a `bool` or a `callable`, and nothing else. The
+[filters](filters.md) are the other way in, and run last, after the configured value.
 
 ## Complete example
 
