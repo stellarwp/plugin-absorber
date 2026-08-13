@@ -3,11 +3,14 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Tests\Unit\Boot;
 
 use Codeception\TestCase\WPTestCase;
 use Generator;
 use LogicException;
+use lucatume\WPBrowser\Traits\UopzFunctions;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Config;
@@ -23,6 +26,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Rewriter;
+use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
@@ -49,12 +53,21 @@ use WP_Hook;
  * @since 1.0.0
  */
 class SchedulerTest extends WPTestCase {
+	use UopzFunctions;
 	use WithBundledPlugins;
 	use WithContainer;
 	use WithIncorrectUsage;
 	use WithNoticeQueue;
 	use WithRequestMethod;
 	use WithUsers;
+
+	/**
+	 * The standalone the conflict cases put into the real `active_plugins`, and the basename every
+	 * sub-plugin registered here says it absorbed.
+	 *
+	 * @var string
+	 */
+	private const STANDALONE = 'give-recurring/give-recurring.php';
 
 	/**
 	 * @var int
@@ -142,6 +155,14 @@ class SchedulerTest extends WPTestCase {
 		$this->stop_expecting_incorrect_usage();
 		$this->remove_bundled_plugin_files();
 		$this->clear_notices();
+
+		// The conflict cases write the real option and core's own deactivate_plugins() rewrites it, so
+		// it is cleared here rather than at the end of a test body: a failed assertion would otherwise
+		// leave a standalone active for every test behind it that reads through the real
+		// Plugin\Checker.
+		delete_option( 'active_plugins' );
+		delete_site_option( 'active_sitewide_plugins' );
+
 		Absorber_State::reset();
 		Config_State::reset();
 		$this->tear_down_container();
@@ -163,25 +184,40 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
-	 * A standalone that survives the conflict defines its guard constant as it loads, and the load
-	 * pass has to see that — so resolution runs first and cannot share a priority with it.
-	 *
-	 * Being first makes this the number a host is measured against, so it is the one that decides how
-	 * much room a host has to configure the library in. Priority 5 leaves 0 through 4, which covers
-	 * booting at 0 as documented and the priority-1 habit LearnDash and MemberDash already have.
-	 */
-	/**
 	 * The outermost guarantee, and the reason it lives here rather than in each pass: whatever a step
 	 * reaches — a collaborator a host's factory could not build, a gate, a probe, a pass that got past
 	 * its own guard — `plugins_loaded` fires on every request a site serves, and a throw out of it is
-	 * a white screen on all of them. Each step is reported and abandoned on its own, so the step
-	 * behind it still runs.
+	 * a white screen on all of them. Each step is reported and abandoned on its own, so the other one
+	 * still does its work.
+	 *
+	 * That second half is asserted rather than described: a request is set up where both steps have
+	 * something to do — a standalone in the way under the policy that only talks, and a bundled file to
+	 * require — so the step that did not throw is the one whose effect is still there afterwards.
+	 *
+	 * The report is asserted by its wording, because the conflict step has two catch arms and both end
+	 * "no conflict was resolved". Only "the conflict pass threw" belongs to the backstop under test
+	 * here; the arm that names an unreadable registry is the duplicate-slug case further down.
 	 *
 	 * @dataProvider throwing_steps
 	 *
-	 * @param string $id Binding the step resolves, bound to a factory that throws.
+	 * @param string $id            Binding the step resolves, bound to a factory that throws.
+	 * @param string $reported      Wording only this step's backstop produces.
+	 * @param bool   $notice_queued Whether the conflict step got as far as queuing its notice.
+	 * @param int    $loads         How many bundled files the load pass required.
 	 */
-	public function test_a_step_that_throws_cannot_end_the_request( string $id ): void {
+	public function test_a_step_that_throws_cannot_end_the_request(
+		string $id,
+		string $reported,
+		bool $notice_queued,
+		int $loads
+	): void {
+		set_current_screen( 'dashboard' );
+
+		$this->bind_active_standalone();
+		$this->register_conflicted_sub_plugin();
+
+		$this->become_plugin_administrator();
+
 		$this->expect_incorrect_usage();
 
 		Absorber::boot();
@@ -199,19 +235,51 @@ class SchedulerTest extends WPTestCase {
 
 		do_action( 'plugins_loaded' );
 
-		$this->assert_the_library_reported_incorrect_usage();
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			$reported,
+			'The report has to name the step that was abandoned, or either step could have produced it.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'the host factory needed a database connection',
+			'And carry what actually went wrong, so the developer is not left guessing.'
+		);
+
+		$this->assertSame(
+			$notice_queued,
+			array_key_exists( 'give-recurring:conflict', $this->queued_notices() ),
+			'The step that did not throw has to have run.'
+		);
+		$this->assertSame( $loads, $this->bundled_plugin_loads(), 'And the other one must not have.' );
 	}
 
 	/**
 	 * Both steps, because a guard on one of them leaves the other able to end the request.
 	 *
-	 * @return Generator<string,array{0:string}>
+	 * @return Generator<string,array{0:string,1:string,2:bool,3:int}>
 	 */
 	public static function throwing_steps(): Generator {
-		yield 'the conflict step' => [ Gatekeeper::class ];
-		yield 'the load step'     => [ Loader::class ];
+		yield 'the conflict step' => [
+			Gatekeeper::class,
+			'The conflict pass threw, so no conflict was resolved',
+			false,
+			1,
+		];
+		yield 'the load step'     => [
+			Loader::class,
+			'The load pass threw, so no sub-plugin was loaded',
+			true,
+			0,
+		];
 	}
 
+	/**
+	 * A standalone that survives the conflict defines its guard constant as it loads, and the load
+	 * pass has to see that — so resolution runs first and cannot share a priority with it.
+	 *
+	 * Being first makes this the number a host is measured against, so it is the one that decides how
+	 * much room a host has to configure the library in. Priority 5 leaves 0 through 4, which covers
+	 * booting at 0 as documented and the priority-1 habit LearnDash and MemberDash already have.
+	 */
 	public function test_the_conflict_step_runs_before_the_load_step(): void {
 		$this->assertSame( 5, self::resolve_priority() );
 		$this->assertLessThan( self::load_priority(), self::resolve_priority() );
@@ -406,7 +474,19 @@ class SchedulerTest extends WPTestCase {
 			$this->queued_notices(),
 			'A read that failed has no list to resolve from, so nothing may be resolved.'
 		);
-		$this->assert_the_library_reported_incorrect_usage();
+
+		// The arm under test, by the only words that separate it from the Throwable backstop beside it
+		// — which would catch the same exception and say "the conflict pass threw" instead. Without
+		// this the arm could be deleted outright and the test would go on passing.
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'The registered sub-plugins could not be read, so no conflict was resolved',
+			'An unreadable registry is the one failure here a developer can act on directly, and it is'
+				. ' reported as itself rather than as any throw.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The report has to carry what the registrar refused, or it names no mistake to correct.'
+		);
 	}
 
 	public function test_it_wires_the_load_step_at_the_load_priority(): void {
@@ -656,6 +736,137 @@ class SchedulerTest extends WPTestCase {
 		// would go on describing this case while quietly testing a different one every time the
 		// load priority moved.
 		yield 'the default a host omits' => [ 10 - self::load_priority() ];
+	}
+
+	/**
+	 * The inline fallback runs the *whole* sequence, in hook order, and this is the request that turns
+	 * on it: a host booting at `plugins_loaded` 10 with the standalone still active. Lose the conflict
+	 * step and the load pass requires the bundled copy on top of the standalone WordPress included from
+	 * wp-settings.php — the re-declaration fatal this library exists to prevent, and the one failure
+	 * none of the guards around these steps can report.
+	 *
+	 * Asserted as an order, not as two end states. A fallback that iterated only the last element of
+	 * `sequence()` would still leave the bundled plugin loaded, and one that iterated only the first
+	 * would still leave the standalone deactivated; what neither can produce is a standalone already
+	 * gone, and a merge notice already queued, at the moment the load pass reached its last gate.
+	 *
+	 * Nothing here is doubled: the real `active_plugins` option, the real plugin checker, and core's own
+	 * `deactivate_plugins()`. `headers_sent()` is pinned instead of left to the runtime, where under
+	 * CLI it answers for whatever the test runner has printed rather than for this request. Pinned
+	 * *true* because that is the state this path documents — the fallback reports through
+	 * `_doing_it_wrong()` immediately before running, which prints on a debugging site — and the
+	 * resolver's answer to sent headers is to fall through rather than redirect into a warning and a
+	 * blank page. It is also what leaves the load pass observable behind the conflict step in one
+	 * dispatch, since a redirect is where production stops.
+	 */
+	public function test_a_late_boot_resolves_the_conflict_before_it_loads(): void {
+		set_current_screen( 'dashboard' );
+
+		$this->become_plugin_administrator();
+
+		update_option( 'active_plugins', [ self::STANDALONE ] );
+
+		$this->setFunctionReturn( 'headers_sent', true );
+
+		$redirects    = [];
+		$halt_message = 'The conflict step redirected where it must not have.';
+
+		// Recorded and thrown, never merely recorded: production's next line is `exit`, which uopz
+		// cannot stub and `preventExit()` must never stand in for. The step swallows the throw like any
+		// other, so it is the assertion below that reports a redirect -- the throw only keeps the
+		// process alive long enough to make it.
+		$this->setFunctionReturn(
+			'wp_safe_redirect',
+			static function ( $to ) use ( &$redirects, $halt_message ) {
+				$redirects[] = is_string( $to ) ? $to : '';
+
+				throw new TestException( $halt_message );
+			},
+			true
+		);
+
+		$constant = $this->make_guard_constant();
+		$path     = $this->make_bundled_plugin_file( $constant );
+
+		$standalone_at_load = null;
+		$notices_at_load    = [];
+
+		// Read at the load pass's last gate rather than after the dispatch: the ordering is the claim,
+		// and two end states read afterwards cannot tell "resolved, then loaded" from the reverse.
+		$this->add_tracked_filter(
+			'give/plugin_absorber/should_load',
+			function ( $should_load ) use ( &$standalone_at_load, &$notices_at_load ) {
+				$standalone_at_load = in_array( self::STANDALONE, $this->active_plugins(), true );
+				$notices_at_load    = $this->queued_notices();
+
+				return $should_load;
+			}
+		);
+
+		$this->expect_incorrect_usage();
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			static function () use ( $path, $constant ): void {
+				Absorber::register(
+					[
+						'slug'                       => 'give-recurring',
+						'bundled_plugin_file'        => $path,
+						'plugin_loaded_constant'     => $constant,
+						'standalone_plugin_basename' => self::STANDALONE,
+					]
+				);
+
+				Absorber::boot();
+			}
+		);
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertNotContains(
+			self::STANDALONE,
+			$this->active_plugins(),
+			'A late boot must resolve the conflict, not only load.'
+		);
+		$this->assertArrayHasKey(
+			'give-recurring:merge',
+			$this->queued_notices(),
+			'A deactivation nobody asked for has to be explained.'
+		);
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'And the load pass still has to run behind it.' );
+
+		$this->assertFalse(
+			$standalone_at_load,
+			'The standalone had to be gone by the time the load pass reached its last gate.'
+		);
+		$this->assertArrayHasKey(
+			'give-recurring:merge',
+			$notices_at_load,
+			'And the merge notice already queued, which only the conflict step running first can do.'
+		);
+
+		$this->assertSame( [], $redirects, 'A step running inline, after its own report, must not redirect.' );
+
+		// The recorder has to be shown to work: a stub that never installed leaves the log empty
+		// whether or not the resolver redirected.
+		try {
+			wp_safe_redirect( 'https://example.test/wp-admin/index.php' );
+
+			$this->fail( 'The stubbed redirect must throw rather than return.' );
+		} catch ( TestException $exception ) {
+			$this->assertSame( $halt_message, $exception->getMessage() );
+		}
+
+		$this->assertSame(
+			[ 'https://example.test/wp-admin/index.php' ],
+			$redirects,
+			'The recorder must catch a redirect that really happened.'
+		);
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'must run before plugins_loaded priority 5',
+			'The late boot is the mistake to report, not whatever a step ran into on the way.'
+		);
 	}
 
 	/**
@@ -1107,10 +1318,19 @@ class SchedulerTest extends WPTestCase {
 				'slug'                       => 'give-recurring',
 				'bundled_plugin_file'        => $this->make_bundled_plugin_file( $constant ),
 				'plugin_loaded_constant'     => $constant,
-				'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+				'standalone_plugin_basename' => self::STANDALONE,
 				'conflict_policy'            => Conflict_Policy::NOTICE_ONLY,
 			]
 		);
+	}
+
+	/**
+	 * What WordPress holds as active, as the real option holds it.
+	 *
+	 * @return array<mixed>
+	 */
+	private function active_plugins(): array {
+		return (array) get_option( 'active_plugins', [] );
 	}
 
 	/**
