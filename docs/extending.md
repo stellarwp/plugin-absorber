@@ -19,12 +19,12 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 |---|---|---|
 | `Registry\Contracts\Registrar_Interface` | `Registry\Registrar` | Holds the registered sub-plugins. |
 | `Notices\Contracts\Writer_Interface` | `Notices\Writer` | Words the admin notices. |
-| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
-| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
+| `Plugin\Contracts\Deactivator_Interface` | `Plugin\Deactivator` | Deactivates the standalone. |
+| `Plugin\Contracts\Checker_Interface` | `Plugin\Checker` | Answers whether a plugin is active. |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Applies the policy to a conflict. |
 | `Contracts\Activator_Interface` | `Activator` | Runs a sub-plugin's activation callback once, ever. |
 
-**Rebind `Plugin_Checker_Interface` when your plugin filters `option_active_plugins` or
+**Rebind `Plugin\Contracts\Checker_Interface` when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins`** — LearnDash injects and then strips a synthetic path — because
 `is_plugin_active()` then does not report what is in the database.
 

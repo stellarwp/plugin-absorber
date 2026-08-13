@@ -82,8 +82,8 @@ seams a host may rebind:
 | `Registry\Contracts\Registrar_Interface` | `Registry\Registrar` | holds registered `Sub_Plugin` objects |
 | `Notices\Contracts\Writer_Interface` | `Notices\Writer` | what each notice says |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | one method: which policy branch a conflict takes |
-| `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | deactivates the standalone, network-aware |
-| `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
+| `Plugin\Contracts\Deactivator_Interface` | `Plugin\Deactivator` | deactivates the standalone, network-aware |
+| `Plugin\Contracts\Checker_Interface` | `Plugin\Checker` | answers whether a plugin is active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
 The rest — `Boot\Scheduler`, `Loader`, `Registry\Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
@@ -94,9 +94,9 @@ under `ContainerInterface::class`, first and before anything else, so that a con
 unbound classes reflectively can still satisfy the collaborators that take one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
-implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
-implementations sit at the root — `Plugin_Deactivator`, `Plugin_Checker`, `Activator` — plus
-`Provider_Interface`.
+implementation and not in the top-level `src/Contracts/`. What is left in `src/Contracts/` is the
+interfaces whose implementations sit at the root — `Activator_Interface` — plus `Provider_Interface`,
+which belongs to no folder because `Provider` is the file that names every folder.
 
 **`Notices\Writer` and `Notices\Presenter` split because they change for different reasons.** One
 answers "what does this notice say", the other "who may see the pending set, and is it gone once they
@@ -175,7 +175,7 @@ and a pass is complete the moment it is built.
 container-bound collaborator** (`is_enabled()`, `is_already_loaded()`, `has_standalone_plugin()`,
 `get_conflict_policy()`, …). Note that this is not the same as "config alone": `is_already_loaded()`
 reads the global constant table and `is_enabled()` may invoke a host callable that queries anything
-it likes. The line is about *dependency direction* — anything needing `Plugin_Checker_Interface` or
+it likes. The line is about *dependency direction* — anything needing `Plugin\Contracts\Checker_Interface` or
 the notice queue would drag a container resolution into `Absorber::register()`, which deliberately
 resolves nothing so the container can arrive at any point before boot. So `Sub_Plugin` only *names*
 the plugin to ask about, and the collaborator does the asking.
@@ -194,13 +194,13 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
-| `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
+| `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
-| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
+| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
 
@@ -291,7 +291,7 @@ the screens the mistaken registration would have to be corrected from.
 
 The container is no longer the other half of that. A pass is handed a reader that already holds its
 registrar, so a container that cannot supply one fails while the *pass* is being built — where an
-unbuildable `Writer_Interface` or `Plugin_Checker_Interface` has always failed. Read-time and
+unbuildable `Writer_Interface` or `Plugin\Contracts\Checker_Interface` has always failed. Read-time and
 build-time failures stopped being the same event when the registry became an argument, and the
 registrar now fails like every other binding rather than being the one collaborator whose broken
 binding surfaced late and politely.
@@ -299,7 +299,7 @@ binding surfaced late and politely.
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
 `DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
 the worked example of required injection — `Conflict\Detector` to say which sub-plugins are in
-conflict, `Plugin_Deactivator_Interface` to turn the standalone off, `Writer_Interface` for the notice
+conflict, `Plugin\Contracts\Deactivator_Interface` to turn the standalone off, `Writer_Interface` for the notice
 and `Conflict\Redirector` for the destination, all four constructor arguments with no default — so
 the object a test builds is the object the provider builds, and a host's rebinding of either plugin
 seam reaches it, the deactivator directly and the checker through the detector, without the resolver

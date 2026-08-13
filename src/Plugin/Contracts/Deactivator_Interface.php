@@ -3,7 +3,7 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Contracts;
+namespace Nexcess\PluginAbsorber\Plugin\Contracts;
 
 /**
  * The library's one way of turning a plugin off.
@@ -14,7 +14,7 @@ namespace Nexcess\PluginAbsorber\Contracts;
  *
  * @since 1.0.0
  */
-interface Plugin_Deactivator_Interface {
+interface Deactivator_Interface {
 	/**
 	 * Deactivate the plugin in every scope it is active in.
 	 *

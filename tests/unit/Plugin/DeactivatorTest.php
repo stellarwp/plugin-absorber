@@ -3,12 +3,12 @@
  * @package Nexcess\PluginAbsorber
  */
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Plugin;
 
 use Codeception\TestCase\WPTestCase;
 use lucatume\WPBrowser\Traits\UopzFunctions;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
-use Nexcess\PluginAbsorber\Plugin_Deactivator;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
+use Nexcess\PluginAbsorber\Plugin\Deactivator;
 
 /**
  * Turning a standalone off.
@@ -17,11 +17,11 @@ use Nexcess\PluginAbsorber\Plugin_Deactivator;
  *
  * @since 1.0.0
  */
-class PluginDeactivatorTest extends WPTestCase {
+class DeactivatorTest extends WPTestCase {
 	use UopzFunctions;
 
 	/**
-	 * @var Plugin_Deactivator
+	 * @var Deactivator
 	 */
 	private $deactivator;
 
@@ -31,11 +31,11 @@ class PluginDeactivatorTest extends WPTestCase {
 		// uopz cannot stub a function that does not exist yet.
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-		$this->deactivator = new Plugin_Deactivator();
+		$this->deactivator = new Deactivator();
 	}
 
 	public function test_it_implements_the_contract(): void {
-		$this->assertInstanceOf( Plugin_Deactivator_Interface::class, $this->deactivator );
+		$this->assertInstanceOf( Deactivator_Interface::class, $this->deactivator );
 	}
 
 	/**

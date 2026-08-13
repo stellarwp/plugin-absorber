@@ -9,9 +9,9 @@ namespace Nexcess\PluginAbsorber\Conflict;
 
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
@@ -24,7 +24,7 @@ use Throwable;
  * complete the moment it exists and a test can hand it doubles instead of standing up global state.
  * Finding the conflict and turning the standalone off arrive separately because they are separate
  * jobs: `Detector` answers whether a standalone is in the way, and a host that wants deactivation to
- * be a no-op rebinds `Plugin_Deactivator_Interface` without touching how detection works.
+ * be a no-op rebinds `Plugin\Contracts\Deactivator_Interface` without touching how detection works.
  *
  * Neither of the two questions asked ahead of this class is asked here. `Detector` reports that
  * there is something to resolve and `Gatekeeper` decides who may have it resolved, and the conflict
@@ -55,7 +55,7 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Plugin_Deactivator_Interface
+	 * @var Deactivator_Interface
 	 */
 	private $plugin_deactivator;
 
@@ -76,16 +76,16 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Reader                       $registry           Which sub-plugins are registered.
-	 * @param Detector                     $detector           Whether a sub-plugin is in conflict.
-	 * @param Plugin_Deactivator_Interface $plugin_deactivator Turns the standalone off.
-	 * @param Writer_Interface             $notices            Where the user is told what happened.
-	 * @param Redirector                   $redirector         Where the user lands afterwards.
+	 * @param Reader                $registry           Which sub-plugins are registered.
+	 * @param Detector              $detector           Whether a sub-plugin is in conflict.
+	 * @param Deactivator_Interface $plugin_deactivator Turns the standalone off.
+	 * @param Writer_Interface      $notices            Where the user is told what happened.
+	 * @param Redirector            $redirector         Where the user lands afterwards.
 	 */
 	public function __construct(
 		Reader $registry,
 		Detector $detector,
-		Plugin_Deactivator_Interface $plugin_deactivator,
+		Deactivator_Interface $plugin_deactivator,
 		Writer_Interface $notices,
 		Redirector $redirector
 	) {

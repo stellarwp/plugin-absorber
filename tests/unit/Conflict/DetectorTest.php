@@ -14,8 +14,8 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -417,21 +417,21 @@ class DetectorTest extends WPTestCase {
 	 * A checker with a fixed answer that logs every basename it is asked about.
 	 *
 	 * The log lives on the test rather than on the double, so the double can be typed as the
-	 * interface: a property read off a value typed `Plugin_Checker_Interface` is a property the
+	 * interface: a property read off a value typed `Plugin\Contracts\Checker_Interface` is a property the
 	 * interface does not declare, and static analysis rightly rejects it.
 	 *
 	 * @param bool $active Whether every standalone is reported active.
 	 *
-	 * @return Plugin_Checker_Interface
+	 * @return Checker_Interface
 	 */
-	private function recording_checker( bool $active ): Plugin_Checker_Interface {
+	private function recording_checker( bool $active ): Checker_Interface {
 		$asked = &$this->asked;
 
 		$record = static function ( string $basename ) use ( &$asked ): void {
 			$asked[] = $basename;
 		};
 
-		return new class( $record, $active ) implements Plugin_Checker_Interface {
+		return new class( $record, $active ) implements Checker_Interface {
 			/**
 			 * @var callable
 			 */
@@ -477,8 +477,8 @@ class DetectorTest extends WPTestCase {
 		$checker   = $this->recording_checker( $active );
 		$container = new Test_Container();
 		$container->singleton(
-			Plugin_Checker_Interface::class,
-			static function () use ( $checker ): Plugin_Checker_Interface {
+			Checker_Interface::class,
+			static function () use ( $checker ): Checker_Interface {
 				return $checker;
 			}
 		);
@@ -527,7 +527,7 @@ class DetectorTest extends WPTestCase {
 	}
 
 	/**
-	 * Only is_plugin_active(), which is the one function Plugin_Checker::is_active() calls — and it
+	 * Only is_plugin_active(), which is the one function Checker::is_active() calls — and it
 	 * ORs the network check in itself, so stubbing is_plugin_active_for_network() alongside it
 	 * would be inert and would read as though a network path were being exercised.
 	 *
