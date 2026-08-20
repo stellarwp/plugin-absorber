@@ -47,6 +47,7 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | `Notices\Contracts\Queue_Interface` | `Notices\Queue` | Queues and renders the admin notices. |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
+| `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |
 
 `Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
