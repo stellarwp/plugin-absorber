@@ -7,15 +7,18 @@ When a sub-plugin's standalone counterpart is still active:
 | Policy | Behavior |
 |---|---|
 | `Conflict_Policy::DEACTIVATE` | Deactivate the standalone, notify, and usually redirect; the bundled copy loads on the next request. **Default.** |
-| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard stands the bundled copy down. |
+| `Conflict_Policy::DEFER` | Leave the standalone active; the load guard then stands the bundled copy down. |
 | `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
+
+A policy decides what happens to the *standalone*, and nothing else. Under `DEFER` the bundled copy
+stands down because of [the load guard](#the-load-guard), not because of the policy.
 
 Set one per sub-plugin with the `conflict_policy` key — a constant, or a `callable( Sub_Plugin ):
 string`. The `conflict_policy` [filter](filters.md) runs after that and has the final say:
 
 ```php
-// In the config: stand down when a newer standalone supersedes the bundled copy.
-'conflict_policy' => static fn( Sub_Plugin $sub ) => give_standalone_is_newer( $sub )
+// In the config: leave the standalone alone when it is not the code that was absorbed.
+'conflict_policy' => static fn( Sub_Plugin $sub ) => give_standalone_is_a_new_codebase( $sub )
     ? Conflict_Policy::DEFER
     : Conflict_Policy::DEACTIVATE,
 
@@ -117,13 +120,17 @@ if ( ! defined( 'GIVE_RECURRING_VERSION' ) ) {
 ```
 
 A standalone that defines it from a bootstrap hooked at `plugins_loaded` or later has not defined it
-yet at the moment the guard is read, and the bundled copy would load on top of it.
+yet at the moment the guard is read, and the bundled copy would load on top of it. A standalone that
+never defines the name at all is never stood down either, and the bundled copy loads alongside it;
+[an included recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is a functional
+example of this behavior.
 
 ## What is deliberately out of scope
 
-**Version negotiation.** The library never compares versions, so it will not spare a standalone that
-is newer than the bundled copy. Express that yourself: check the version and return
-`Conflict_Policy::DEFER` from the `conflict_policy` [filter](filters.md), which has the final say.
+**Version negotiation.** The library never compares versions. Express it yourself: read the version
+and return `Conflict_Policy::DEFER` from the config or the `conflict_policy` [filter](filters.md),
+which has the final say — [this recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is
+an example.
 
 **Renamed standalone directories.** `standalone_plugin_basename` is the path as installed. A site
 that renamed the standalone's directory is not detected, and there is no fallback that derives the
