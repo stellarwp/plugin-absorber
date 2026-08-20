@@ -118,6 +118,13 @@ class Reader {
 	 * while this object is being built, with the registrations still buffered for the read that comes
 	 * after the host has fixed its bindings.
 	 *
+	 * That same emptying is why a duplicate slug is caught per entry rather than allowed to end the
+	 * loop. The registrar refuses the collision, and letting the throw out of the loop would leave
+	 * every sub-plugin registered *behind* the colliding one in no registrar and in no buffer — the
+	 * host would get a report naming the two that collided and silently lose the rest, on both
+	 * passes, for the rest of the process. Registering the whole batch and throwing afterwards costs
+	 * the collision nothing: it still surfaces from the read, where both passes catch it.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @throws Config_Exception When two sub-plugins were registered under one slug.
@@ -133,8 +140,25 @@ class Reader {
 
 		self::$pending = [];
 
+		// The first collision, not the last, so that a buffer containing two of them reports the one
+		// the host wrote first and keeps reporting the same one until it is fixed. The exception is
+		// rethrown as the registrar raised it: it names the slug and both bundled files, which is the
+		// mistake the host has to go and correct, and what this method did with the rest of the batch
+		// is nothing they can act on.
+		$collision = null;
+
 		foreach ( $pending as $sub_plugin ) {
-			$this->registrar->register( $sub_plugin );
+			try {
+				$this->registrar->register( $sub_plugin );
+			} catch ( Config_Exception $exception ) {
+				if ( $collision === null ) {
+					$collision = $exception;
+				}
+			}
+		}
+
+		if ( $collision !== null ) {
+			throw $collision;
 		}
 	}
 }
