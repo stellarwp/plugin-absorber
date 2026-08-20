@@ -83,16 +83,29 @@ final class Provider implements Provider_Interface {
 		);
 
 		$this->bind_once(
+			Registry_Reader::class,
+			static function () use ( $container ): Registry_Reader {
+				return new Registry_Reader( $container->get( Registrar_Interface::class ) );
+			}
+		);
+
+		$this->bind_once(
 			Detector::class,
 			static function () use ( $container ): Detector {
-				return new Detector( $container->get( Plugin_Checker_Interface::class ) );
+				return new Detector(
+					$container->get( Registry_Reader::class ),
+					$container->get( Plugin_Checker_Interface::class )
+				);
 			}
 		);
 
 		$this->bind_once(
 			Loader::class,
 			static function () use ( $container ): Loader {
-				return new Loader( $container->get( Queue_Interface::class ) );
+				return new Loader(
+					$container->get( Registry_Reader::class ),
+					$container->get( Queue_Interface::class )
+				);
 			}
 		);
 

@@ -26,6 +26,13 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
+	 * @var Registry_Reader
+	 */
+	private $registry;
+
+	/**
+	 * @since 1.0.0
+	 *
 	 * @var Queue_Interface
 	 */
 	private $notices;
@@ -33,10 +40,12 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Queue_Interface $notices Where a sub-plugin that could not load says so.
+	 * @param Registry_Reader $registry Which sub-plugins are registered.
+	 * @param Queue_Interface $notices  Where a sub-plugin that could not load says so.
 	 */
-	public function __construct( Queue_Interface $notices ) {
-		$this->notices = $notices;
+	public function __construct( Registry_Reader $registry, Queue_Interface $notices ) {
+		$this->registry = $registry;
+		$this->notices  = $notices;
 	}
 
 	/**
@@ -55,11 +64,11 @@ class Loader {
 			return;
 		}
 
-		// Absorber::all() rather than the registrar directly: it flushes the registrations still
-		// buffered on the facade before it reads, and a registrar asked on its own would miss
-		// anything registered since the last read.
+		// The reader rather than the registrar directly: it drains the registrations still buffered
+		// on the facade before it reads, and a registrar asked on its own would miss anything
+		// registered since the last read.
 		try {
-			$sub_plugins = Absorber::all();
+			$sub_plugins = $this->registry->all();
 		} catch ( Config_Exception $exception ) {
 			// The flush is where a duplicate slug is caught, and reading the registrar is where a
 			// missing container or an unusable binding is. All three are bootstrap mistakes, and
