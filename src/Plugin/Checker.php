@@ -3,6 +3,8 @@
  * @package Nexcess\PluginAbsorber
  */
 
+declare( strict_types=1 );
+
 namespace Nexcess\PluginAbsorber\Plugin;
 
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
