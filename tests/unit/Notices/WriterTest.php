@@ -207,6 +207,11 @@ class WriterTest extends WPTestCase {
 	 * Where notices are kept is a constructor argument, so a host can move the queue somewhere else
 	 * without also taking on how notices are worded. It is a required argument and it is bound by
 	 * `Provider`, so a host rebinds the store rather than subclassing the writer.
+	 *
+	 * The double answers `option_name()` too, and the writer is asked for it here, because that is
+	 * the whole of what a host reading the queue itself has to go on. A writer composing the name
+	 * from the hook prefix instead of delegating would agree with the default store on every other
+	 * test in this class and send that host to an option nothing writes.
 	 */
 	public function test_a_replacement_store_is_used_instead_of_the_option(): void {
 		$store = new class() extends Store {
@@ -214,6 +219,20 @@ class WriterTest extends WPTestCase {
 			 * @var array<string,string>
 			 */
 			public $written = [];
+
+			/**
+			 * Deliberately nothing the hook prefix could produce.
+			 *
+			 * @var string
+			 */
+			public $name = 'host_managed_notice_queue';
+
+			/**
+			 * @return string
+			 */
+			public function option_name(): string {
+				return $this->name;
+			}
 
 			/**
 			 * @return array<string,string>
@@ -240,12 +259,18 @@ class WriterTest extends WPTestCase {
 			}
 		};
 
-		$this->make_writer( $store )->queue_merge_notice(
+		$writer = $this->make_writer( $store );
+		$writer->queue_merge_notice(
 			$this->make_sub_plugin( [ 'conflict_notice_message' => static fn() => 'Bundled now.' ] )
 		);
 
 		$this->assertSame( [ 'give-recurring:merge' => 'Bundled now.' ], $store->written );
 		$this->assertFalse( $this->queue_exists(), 'The default option must not have been written to.' );
+		$this->assertSame(
+			$store->name,
+			$writer->option_name(),
+			'The writer must report where its store keeps the queue, not compose a name of its own.'
+		);
 	}
 
 	/**
@@ -280,6 +305,15 @@ class WriterTest extends WPTestCase {
 	}
 
 	public function test_the_option_is_keyed_by_the_hook_prefix(): void {
+		// Under the host's own prefix the queue lands in the option this class asserts against. Shown
+		// first, and then taken away again, because otherwise its absence at the end of the test says
+		// only that setUp deleted it — which is true of an option nothing ever writes.
+		$this->make_writer()->queue_merge_notice( $this->make_sub_plugin() );
+
+		$this->assertTrue( $this->queue_exists(), 'The give-prefixed option is where this writer writes.' );
+
+		$this->clear_queue();
+
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
@@ -288,7 +322,7 @@ class WriterTest extends WPTestCase {
 		$this->make_writer()->queue_merge_notice( $this->make_sub_plugin() );
 
 		$this->assertIsArray( get_site_option( self::OPTION_FOR_OTHER_PREFIX, false ) );
-		$this->assertFalse( $this->queue_exists() );
+		$this->assertFalse( $this->queue_exists(), 'Nothing may be left under the previous prefix.' );
 	}
 
 	public function test_queueing_needs_a_hook_prefix(): void {
