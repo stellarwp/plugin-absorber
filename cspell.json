@@ -29,6 +29,7 @@
         "nexcess",
         "packagist",
         "pagenow",
+        "PCRE",
         "phpdotenv",
         "phpstan",
         "phpunit",

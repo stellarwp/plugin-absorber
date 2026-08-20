@@ -84,11 +84,20 @@ class Rewriter {
 
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- verified below, once
 		// the plugin named turns out to be one this library owns. Nothing is acted on until then.
-		$basename = isset( $_GET['plugin'] )
-			? sanitize_text_field( wp_unslash( $_GET['plugin'] ) )
-			: '';
+		$basename = isset( $_GET['plugin'] ) ? wp_unslash( $_GET['plugin'] ) : '';
 
-		if ( $basename === '' ) {
+		// Unslashed and no further. Core mints the activation-error nonce from
+		// wp_unslash( $_REQUEST['plugin'] ) verbatim (wp-admin/plugins.php), so sanitizing here
+		// would verify an action core never signed: a plugin whose folder name holds a '%xx'
+		// sequence, a '<' or a leading space comes back changed from sanitize_text_field(), and
+		// both the nonce check and the registry lookup below would then miss -- silently, and on
+		// the one screen this class exists to improve. Nothing sanitizing would remove is needed
+		// here either: the value is compared against a basename the host configured and hashed into
+		// a nonce action, and never reaches the page. What does reach it is the sub-plugin's message.
+		//
+		// is_string() because sanitize_text_field() was doing that job: '?plugin[]=x' arrives as an
+		// array, and an array reaching wp_verify_nonce() is a string conversion, not a refusal.
+		if ( ! is_string( $basename ) || $basename === '' ) {
 			return $markup;
 		}
 

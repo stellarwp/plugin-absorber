@@ -66,9 +66,23 @@ class RedirectorTest extends WPTestCase {
 		yield 'an absolute url'           => [ 'https://example.test/wp-admin/edit.php?post_type=page', admin_url( 'edit.php?post_type=page' ) ];
 
 		// Rebuilt rather than carried over, so a value that would otherwise start a parameter or a
-		// fragment of its own comes back encoded, and markup does not come back at all.
+		// fragment of its own comes back encoded. Encoding is the whole defence, which is why the
+		// value itself is left alone: what the user searched for is what gets searched again.
 		yield 'a query value that could break out' => [ '/wp-admin/edit.php?s=foo%26post_type%3Dpage', admin_url( 'edit.php?s=foo%26post_type%3Dpage' ) ];
-		yield 'a query value carrying markup'      => [ '/wp-admin/edit.php?s=%3Cb%3Ehi%3C%2Fb%3E', admin_url( 'edit.php?s=hi' ) ];
+		yield 'a query value carrying markup'      => [ '/wp-admin/edit.php?s=%3Cb%3Ehi%3C%2Fb%3E', admin_url( 'edit.php?s=%3Cb%3Ehi%3C%2Fb%3E' ) ];
+
+		// The two shapes sanitize_text_field() destroys, and the reason it is not used here: it runs
+		// after wp_parse_str() has url-decoded the value, so it deletes every '%xx' sequence and
+		// entity-encodes a bare '<'. A search for '100%ab' would come back as '100' and one for
+		// 'a<b' as 'a&lt;b' -- the redirect exists to re-render what the user asked for, and that
+		// re-renders something else.
+		yield 'a query value holding a percent sequence' => [ '/wp-admin/edit.php?s=100%25ab', admin_url( 'edit.php?s=100%25ab' ) ];
+		yield 'a query value holding a less-than'        => [ '/wp-admin/edit.php?s=a%3Cb', admin_url( 'edit.php?s=a%3Cb' ) ];
+
+		// CR, LF and the NUL byte are the exception, because the destination is handed to
+		// wp_safe_redirect() and ends up in a Location header.
+		yield 'a query value carrying a line break' => [ '/wp-admin/edit.php?s=a%0D%0Ab', admin_url( 'edit.php?s=ab' ) ];
+		yield 'a query value carrying a null byte'  => [ '/wp-admin/edit.php?s=a%00b', admin_url( 'edit.php?s=ab' ) ];
 
 		// An admin root names the dashboard by leaving it out, exactly as core's own /wp-admin/ link
 		// does. Sending an admin who asked for the dashboard to the plugins list instead is the
@@ -100,6 +114,7 @@ class RedirectorTest extends WPTestCase {
 	 */
 	public function test_it_falls_back_when_the_request_uri_is_not_a_string(): void {
 		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', false );
 
 		/** @phpstan-ignore-next-line argument.type (the point of the test is the value the type forbids). */
 		$destination = ( new Redirector() )->after_deactivation( [ '/wp-admin/edit.php' ] );

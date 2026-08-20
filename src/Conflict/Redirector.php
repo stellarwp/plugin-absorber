@@ -84,7 +84,10 @@ class Redirector {
 	private function screen_from_path( string $path ): string {
 		$screen = basename( $path );
 
-		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php$/', $screen ) ) {
+		// Anchored with \z rather than $, which in PCRE also matches immediately before a trailing
+		// newline -- so "edit.php\n" would satisfy $ and a line break would leave here inside the
+		// one value this class promises is validated.
+		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php\z/', $screen ) ) {
 			return $screen;
 		}
 
@@ -107,7 +110,7 @@ class Redirector {
 	}
 
 	/**
-	 * The current request's query, sanitised, ready to append to a screen name.
+	 * The current request's query, re-encoded, ready to append to a screen name.
 	 *
 	 * The query carries which list, which page and which filter the user was looking at, so
 	 * dropping it would re-render the screen showing something else. It is taken apart and rebuilt
@@ -135,15 +138,51 @@ class Redirector {
 		$args = [];
 		wp_parse_str( $query, $args );
 
-		$sanitized = map_deep( $args, 'sanitize_text_field' );
+		$args = $this->without_line_breaks( $args );
 
-		if ( ! is_array( $sanitized ) || $sanitized === [] ) {
+		if ( $args === [] ) {
 			return '';
 		}
 
-		$rebuilt = http_build_query( $sanitized, '', '&', PHP_QUERY_RFC3986 );
+		$rebuilt = http_build_query( $args, '', '&', PHP_QUERY_RFC3986 );
 
 		return $rebuilt === '' ? '' : '?' . $rebuilt;
+	}
+
+	/**
+	 * The parsed query with CR, LF and NUL taken out of every string in it, and nothing else.
+	 *
+	 * The property being protected is that the destination cannot end a header: it is handed to
+	 * wp_safe_redirect(), which puts it in a Location. That is all that is being protected, because
+	 * it is all that is left to protect -- http_build_query() re-encodes both halves of every pair
+	 * with PHP_QUERY_RFC3986, so no value can add a parameter, open a fragment or arrive as markup,
+	 * whatever it holds.
+	 *
+	 * Deliberately not sanitize_text_field(). wp_parse_str() has already url-decoded these values,
+	 * and _sanitize_text_fields() deletes every '%xx' sequence it can find and entity-encodes a bare
+	 * '<' -- so a search for '100%ab' would be re-run as '100', and one for 'a<b' as 'a&lt;b'.
+	 * Re-rendering the screen the user asked for is the entire point of the redirect, and that
+	 * quietly re-renders a different one.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param array<array-key,mixed> $args Query arguments as wp_parse_str() produced them.
+	 *
+	 * @return array<array-key,mixed>
+	 */
+	private function without_line_breaks( array $args ): array {
+		foreach ( $args as $key => $value ) {
+			if ( is_array( $value ) ) {
+				$args[ $key ] = $this->without_line_breaks( $value );
+				continue;
+			}
+
+			if ( is_string( $value ) ) {
+				$args[ $key ] = str_replace( [ "\r", "\n", "\0" ], '', $value );
+			}
+		}
+
+		return $args;
 	}
 
 	/**
