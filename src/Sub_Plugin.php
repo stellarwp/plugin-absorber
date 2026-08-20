@@ -497,9 +497,10 @@ class Sub_Plugin {
 	/**
 	 * Name the entry a rejection is about, for a host registering several from one loop.
 	 *
-	 * Registering from a manifest is the shape the docs recommend, and it puts every entry through
-	 * the same line of the host's code: the key at fault says what is wrong, and nothing but this
-	 * says which of five sub-plugins it was wrong on.
+	 * A host calling Absorber::register() inside a loop -- over a manifest array of five entries,
+	 * say -- gets the same file and line in the stack trace whichever entry was rejected, because
+	 * there is only the one call. The key at fault says what is wrong, and nothing but this says
+	 * which of the five it was wrong on.
 	 *
 	 * The slug first, because it is what every other message about a sub-plugin names, and the
 	 * bundled file when the slug is itself the key at fault -- it identifies the entry just as well,
