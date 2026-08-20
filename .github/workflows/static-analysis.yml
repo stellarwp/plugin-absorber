@@ -49,13 +49,13 @@ jobs:
       - name: Validate composer.json
         run: composer validate --strict --no-check-lock
 
-      # cspell.json is checked in and every workflow carries `# cspell:ignore`
-      # directives, so something is expected to read it. Until this step existed
-      # nothing did, and the dictionary was decorative. Run before the composer
-      # install so vendor/ is absent and the ignorePaths entry for it is belt
-      # rather than braces. The major version is pinned: a minor cspell release
-      # that widens its dictionaries would otherwise turn a comment red without
-      # a commit here.
+      # This is the only thing that reads cspell.json and the `# cspell:ignore`
+      # directives the workflows carry; without it both are decorative. Run
+      # before the composer install, so vendor/ is not on disk yet and there is
+      # nothing there to spellcheck -- the ignorePaths entry for it is a
+      # backstop, not what does the work. The major version is pinned: a minor
+      # cspell release that widens its dictionaries would otherwise turn a
+      # comment red without a commit here.
       - name: Spellcheck
         run: npx --yes cspell@8 lint --no-progress .
 
