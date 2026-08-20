@@ -436,10 +436,14 @@ API it serves.
 Nexcess\PluginAbsorber`, and every method a docblock with `@since 1.0.0`. This binds `src/` only —
 test and support classes keep the file-level docblock but need no `@since`.
 
-**`declare( strict_types=1 );` sits immediately after the file-level docblock**, in `src/` and
-`tests/` alike — a coercing `int` parameter that silently accepts `"3 plugins"` is a bug this library
-would report as a successful load. The files predating the rule get it the next time they are
-touched.
+**Every PHP file declares `declare( strict_types=1 );`** — `src/` and `tests/` alike, one blank line
+below the file-level docblock and one above the `namespace`. A new file without it is incomplete.
+The declaration governs the *call site*, so what it buys is our own calls outward: an `int` or a
+`null` reaching a WordPress function that declared `string` fails on the line that passed it, rather
+than coercing to `"0"` or `""` and surfacing as a wrong value somewhere downstream. What it
+deliberately does not change is the hook boundary — WordPress's own files are not strict, so core
+calling our typed methods still coerces weakly, and a callback that receives a loose type from a
+filter behaves exactly as it did.
 
 **Comments describe behaviour, not the plan.** Never reference a task or plan-step number in a code
 comment; the code outlives the plan. Comments earn their place by explaining *why*, especially where
