@@ -32,6 +32,11 @@ Only the second reason picks 0 out of 0 through 4; if your container is already 
 anywhere below 5 works. Order among the configuration calls does not matter, so long as they all
 precede `Absorber::boot()`.
 
+`Absorber::boot()` is idempotent, so calling it from more than one code path is safe — but the
+first call is the one that counts, and the container it saw is the container the library keeps.
+Setting a different one afterwards binds nothing into it, and leaves the accessors asking a
+container that was never taught about this library. Set the container once, before booting.
+
 ## Registering a sub-plugin
 
 | Key | Type | Required | Meaning |

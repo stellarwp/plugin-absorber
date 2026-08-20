@@ -124,6 +124,13 @@ final class Absorber {
 	 * Bind the collaborators, then let the scheduler decide when they run. Idempotent — safe to
 	 * call from more than one code path.
 	 *
+	 * Idempotent means the first call wins outright, and the container is part of what it wins.
+	 * A Config::set_container() after this has returned binds nothing: the scheduler keeps the
+	 * container it closed over, while the accessors and the notice trampolines resolve from
+	 * whatever Config holds when they are called, so the two halves would answer to different
+	 * containers and the accessors would ask an unbound one. Set the container first — the
+	 * recommended slot is plugins_loaded priority 0 — and do not replace it afterwards.
+	 *
 	 * The provider is constructed rather than resolved: it is what teaches the container about this
 	 * library, so the container cannot be asked to build it first. It is bound afterwards, and only
 	 * when nothing answers to `Provider_Interface` already, so a host may replace the whole set of
