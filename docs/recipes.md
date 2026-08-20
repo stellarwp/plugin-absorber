@@ -36,8 +36,14 @@ you have already cached.
 
 ## Register several add-ons from one manifest
 
-One array, one loop — which is also how you control the order, since sub-plugins load in
-registration order and anything extended at include time has to be registered before its extender:
+One `Absorber::register()` call per sub-plugin still happens here; the loop only builds each config
+array on the way in. The manifest carries what differs between entries, the `+` union adds the keys
+they share — so `bundled_plugin_file` is derived from each entry's own slug rather than written out
+per entry — and the union never overwrites the left-hand side, so an entry that spells a shared key
+out itself keeps its own value.
+
+The loop is also where load order is decided: sub-plugins load in registration order, so anything
+extended at include time has to be registered before its extender.
 
 ```php
 $sub_plugins = [
@@ -107,36 +113,66 @@ only one that touches a site's active plugins. Each step is a one-constant chang
 if the policy comes from a callable reading a value you can move without shipping:
 
 ```php
+/**
+ * Read fresh on every conflict pass, so whatever writes this option -- a settings screen, a
+ * support tool, WP-CLI, a migration -- changes how the next admin page view resolves the
+ * conflict. Nothing is cached, and no release has to ship for the stage to move.
+ */
 'conflict_policy' => static fn() => get_option( 'give_absorption_stage', Conflict_Policy::DEFER ),
 ```
 
 An unrecognised value is treated as `NOTICE_ONLY`, never as consent to deactivate, so a stale or
 misspelt option cannot turn a plugin off.
 
-## Defer to a newer standalone
+## Defer to a standalone that is a new codebase
 
-The library never compares versions — "newer" is a question only the host can answer. Express it as
-a `conflict_policy` filter, which runs last and has the final say. The standalone's code is loaded
-by the time this is asked, so its own version constant is there to read:
+This is an edge case, but one that has occurred before: a later version of a standalone that shares
+no code with the version you bundled, while still shipping under the same folder and file name.
+
+LearnDash's ProPanel is a case where this happened. `learndash-propanel/learndash_propanel.php` was
+ProPanel 2.x, which LearnDash absorbed into its Reports module. ProPanel 3.0 arrived at that same
+path as a new codebase — its own namespace, its own `LDRP_*` constants, none of the 2.x code. The
+basename is all the two versions have in common, so `standalone_plugin_basename` cannot tell them
+apart. The version installed at that path can, so read it and defer:
 
 ```php
-add_filter( 'give/plugin_absorber/conflict_policy', static function ( $policy, $sub_plugin ) {
-    if ( $sub_plugin->get_slug() !== 'give-recurring' ) {
+add_filter( 'learndash/plugin_absorber/conflict_policy', static function ( $policy, $sub_plugin ) {
+    if ( $sub_plugin->get_slug() !== 'propanel' ) {
         return $policy;
     }
 
-    $standalone = defined( 'GIVE_RECURRING_VERSION' ) ? GIVE_RECURRING_VERSION : '0';
+    if ( ! function_exists( 'get_plugin_data' ) ) {
+        include_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
 
-    // Let a standalone that is ahead of the bundled copy keep the site.
-    return version_compare( $standalone, GIVE_RECURRING_BUNDLED_VERSION, '>' )
+    $installed = get_plugin_data(
+        WP_PLUGIN_DIR . '/' . $sub_plugin->get_standalone_plugin_basename(),
+        false,
+        false
+    );
+
+    /**
+     * 3.0 and up at this path is the newer codebase, not an older copy of ours, so there is
+     * nothing to take over from. Anything below it is the version that was absorbed.
+     */
+    return version_compare( $installed['Version'], '3.0.0-dev', '>=' )
         ? Conflict_Policy::DEFER
         : $policy;
 }, 10, 2 );
 ```
 
-`DEFER` leaves the standalone active, and the guard constant then stands the bundled copy down on
-its own. No version is stored anywhere, and the site converges the moment the bundled copy catches
-up.
+**`DEFER` here does not stand the bundled copy down.** The policy only leaves the standalone alone;
+[the load guard](conflict-handling.md#the-load-guard) decides the rest, one priority later:
+
+| The standalone at that basename | The guard constant | The bundled copy, under `DEFER` |
+|---|---|---|
+| an older version of the same code | defined by it | stands down |
+| a new codebase at the same path | never defined | **loads, alongside it** |
+
+ProPanel 2.x defines `LD_PP_PLUGIN_DIR` and 3.x defines only `LDRP_*`, so with 3.x active the
+bundled Reports module loads too — correct here, since the two share a file name and nothing else.
+Treat it as the exception it is: two copies loading at once is normally the fatal this library
+exists to prevent, and it is safe only because these two are not copies of each other.
 
 ## Do per-site work on multisite
 
