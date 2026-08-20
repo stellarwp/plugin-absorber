@@ -117,7 +117,7 @@ class Gatekeeper {
 	 * be able to deactivate one, and a replacement that forgot to re-check would reopen exactly that.
 	 *
 	 * It gates every policy, not only the destructive one, and that costs nothing. The other
-	 * policies queue a notice, and Notices\Queue::render() will not render -- or clear -- for a user
+	 * policies queue a notice, and Notices\Presenter::render() will not render -- or clear -- for a user
 	 * with no plugin capability at all. Queuing on a request that cannot act only parks the notice
 	 * until an administrator who can act arrives, which is the request this gate lets resolution run
 	 * on anyway. Nothing is consumed or suppressed by waiting: the standalone is still there to

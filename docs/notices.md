@@ -13,7 +13,7 @@ the site owner is never told their plugin was turned off.
 
 ## Who sees them
 
-`Notices\Queue::render()` prints the queue and then clears it, and it is gated on the
+`Notices\Presenter::render()` prints the queue and then clears it, and it is gated on the
 `activate_plugins` capability. Since rendering consumes the queue, a user who cannot act on a notice
 must not be shown one — a subscriber loading their profile page would otherwise silently swallow the
 only warning an administrator was ever going to get.
@@ -65,7 +65,12 @@ add_action( 'admin_init', function () {
 option there leaves ours nothing to draw and the notice is shown once, by you. Do the deleting: a
 notice read and not cleared is shown on every request forever.
 
-The queue is three classes: `Notices\Queue` decides what a notice says and who may consume it,
-`Notices\Store` keeps it, `Notices\Renderer` draws it. `Queue` takes both as constructor arguments
-and all three are bound in the container, so rebinding `Notices\Renderer` replaces the markup and
-leaves the storage alone, and rebinding `Notices\Store` does the reverse.
+The queue is four classes: `Notices\Writer` decides what a notice says, `Notices\Presenter` decides
+who may consume it and does the render-then-clear, `Notices\Store` keeps it, `Notices\Renderer` draws
+it. `Writer` takes `Store` as its only constructor argument and is the one bound behind an interface,
+`Writer_Interface` — the seam for a host that already runs its own notices library and wants to reword
+rather than replace the plumbing. `Presenter` takes `Store` and `Renderer` and is bound by class name:
+nothing in the library dispatches on it, since the trampoline on `all_admin_notices` is its only
+caller. Rebinding `Notices\Renderer` replaces the markup and leaves the storage alone; rebinding
+`Notices\Store` does the reverse; rebinding `Writer_Interface` replaces the wording without touching
+either.

@@ -15,11 +15,11 @@ use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 
 /**
- * The storage half of the queue, exercised without going through Queue.
+ * The storage half of the queue, exercised without going through Writer or Presenter.
  *
- * QueueTest already covers this ground from the outside; these are the assertions that belong to
- * the store itself, so that swapping how notices are worded or drawn cannot quietly take the
- * storage guarantees with it.
+ * WriterTest and PresenterTest cover this ground from the outside; these are the assertions that
+ * belong to the store itself, so that swapping how notices are worded or drawn cannot quietly take
+ * the storage guarantees with it.
  *
  * @since 1.0.0
  */

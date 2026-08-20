@@ -14,13 +14,13 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Activator;
-use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Writer;
 use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
@@ -140,7 +140,7 @@ class LoaderTest extends WPTestCase {
 					),
 				]
 			),
-			new Spy_Queue(),
+			new Spy_Writer(),
 			new Spy_Activator()
 		);
 
@@ -703,9 +703,9 @@ class LoaderTest extends WPTestCase {
 
 		$this->register( [ 'dependency_check' => static fn() => false ] );
 
-		$notices = new Spy_Queue();
+		$notices = new Spy_Writer();
 
-		// The registrar is bound as well as the queue. Without it the sub-plugin would sit in the
+		// The registrar is bound as well as the writer. Without it the sub-plugin would sit in the
 		// default registrar either way and the notice would arrive however register() behaved, so the
 		// test would pass without the buffer existing at all.
 		$registrar = new Spy_Registrar();
@@ -717,8 +717,8 @@ class LoaderTest extends WPTestCase {
 			}
 		);
 		$container->singleton(
-			Queue_Interface::class,
-			static function () use ( $notices ): Queue_Interface {
+			Writer_Interface::class,
+			static function () use ( $notices ): Writer_Interface {
 				return $notices;
 			}
 		);

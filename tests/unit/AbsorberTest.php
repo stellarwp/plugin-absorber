@@ -14,13 +14,13 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
-use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Notices\Presenter;
+use Nexcess\PluginAbsorber\Notices\Writer;
 use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
-use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
@@ -156,7 +156,7 @@ class AbsorberTest extends WPTestCase {
 	 */
 	public static function collaborator_accessors(): Generator {
 		yield 'the registrar'         => [ 'registrar', Registrar::class ];
-		yield 'the notice queue'      => [ 'notices', Queue::class ];
+		yield 'the notice writer'     => [ 'notices', Writer::class ];
 		yield 'the conflict resolver' => [ 'resolver', Resolver::class ];
 	}
 
@@ -180,7 +180,7 @@ class AbsorberTest extends WPTestCase {
 	 */
 	public static function accessor_names(): Generator {
 		yield 'the registrar'         => [ 'registrar' ];
-		yield 'the notice queue'      => [ 'notices' ];
+		yield 'the notice writer'     => [ 'notices' ];
 		yield 'the conflict resolver' => [ 'resolver' ];
 	}
 
@@ -380,39 +380,32 @@ class AbsorberTest extends WPTestCase {
 		$this->assertSame( [], Absorber::all() );
 	}
 
-	public function test_render_notices_delegates_to_the_bound_queue(): void {
-		$notices   = new Spy_Queue();
-		$container = new Test_Container();
-		$container->singleton(
-			Queue_Interface::class,
-			static function () use ( $notices ): Queue_Interface {
-				return $notices;
-			}
-		);
-		$this->set_up_container( $container );
+	public function test_render_notices_delegates_to_the_bound_presenter(): void {
+		$presenter = $this->bind_presenter();
 
 		Absorber::render_notices();
 
-		$this->assertSame( 1, $notices->render_calls );
+		$this->assertSame( 1, $presenter->render_calls );
 	}
 
 	/**
-	 * The notice messages are host callables and the queue itself is a rebindable seam, so rendering
-	 * runs host code — on `all_admin_notices`, which every admin screen fires. A throw out of it
-	 * white-screens wp-admin, which is exactly where a site owner would go to undo whatever caused
-	 * it, so it is reported and the render is abandoned instead.
+	 * The notice messages are host callables and the presenter itself resolves whatever store and
+	 * renderer are bound, so rendering runs host code — on `all_admin_notices`, which every admin
+	 * screen fires. A throw out of it white-screens wp-admin, which is exactly where a site owner
+	 * would go to undo whatever caused it, so it is reported and the render is abandoned instead.
 	 */
 	public function test_render_notices_cannot_end_the_admin_request(): void {
 		$this->expect_incorrect_usage();
 
-		$container = new Test_Container();
-		$container->singleton(
-			Queue_Interface::class,
-			static function (): Queue_Interface {
+		// After the provider, because Presenter is a class id: a container reports it can build one
+		// whether or not anything was bound, so the provider rebinds it regardless and a factory
+		// handed in before set_up_container() would never run.
+		$this->set_up_container()->singleton(
+			Presenter::class,
+			static function (): Presenter {
 				throw new RuntimeException( 'the notice option held something unreadable' );
 			}
 		);
-		$this->set_up_container( $container );
 
 		Absorber::render_notices();
 
@@ -438,6 +431,29 @@ class AbsorberTest extends WPTestCase {
 
 		$this->assertSame( '', $output );
 		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * Bind a recording presenter into the container already standing.
+	 *
+	 * After the provider has run, not before it: the id is a class, and a container answers for
+	 * every class that exists whether or not anything was bound to it. The provider cannot tell a
+	 * host's deliberate binding from that, so it rebinds regardless, and a double handed in
+	 * beforehand would be quietly replaced by the real presenter.
+	 *
+	 * @return Spy_Presenter
+	 */
+	private function bind_presenter(): Spy_Presenter {
+		$presenter = new Spy_Presenter();
+
+		$this->set_up_container()->singleton(
+			Presenter::class,
+			static function () use ( $presenter ): Presenter {
+				return $presenter;
+			}
+		);
+
+		return $presenter;
 	}
 
 	/**

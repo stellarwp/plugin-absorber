@@ -8,26 +8,30 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Notices;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
- * Default queue: option-backed, so it survives the resolver's redirect.
+ * What a notice says, and under which key it is kept.
  *
- * This class decides *what a notice says* and *who is allowed to consume the queue*. Where the
- * queue is kept is Store's job and how it is drawn is Renderer's, so a host can replace either one
- * without inheriting the other, and neither has to be understood to reword a message.
+ * One reason to change: the wording. Where the queue is kept is `Store`'s, how a pending notice is
+ * drawn is `Renderer`'s, and who may consume the queue is `Presenter`'s — so a host can reword a
+ * sentence without reading any of them, and none of them has to be understood to answer "what does
+ * the merge notice say".
  *
- * Both collaborators are required constructor arguments, and `Provider` is what hands them over.
- * No defaults: a class that can build its own dependencies has a second way to be constructed that
+ * Option-backed through `Store`, so what is written here survives the resolver's redirect: the
+ * request that raises a notice is almost never the one that shows it.
+ *
+ * The collaborator is a required constructor argument, and `Provider` is what hands it over. No
+ * defaults: a class that can build its own dependencies has a second way to be constructed that
  * bypasses every binding a host made, and it is the one a test or a stray `new` reaches for.
  *
- * A host already using stellarwp/admin-notices can bind its own implementation of Queue_Interface
+ * A host already using stellarwp/admin-notices can bind its own implementation of Writer_Interface
  * and read the same option, whose name is `option_name()`.
  *
  * @since 1.0.0
  */
-class Queue implements Queue_Interface {
+class Writer implements Writer_Interface {
 	/**
 	 * Notice types. Public because they are the second half of a queue key — an entry is stored
 	 * under `slug:type`, and reading the queue yourself means matching against these.
@@ -53,19 +57,6 @@ class Queue implements Queue_Interface {
 	public const TYPE_DEPENDENCY = 'dependency';
 
 	/**
-	 * Capability required to see, and thereby consume, the queue.
-	 *
-	 * Rendering clears the queue, so a user who cannot act on a notice must not be shown one:
-	 * a subscriber loading their profile page would otherwise silently swallow the only warning
-	 * an administrator was ever going to get.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	private const CAPABILITY = 'activate_plugins';
-
-	/**
 	 * @since 1.0.0
 	 *
 	 * @var Store
@@ -75,19 +66,10 @@ class Queue implements Queue_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Renderer
+	 * @param Store $store Where the queue is kept.
 	 */
-	private $renderer;
-
-	/**
-	 * @since 1.0.0
-	 *
-	 * @param Store    $store    Where the queue is kept.
-	 * @param Renderer $renderer How a queued notice is drawn.
-	 */
-	public function __construct( Store $store, Renderer $renderer ) {
-		$this->store    = $store;
-		$this->renderer = $renderer;
+	public function __construct( Store $store ) {
+		$this->store = $store;
 	}
 
 	/**
@@ -148,35 +130,6 @@ class Queue implements Queue_Interface {
 	 */
 	public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void {
 		$this->queue( $sub_plugin, self::TYPE_DEPENDENCY, $sub_plugin->get_dependency_notice_message() );
-	}
-
-	/**
-	 * Draw the queue, then consume it.
-	 *
-	 * The capability check stays here rather than in the renderer because it guards the clearing
-	 * as much as the drawing: the two have to be decided together or a user who may not see the
-	 * queue could still destroy it.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When no hook prefix has been set.
-	 *
-	 * @return void
-	 */
-	public function render(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
-			return;
-		}
-
-		$queue = $this->store->all();
-
-		if ( $queue === [] ) {
-			return;
-		}
-
-		$this->renderer->render( $queue );
-
-		$this->store->clear();
 	}
 
 	/**

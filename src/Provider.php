@@ -19,10 +19,11 @@ use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
-use Nexcess\PluginAbsorber\Notices\Queue;
+use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
+use Nexcess\PluginAbsorber\Notices\Writer;
 use StellarWP\ContainerContract\ContainerInterface;
 
 /**
@@ -80,9 +81,16 @@ final class Provider implements Provider_Interface {
 		// container-contract promises `bind`, `get`, `has` and `singleton` and nothing about
 		// autowiring, so a container that resolves nothing by reflection has to be told.
 		$this->bind_once(
-			Queue_Interface::class,
-			static function () use ( $container ): Queue {
-				return new Queue( $container->get( Store::class ), $container->get( Renderer::class ) );
+			Writer_Interface::class,
+			static function () use ( $container ): Writer {
+				return new Writer( $container->get( Store::class ) );
+			}
+		);
+
+		$this->bind_once(
+			Presenter::class,
+			static function () use ( $container ): Presenter {
+				return new Presenter( $container->get( Store::class ), $container->get( Renderer::class ) );
 			}
 		);
 
@@ -110,7 +118,7 @@ final class Provider implements Provider_Interface {
 					$container->get( Registry_Reader::class ),
 					$container->get( Detector::class ),
 					$container->get( Plugin_Deactivator_Interface::class ),
-					$container->get( Queue_Interface::class ),
+					$container->get( Writer_Interface::class ),
 					$container->get( Redirector::class )
 				);
 			}
@@ -121,7 +129,7 @@ final class Provider implements Provider_Interface {
 			static function () use ( $container ): Loader {
 				return new Loader(
 					$container->get( Registry_Reader::class ),
-					$container->get( Queue_Interface::class ),
+					$container->get( Writer_Interface::class ),
 					$container->get( Activator_Interface::class )
 				);
 			}

@@ -19,10 +19,10 @@ use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Loader;
-use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
+use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
-use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
@@ -468,13 +468,13 @@ class SchedulerTest extends WPTestCase {
 	public function test_it_wires_the_notice_step_in_the_admin(): void {
 		set_current_screen( 'dashboard' );
 
-		$notices = $this->bind_spy_queue();
-
 		Absorber::boot();
+
+		$presenter = $this->bind_spy_presenter();
 
 		do_action( 'all_admin_notices' );
 
-		$this->assertSame( 1, $notices->render_calls );
+		$this->assertSame( 1, $presenter->render_calls );
 	}
 
 	/**
@@ -484,9 +484,9 @@ class SchedulerTest extends WPTestCase {
 	public function test_it_does_not_wire_the_notice_step_on_the_front_end(): void {
 		set_current_screen( 'front' );
 
-		$notices = $this->bind_spy_queue();
-
 		Absorber::boot();
+
+		$presenter = $this->bind_spy_presenter();
 
 		// The recorder has to be shown to work: without it, a do_action() that fired nothing at all
 		// would satisfy the assertion below for a reason that has nothing to do with the front end.
@@ -501,7 +501,7 @@ class SchedulerTest extends WPTestCase {
 		do_action( 'all_admin_notices' );
 
 		$this->assertTrue( $fired, 'The hook must really have been dispatched.' );
-		$this->assertSame( 0, $notices->render_calls );
+		$this->assertSame( 0, $presenter->render_calls );
 	}
 
 	/**
@@ -747,30 +747,27 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
-	 * Bind a recording queue in place of the default one.
+	 * Bind a recording presenter in place of the default one, into the container already standing.
 	 *
-	 * Bound before boot, the way a host rebinding the seam does it. That survives because the id is an
-	 * interface: the provider skips an id the container can already answer for, and only a binding
-	 * makes it answer for an interface. A class-id double bound here would not survive, since a
-	 * container answers for every class that exists whether or not anything was bound to it — and it
-	 * would be overwritten twice, once by the provider run in `set_up_container()` and again by the
-	 * one inside `boot()`.
+	 * Called *after* boot, unlike a host rebinding the writer's interface seam would be: the id is a
+	 * class, and a container answers for every class that exists whether or not anything was bound to
+	 * it, so the provider cannot tell a double apart from that and rebinds regardless. Late is safe
+	 * here — the notice step is a named static trampoline that resolves its collaborator when it
+	 * fires, not when it is wired.
 	 *
-	 * @return Spy_Queue
+	 * @return Spy_Presenter
 	 */
-	private function bind_spy_queue(): Spy_Queue {
-		$notices   = new Spy_Queue();
-		$container = new Test_Container();
-		$container->singleton(
-			Queue_Interface::class,
-			static function () use ( $notices ): Spy_Queue {
-				return $notices;
+	private function bind_spy_presenter(): Spy_Presenter {
+		$presenter = new Spy_Presenter();
+
+		$this->container()->singleton(
+			Presenter::class,
+			static function () use ( $presenter ): Presenter {
+				return $presenter;
 			}
 		);
 
-		$this->set_up_container( $container );
-
-		return $notices;
+		return $presenter;
 	}
 
 	/**
