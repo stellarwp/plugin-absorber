@@ -12,6 +12,7 @@ use Generator;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Presenter;
@@ -22,14 +23,16 @@ use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Rewriter;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use RuntimeException;
+use stdClass;
 use Throwable;
 
 /**
- * The public surface: the accessors, registration, and the notice trampoline.
+ * The public surface: the accessors, registration, and the two notice trampolines.
  *
  * Boot timing lives in `Boot\SchedulerTest` and the load loop in `LoaderTest`, which is where
  * those behaviours moved. What is left here is what a host actually calls.
@@ -434,6 +437,114 @@ class AbsorberTest extends WPTestCase {
 	}
 
 	/**
+	 * The trampoline is a named static method rather than a closure over the container, so that a
+	 * host can take the filter back off — but it still has to reach whatever the host bound, or a
+	 * replacement rewriter would own the error screen and never be asked about one.
+	 */
+	public function test_the_activation_error_trampoline_delegates_to_the_bound_rewriter(): void {
+		$rewriter = $this->bind_rewriter();
+
+		$this->assertSame(
+			$rewriter->rewritten_markup,
+			Absorber::filter_activation_error_markup( '<p>Core.</p>' )
+		);
+		$this->assertSame( [ '<p>Core.</p>' ], $rewriter->rewritten );
+	}
+
+	/**
+	 * Reported and handed back untouched rather than thrown out of: this runs while WordPress is
+	 * drawing an error screen, and a second fatal there would replace the one the user came to read.
+	 */
+	public function test_the_activation_error_trampoline_does_nothing_without_a_hook_prefix(): void {
+		$rewriter = $this->bind_rewriter();
+
+		// The prefix goes, the container stays: this is about the missing prefix, and a trampoline
+		// that reached the container first would pass this test for the other reason.
+		$container = $this->container();
+		Config_State::reset();
+		Config::set_container( $container );
+		$this->expect_incorrect_usage();
+
+		$this->assertSame( '<p>Core.</p>', Absorber::filter_activation_error_markup( '<p>Core.</p>' ) );
+		$this->assertSame( [], $rewriter->rewritten, 'The rewriter must not be reached at all.' );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * The rewriter is a rebindable seam and the message it substitutes is a host callable, so the
+	 * rewrite runs host code — on the screen that is already reporting a fatal. A throw out of here
+	 * would replace the error the admin came to read with one of ours, so it is reported and core's
+	 * own markup is handed back.
+	 *
+	 * The throw comes from inside the rewrite rather than from the binding, because that is the
+	 * shape the real one takes: a duplicate registration surfaces when the registry drains, which is
+	 * the first thing the rewrite does.
+	 */
+	public function test_the_activation_error_trampoline_cannot_end_the_admin_request(): void {
+		$this->expect_incorrect_usage();
+
+		$rewriter          = $this->bind_rewriter();
+		$rewriter->failure = new RuntimeException( 'two sub-plugins were registered under one slug' );
+
+		$this->assertSame( '<p>Core.</p>', Absorber::filter_activation_error_markup( '<p>Core.</p>' ) );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * The other half of the same guarantee: a rewriter the container cannot build at all is a host's
+	 * broken binding, and it arrives on the same screen with the same consequence.
+	 */
+	public function test_the_activation_error_trampoline_survives_a_rewriter_it_cannot_build(): void {
+		$this->expect_incorrect_usage();
+
+		// Bound after the provider, for the reason bind_rewriter() gives: a class id handed in
+		// beforehand is rebound to the real thing and this factory would never run.
+		$this->set_up_container()->singleton(
+			Rewriter::class,
+			static function (): Rewriter {
+				throw new RuntimeException( 'the rewriter could not be built' );
+			}
+		);
+
+		$this->assertSame( '<p>Core.</p>', Absorber::filter_activation_error_markup( '<p>Core.</p>' ) );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * A filter receives whatever the filter before it returned, so the trampoline takes an untyped
+	 * argument and coerces it. Declaring `string` there would turn another plugin's sloppy return
+	 * into a TypeError raised from this library, on the screen least able to afford one.
+	 *
+	 * The rewriter still sees the coerced value: the guard is about what crosses the boundary, not
+	 * about standing the rewrite down, and a trampoline that returned early would leave the
+	 * rewriter's `string` promise resting on an untested path.
+	 *
+	 * @dataProvider non_string_markup
+	 *
+	 * @param mixed $markup Whatever the previous filter returned.
+	 */
+	public function test_the_activation_error_trampoline_coerces_a_non_string( $markup ): void {
+		$rewriter = $this->bind_rewriter();
+
+		$this->assertSame( $rewriter->rewritten_markup, Absorber::filter_activation_error_markup( $markup ) );
+		$this->assertSame( [ '' ], $rewriter->rewritten );
+	}
+
+	/**
+	 * An integer earns its place alongside the two that would fatal: `42` casts cleanly to `"42"`,
+	 * so it is the case a missing guard would pass rather than crash on.
+	 *
+	 * @return Generator<string,array{0:mixed}>
+	 */
+	public static function non_string_markup(): Generator {
+		yield 'null'       => [ null ];
+		yield 'an array'   => [ [ '<p>Core.</p>' ] ];
+		yield 'an object'  => [ new stdClass() ];
+		yield 'an integer' => [ 42 ];
+		yield 'false'      => [ false ];
+	}
+
+	/**
 	 * Bind a recording presenter into the container already standing.
 	 *
 	 * After the provider has run, not before it: the id is a class, and a container answers for
@@ -454,6 +565,29 @@ class AbsorberTest extends WPTestCase {
 		);
 
 		return $presenter;
+	}
+
+	/**
+	 * Bind a recording rewriter into the container already standing.
+	 *
+	 * After the provider has run, not before it like the queue above: the id is a class, and a
+	 * container answers for every class that exists whether or not anything was bound to it. The
+	 * provider cannot tell a host's deliberate binding from that, so it rebinds regardless, and a
+	 * double handed in beforehand would be quietly replaced by the real rewriter.
+	 *
+	 * @return Spy_Rewriter
+	 */
+	private function bind_rewriter(): Spy_Rewriter {
+		$rewriter = new Spy_Rewriter();
+
+		$this->set_up_container()->singleton(
+			Rewriter::class,
+			static function () use ( $rewriter ): Rewriter {
+				return $rewriter;
+			}
+		);
+
+		return $rewriter;
 	}
 
 	/**

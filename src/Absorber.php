@@ -9,6 +9,7 @@ namespace Nexcess\PluginAbsorber;
 
 use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
+use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
@@ -177,6 +178,43 @@ final class Absorber {
 				sprintf( 'The notices could not be rendered: %s', $thrown->getMessage() ),
 				'1.0.0'
 			);
+		}
+	}
+
+	/**
+	 * Rewrite the activation-error notice for a standalone this library has absorbed.
+	 *
+	 * The parameter is untyped because a filter receives whatever the filter before it returned,
+	 * and a `string` declaration would turn another plugin's sloppy return into a TypeError raised
+	 * from here.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param mixed $markup Notice markup WordPress is about to print.
+	 *
+	 * @return string
+	 */
+	public static function filter_activation_error_markup( $markup ): string {
+		$markup = is_string( $markup ) ? $markup : '';
+
+		if ( ! self::has_hook_prefix() ) {
+			return $markup;
+		}
+
+		// Guarded like render_notices, and for a sharper version of the same reason: this runs while
+		// WordPress is drawing the screen that reports a fatal, so a throw out of here would replace
+		// the error the admin came to read with one of ours. The markup goes back as it arrived and
+		// core's wording stands.
+		try {
+			return self::collaborator( Rewriter::class )->rewrite( $markup );
+		} catch ( Throwable $thrown ) {
+			_doing_it_wrong(
+				self::class . '::filter_activation_error_markup',
+				sprintf( 'The activation error notice could not be rewritten: %s', $thrown->getMessage() ),
+				'1.0.0'
+			);
+
+			return $markup;
 		}
 	}
 

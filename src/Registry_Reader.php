@@ -16,9 +16,10 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * Registration is buffered before it is stored, and the buffer is static because it has to be:
  * `Absorber::register()` is a static call a host makes at plugin-file scope, before there is a
  * container to resolve a registrar from. What has to be decided is which class that costs — and it
- * is this one, not the facade. Every pass that reads the registry (`Conflict\Detector`,
- * `Conflict\Resolver`, `Loader`) declares this object in its constructor, so nothing but `Absorber`
- * itself names `Absorber`, and the dependency between the facade and the collaborators runs one way.
+ * is this one, not the facade. Everything that reads the registry (`Conflict\Detector`,
+ * `Conflict\Resolver`, `Loader`, and `Conflict\Rewriter`) declares this
+ * object in its constructor, so nothing but `Absorber` itself names `Absorber`, and the dependency
+ * between the facade and the collaborators runs one way.
  *
  * The buffer is deliberately shared across instances. It is one process's registrations, and a second
  * reader holding a second, emptier list is the bug `Provider` binds every collaborator as a singleton
