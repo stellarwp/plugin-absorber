@@ -32,9 +32,13 @@ out of the five, so if your container is already built by then, anywhere below 5
 
 ## Rebinding a collaborator
 
-`Absorber::boot()` binds the defaults, and skips any id your container already has — so your binding
-wins whether you make it before boot or after, and nothing is resolved until `plugins_loaded`
-priority 5 in any case:
+`Absorber::boot()` binds the defaults, and skips any *interface* your container already answers for
+— so a binding against one of the ids in the table below wins whether you make it before boot or
+after. A *class* id must be bound after boot: di52 reports `has()` true for any class that exists,
+bound or not, so the provider cannot tell your binding from the container's own willingness to build
+`Notices\Store`, `Conflict\Gatekeeper` or any other concrete collaborator, and replaces it. Booting
+resolves only the two objects that do the booting; every collaborator below is built by the hook
+that needs it, when it fires:
 
 ```php
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
@@ -55,11 +59,11 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
 `is_plugin_active()` then does not report what is in the database.
 
-Rebinding `Resolver_Interface` does not put you in charge of *when* resolution may run. Both gates —
+Rebinding `Resolver_Interface` does not put you in charge of *when* resolution may run. The gates —
 [an interactive admin `GET` that carries no action, and the capability to deactivate across the
 network](conflict-handling.md#when-resolution-runs) — live in `Conflict\Gatekeeper`, which the hook
-consults rather than the resolver, so an implementation that never thought about either is still
-safe. Everything the resolver *does* — which policy branch, what the notice says,
+consults before it resolves the resolver at all, so an implementation that never thought about
+either is still safe. Everything the resolver *does* — which policy branch, what the notice says,
 where the user lands — is yours.
 
 `set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
@@ -67,12 +71,18 @@ the configuration calls: it may come before or after your `Absorber::register()`
 comes before boot. Registering buffers the sub-plugin and resolves nothing, so nothing is decided
 until the first read.
 
-A binding that does not implement the interface it is bound to throws `Config_Exception` when it is
-resolved, rather than being cached and failing later somewhere less obvious. So does a binding whose
-factory throws — with the original failure kept as the previous exception.
+The accessors — `Absorber::registrar()`, `notices()` and `resolver()` — check what your container
+hands back and throw a `Config_Exception` naming the interface and the class that failed it, because a
+binding that does not implement its interface would otherwise be a `TypeError` blaming this library
+for your typo, raised inside `plugins_loaded` where nobody is looking. Whatever your container
+raises for a binding it cannot build at all comes through unwrapped: that one is already yours, and
+already says so. The one narrowing anywhere is `Absorber::all()`, which drops anything a rebound
+registrar returns that is not a `Sub_Plugin` rather than letting it fatal inside `plugins_loaded`.
 
-The container is **not** used to wire hooks. Those are closures that resolve when they fire, so
-registering them instantiates nothing and a request that triggers none builds none.
+The container does not decide when anything runs. Each hook resolves its collaborator inside the
+callback, so wiring instantiates nothing and a request that reaches none of them builds none of
+them. The two admin hooks are named `[ Absorber::class, … ]` callbacks precisely so you can
+`remove_filter()` them; the two `plugins_loaded` steps are closures over the container.
 
 ## Sub-plugin keys
 
@@ -84,7 +94,7 @@ registering them instantiates nothing and a request that triggers none builds no
 | `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename. Used for `is_plugin_active()` and `deactivate_plugins()`. Omit when there is no standalone. **Detection only.** |
 | `enabled` | `bool\|callable` | | `true` by default. A `callable( Sub_Plugin ): bool` is re-evaluated on every call, not cached. |
 | `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. |
-| `conflict_notice_message` | `callable` | | Shown on auto-deactivation and on a re-activation attempt. Empty by default. |
+| `conflict_notice_message` | `callable` | | Used in all three places a conflict is reported — the merge notice, the still-active notice, and the rewritten activation-error screen. Each falls back to its own generic sentence naming the slug. |
 | `dependency_notice_message` | `callable` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
 | `activation_callback` | `callable( Sub_Plugin )` | | Runs **once, ever**, per slug, after a successful load. Make it idempotent. |
 | `dependency_check` | `callable( Sub_Plugin ): bool` | | Skips the load and queues a notice when it returns false. |
@@ -100,11 +110,11 @@ at include time.
 Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
 activation record, so a second registration under the same slug is refused with a
 `Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Registrations are buffered and nothing reads them until `plugins_loaded` — the conflict pass at
-priority 5 on an admin page view, the load pass at priority 6 on everything else — so that is where
-the collision surfaces, not at the second `register()` call and not at `boot()`. Whichever pass
-reads first reports it with `_doing_it_wrong()`, and that request resolves no conflict and loads no
-sub-plugin at all, rather than throwing out of a core hook. A config array the library cannot use is still rejected on the spot.
+load. Registrations are buffered and handed to the registrar at the first read — the conflict pass
+at `plugins_loaded` priority 5, or the load pass at 6 — so that collision surfaces there rather than
+from the second `register()` call, reported with `_doing_it_wrong()` instead of thrown out of a core
+hook; a config array the library cannot use is still rejected on the spot, in the call you can see
+in your own stack trace.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
 
@@ -200,8 +210,50 @@ nothing to wait for.
 `dependency_check`, `activation_callback` and `enabled` have nothing a string could collide with, so
 they accept every callable form, a plain function name included.
 
-Every key rejects a shape it cannot use at registration rather than at read time — including a
-`[ class, method ]` pair naming a method that does not exist.
+Every typed key rejects a shape it cannot use at registration rather than at read time — including a
+`[ class, method ]` pair naming a method that does not exist. `enabled` is the exception: it is read
+as a boolean if it is not callable, so an array or an object there passes registration and then
+evaluates as enabled. Give it a `bool` or a `callable`, and nothing else.
 
 The [filters](filters.md) are the other way in, and they run last — after the configured value and
 any fallback, so they see the default text too.
+
+## Complete example
+
+```php
+use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Conflict_Policy;
+use Nexcess\PluginAbsorber\Absorber;
+use Nexcess\PluginAbsorber\Sub_Plugin;
+
+add_action( 'plugins_loaded', function () {
+    Config::set_hook_prefix( 'give' );
+    Config::set_container( give()->container );
+
+    Absorber::register( [
+        'slug'                       => 'give-recurring',
+        'bundled_plugin_file'        => GIVE_PLUGIN_DIR . 'sub-plugins/give-recurring/give-recurring.php',
+        'plugin_loaded_constant'     => 'GIVE_RECURRING_VERSION',
+        'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+        'enabled'                    => static fn( Sub_Plugin $sub_plugin ) => give_addon_is_licensed( $sub_plugin->get_slug() ),
+        'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+        'conflict_notice_message'    => static fn() => __( 'Recurring Donations ships with Give now.', 'give' ),
+        'activation_callback'        => static function ( Sub_Plugin $sub_plugin ) {
+            \Give\Recurring\Install::create_tables();
+        },
+    ] );
+
+    Absorber::register( [
+        'slug'                       => 'give-stripe',
+        'bundled_plugin_file'        => GIVE_PLUGIN_DIR . 'sub-plugins/give-stripe/give-stripe.php',
+        'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
+        'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
+        // The standalone is still ahead of the bundled copy, so let it win for now.
+        'conflict_policy'            => Conflict_Policy::DEFER,
+        'dependency_check'           => static fn() => function_exists( 'curl_init' ),
+        'dependency_notice_message'  => static fn() => __( 'Stripe payments need the cURL extension.', 'give' ),
+    ] );
+
+    Absorber::boot();
+}, 0 );
+```

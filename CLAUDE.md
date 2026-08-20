@@ -17,7 +17,19 @@ Safety rests on two independent, single-purpose config keys per sub-plugin:
   deactivate it.
 
 Deliberately out of scope: version negotiation, any opinion on toggle UI or storage, and any
-production dependency on another StellarWP library.
+production dependency on another StellarWP library. Version negotiation is the one that gets
+re-litigated, so: it existed in the prior art only because of a single LearnDash ProPanel quirk —
+v2.x was absorbed while a completely different plugin was rebranded ProPanel v3.0 — and a callable
+`conflict_policy` already covers that as config. Do not reshape the architecture around it.
+
+**Prior art.** Two ad-hoc implementations this is distilled from. LearnDash `sfwd-lms` copied each
+addon into `includes/<addon>/` with a per-addon loader
+(`src/Core/Modules/Course_Grid/Legacy/Loader.php` and siblings); the three modules diverged in class
+shape, in guard-constant type, and in whether version negotiation existed at all — the exact
+inconsistency this library removes. `kadence-shop-kit`'s `inc/Common/Features/` is the more polished
+config-array Strategy pattern, but its Provider → Repository → Resolver → Strategy indirection is
+heavier than this needs and it is coupled to Kadence's option store and DI52 container; here one
+load path handles every sub-plugin. The `wp_admin_notice_markup` rewrite follows LearnDash 4.21.4.
 
 ## Commands
 
@@ -77,7 +89,9 @@ seams a host may rebind:
 The rest — `Boot\Scheduler`, `Loader`, `Registry_Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
 `Conflict\Redirector`, `Conflict\Rewriter`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` —
 are bound as concrete classes. A host that wants one of them different rebinds the class name; there
-is no interface because nothing in the library dispatches on one.
+is no interface because nothing in the library dispatches on one. `Provider` also binds the container
+under `ContainerInterface::class`, first and before anything else, so that a container which builds
+unbound classes reflectively can still satisfy the collaborators that take one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
@@ -97,15 +111,14 @@ that never checked.
 
 **The container is required.** `Config::get_container()` throws `Config_Exception` when unset, which
 is what `uplink`, `telemetry`, `schema` and `harbor` all do; `has_container()` stays as the probe.
-Optional was the outlier — of nineteen vendored StellarWP packages exactly one falls back to `new`,
-and we had modelled ourselves on it. One requirement is what that outlier costs. "Container binding
-when bound, `new $default_class` otherwise" forces every default class to be constructible with no
-arguments, which forces `?Peer $peer = null` constructor parameters, which forces a `protected`
-accessor per peer falling back to a static. `Container\Resolution` was the class holding that chain
-together, and the chain is deleted with it. The hosts qualify: `learndash-core` ships a container
-implementing this very contract, exposes it as `App::container()`, and already hands it to Telemetry,
-Validation and Harbor. The plugins with no container are the add-ons being absorbed, not the hosts
-doing the absorbing.
+Optional was the outlier — of nineteen vendored StellarWP packages exactly one falls back to `new`.
+Do not reintroduce a container-less path: "container binding when bound, `new $default_class`
+otherwise" forces every default class to be constructible with no arguments, which forces
+`?Peer $peer = null` constructor parameters, which forces a `protected` accessor per peer falling
+back to a static — a service locator wearing a constructor signature, arrived at one reasonable step
+at a time. The hosts qualify: `learndash-core` ships a container implementing this very contract,
+exposes it as `App::container()`, and already hands it to Telemetry, Validation and Harbor. The
+plugins with no container are the add-ons being absorbed, not the hosts doing the absorbing.
 
 **The container is typed as `container-contract`'s `ContainerInterface`, not
 `stellarwp/foundation-container`'s.** Not a rejection of Foundation — the two are the same target.
@@ -169,8 +182,8 @@ the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-Every behaviour described above is built; nothing in `src/` is still owed. What is left in the plan
-is the end-to-end suite and the release pass.
+The library is feature-complete for 1.0.0. Every behaviour described above is built, and the suite
+that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 
 | Path | What |
 |---|---|
@@ -195,8 +208,8 @@ is the end-to-end suite and the release pass.
 ```
 Config::set_hook_prefix( 'give' );
 Config::set_container( $container );          // required
-Absorber::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
-Absorber::boot();                               // idempotent
+Absorber::register( [ …config… ] );           // once per sub-plugin; an unusable config throws here
+Absorber::boot();                             // idempotent
     → Provider::register()                    // every binding
     → Boot\Scheduler                          // every hook, as a closure over the container
 
@@ -213,8 +226,15 @@ below priority 5 wires cleanly. It is priority 0 rather than plugin-file scope b
 priority 0 — anything that grabbed the container earlier holds an orphan whose bindings are
 discarded. Its own block rather than a service provider, for the same reason: a provider runs
 whenever the host's bootstrap happens to run it. This is also why `Absorber::register()` buffers and
-resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
-register into the throwaway.
+resolves nothing — registration at plugin-file scope is a shape a host is entitled to use, and it
+would otherwise register into the throwaway.
+
+**A duplicate slug is `Registrar::register()`'s exception, not `Absorber::register()`'s.** What
+`Absorber::register()` throws is config validation, from the `Sub_Plugin` constructor, in the call
+the host can see in its own stack trace. The buffer reaches the registrar at the first read —
+`plugins_loaded` priority 5 on a request that passes the gatekeeper, priority 6 otherwise — so the
+collision surfaces from inside a core action. Both are `Config_Exception`; only one of them can name
+the line the host wrote.
 
 **The too-late barrier measures against the first step in the sequence, not the last.**
 `Boot\Scheduler` compares the priority `plugins_loaded` is already dispatching against the lowest
@@ -233,11 +253,15 @@ standalone that survives the conflict defines the guard constant as it loads and
 see that.
 
 `load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
-loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
-callback (only after a *successful* require).
+loaded → dependencies met → file is a readable file → `should_load` filter → `require_once` →
+activation callback (only after a *successful* require). The file gate is `is_file() &&
+is_readable()`, not `file_exists()`: that last is true for a directory and for a file with no read
+permission, and `require_once` fatals on both. Only the dependency gate queues a notice; an
+unreadable file is a broken build in the host plugin and reports through `_doing_it_wrong()`.
 
-The activation callback is the last of those and runs through `Activator`, which `Loader` takes
-as a constructor argument like the writer and the registry reader. Last, because a bundled plugin is included rather
+The activation callback is the last of those and runs through `Activator_Interface`, which `Loader`
+takes as a constructor argument like the writer and the registry reader. Last, because a bundled
+plugin is included rather
 than activated: `register_activation_hook()` never fires for it, so the callback stands in for
 whatever that hook would have done, and it has to run with the plugin's own code already in memory.
 Only after a require that happened, because creating tables and seeding options for a sub-plugin
@@ -249,7 +273,7 @@ rather than marked done.
 The guard constant is checked **before** the dependency check, not after. It is one `defined()`, it
 carries the whole re-declaration guarantee, and it is the only gate meaning "this plugin is already
 running" — warning that requirements are unmet for a plugin the admin can watch working would send
-them after the wrong problem. `docs/filters.md` and the spec agree.
+them after the wrong problem. `docs/filters.md` says the same.
 
 `Registry_Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
 host may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
@@ -308,12 +332,13 @@ discards the work behind `update.php?action=upgrade-plugin` exactly as it would 
 `plugins.php?action=activate` is the request `plugin_sandbox_scrape()` replays, so exiting there
 makes core report the plugin being activated as fatal. Any action arg at all, never a list of the
 dangerous ones: half of wp-admin takes an `action`, plugins add their own, and a known-safe list
-would have to stay right about every one of them forever. `user_may_resolve()` asks for
-`manage_network_plugins` on multisite and `activate_plugins` otherwise — `plugins_loaded` runs
-before `auth_redirect()`, so an unauthenticated GET of an admin URL gets that far, and the
-capability has to match the reach of the act: `deactivate_plugins()` left at the default
-`$network_wide` takes the standalone out of the *network's* active plugins, which a single site's
-administrator holds no authority to do.
+would have to stay right about every one of them forever. `Traits\Guards_Hook_Prefix` is the last of
+the three, because it is the only one that reports to the developer and a missing prefix logged from
+every front-end request would bury it. `user_may_resolve()` asks for `manage_network_plugins` on
+multisite and `activate_plugins` otherwise — `plugins_loaded` runs before `auth_redirect()`, so an
+unauthenticated GET of an admin URL gets that far, and the capability has to match the reach of the
+act: `deactivate_plugins()` left at the default `$network_wide` takes the standalone out of the
+*network's* active plugins, which a single site's administrator holds no authority to do.
 
 `Boot\Scheduler::sequence()` asks the two halves either side of `Conflict\Detector::has_conflict()`,
 and that order is the point. `current_user_can()` resolves and caches the current user, so asking it
@@ -364,8 +389,12 @@ runnable inline as well as wirable.
 
 ### Keys
 
-- Filters: `{$hook_prefix}/plugin_absorber/should_load`, `{$hook_prefix}/plugin_absorber/conflict_policy`
-- Options: `{$option_prefix}_plugin_absorber_activations`, `{$option_prefix}_plugin_absorber_notices`
+- Filters: `{$hook_prefix}/plugin_absorber/should_load` (`Loader`),
+  `{$hook_prefix}/plugin_absorber/conflict_policy`,
+  `{$hook_prefix}/plugin_absorber/conflict_notice_message` and
+  `{$hook_prefix}/plugin_absorber/dependency_notice_message` (all three `Sub_Plugin`)
+- Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
+  `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 
 Both are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
 the segment between the host's prefix and the key's own name. The two differ in one respect:
@@ -381,8 +410,16 @@ so it is a network option on multisite — matching `deactivate_plugins()`, whic
 ## Conventions
 
 **Namespace is `Nexcess\PluginAbsorber\`, not `StellarWP\`.** The Composer package is
-`stellarwp/plugin-absorber`; the two deliberately do not match. Tests are `…\Tests\`, support
-classes `…\Tests\Support\`.
+`stellarwp/plugin-absorber`; the two deliberately do not match, and Composer does not require them
+to. Packagist protects a vendor prefix once anyone publishes under it, and `nexcess` is already held
+by an unrelated package outside our control, while `stellarwp` is ours across 38 packages — so the
+package ships under the vendor we hold and the namespace stays what the code is. Tests are
+`…\Tests\`, support classes `…\Tests\Support\`.
+
+**The name is `plugin-absorber`, not `plugin-loader`.** In WordPress, "plugin loader" is established
+jargon for mu-plugin autoloading — Packagist's top results for it are all that, and
+`plugin-absorber` collides with nothing. `Sub_Plugin` stays the value-object name regardless:
+"sub-plugin" names the registered thing, "absorb" names what the library does to it.
 
 **Floors:** PHP `>=7.4`, WordPress 6.4 (for the `wp_admin_notice_markup` filter). WordPress is not a
 Composer dependency, so its floor lives in the README only.
@@ -417,19 +454,28 @@ Tabs for PHP, 4 spaces for yml/yaml/json/md (see `.editorconfig`).
 ### No test-only seams in `src/`
 
 Production classes do not get a `reset()` for the suite's benefit — that becomes API the library
-supports forever. Tests clear static state by reflection through a helper under `tests/_support/`.
-`Config` is served by `Tests\Support\Config_State::reset()`; `Registrar` and `Absorber` get the same
-treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` means the support helper.
+supports forever. Tests clear static state by reflection through a helper under `tests/_support/`:
+`Tests\Support\Config_State::reset()` for `Config`, and `Tests\Support\Absorber_State::reset()` for
+`Absorber` plus the registration buffer on `Registry_Reader`, which also unwires the hooks `boot()`
+added. Any older sketch showing `Config::reset()` or `Absorber::reset()` means the support helper.
+`Registrar` needs no such helper — its state is instance state behind a container binding, so a
+fresh container *is* the reset.
 
 ### Testing rules
 
-`tests/unit/` mirrors `src/`. Full detail lives in `tests/README.md`; the rules that bite hardest:
+`tests/unit/` mirrors `src/`, with one exception: `tests/unit/Scenario/` is named for what its files
+describe rather than for a class, and drives the library end to end through the hooks a host fires,
+against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent of `LoadTest.php`,
+`ConflictTest.php` and `HostTest.php`. Full detail — every scenario, with a diagram — lives in
+`tests/README.md`; the rules that bite hardest:
 
 - **Never mock `exit()`.** `UopzFunctions::preventExit()` exists — do not use it. It lets a test run
   past the point where production would have stopped, so a test that should fail reports as passing.
   Instead stub the call immediately before `exit` (e.g. `wp_safe_redirect`), throw
   `Tests\Support\TestException` from it, catch it, and assert both a `$halted` flag *and* the
-  message. Dropping the flag turns "never redirected at all" into a silent pass.
+  message. Dropping the flag turns "never redirected at all" into a silent pass. That shape is
+  factored into `Traits\WithHaltedRedirects` — use `$this->capture_redirect( … )` rather than
+  hand-rolling it, so the flag cannot be the thing a new test forgets.
 - **A stub closure has no class scope.** uopz executes the replacement outside the test object, so
   `$this` and `self::` are fatal inside it. Bind a reference (`$x = &$this->prop;`), resolve
   constants to locals, `use` both, and mark the closure `static`.
@@ -444,11 +490,16 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
 - **Every test that touches a collaborator sets a container**, since there is no longer a fallback to
   fall back to — and it must be `Tests\Support\Test_Container`. `lucatume\DI52\Container` implements
   PSR-11's `ContainerInterface`, not StellarWP's, so passing it to `Config::set_container()` is a
-  `TypeError`.
+  `TypeError`. `Traits\WithContainer` is the one-line form: `set_up_container()`, `resolve()`,
+  `tear_down_container()`.
 - **Each load-path test writes its own bundled fixture file.** `require_once` caches by resolved
   path per PHP process, so a shared fixture makes every later test silently pass.
-- **Shared fixtures go in a trait**, not a per-test helper: `tests/_support/Traits/WithSubPlugins.php`
-  builds `Sub_Plugin` objects for the whole suite.
+- **Shared fixtures go in a trait**, not a per-test helper. `Traits\WithSubPlugins` builds
+  `Sub_Plugin` objects for the whole suite; `Traits\WithBundledPlugins` owns the fixture files and
+  their guard constants; `Traits\WithUsers` supplies a user who can activate plugins, and
+  `Traits\WithIncorrectUsage` asserts on `_doing_it_wrong()`. The spies — `Spy_Registrar`,
+  `Spy_Writer`, `Spy_Presenter`, `Spy_Resolver`, `Spy_Gatekeeper`, `Spy_Rewriter`, `Spy_Activator` —
+  are what gets bound into the test container in place of a real collaborator.
 - **Data providers are generators** returning `Generator<string,array{…}>` with named cases.
 - Tasks follow RED→GREEN: the failing test lands before the implementation.
 
@@ -485,7 +536,7 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
   one of these can only have been produced too early, and nothing in the value distinguishes it from
   one that was not. Refusing both costs the host a `static fn()` and fails the first time the code
   runs, where an eager `__()` is the `_load_textdomain_just_in_time` notice in someone else's log.
-  This is a deliberate departure from the spec's `string | callable`.
+  `string | callable` is the shape this was drafted with and it is deliberately not what shipped.
 - **`conflict_policy` takes either**, because a policy is usually a `Conflict_Policy` constant with
   nothing to defer, and is never text a user reads. `standalone_plugin_basename` is string-only: it
   names a file already on disk.
@@ -507,6 +558,10 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
   the latter is a common third-party shim.
 - **Strauss must not rewrite `plugin_loaded_constant` values.** They are shared runtime constants;
   prefixing them defeats the entire mechanism.
+- **`enabled` is the one key with no type behind it.** It is read as a boolean when it is not
+  callable, so an array or an object there evaluates as enabled. That is documented rather than
+  validated: adding a check is fine, but do not describe the other keys' registration-time rejection
+  as covering this one.
 - **Never write a literal guard-constant *name* in `src/`.** Hosts run Strauss with a
   `constant_prefix` — `learndash-core` uses `LEARNDASH_`, with an empty exclude list — so a literal
   `'GIVE_RECURRING_VERSION'` in our source is rewritten at build time and the `defined()` check then
@@ -527,15 +582,16 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
   stays bare while nothing in its folder does the same job (`Conflict\Resolver`, not
   `Conflict\Standalone_Resolver`, even once `Gatekeeper` and `Redirector` sit beside it) and takes a
   qualifier only when a second class of the same kind lands — `Scheduler` beside a later
-  `Retry_Scheduler`, never a qualifier bought in advance. An abstract
-  `-ion`/`-ance` noun is a directory name over agent nouns — `Activation/` holding `Activator` — and
-  never a class name; a census of 3,343 classes across eight Nexcess/StellarWP codebases found zero.
+  `Retry_Scheduler`, never a qualifier bought in advance. An abstract `-ion`/`-ance` noun may name a
+  directory over agent nouns, the way `Boot/` holds `Scheduler`, but never a class: a census of 3,343
+  classes across eight Nexcess/StellarWP codebases found zero. `Activator` sits at the root rather
+  than under an `Activation/` of its own, because one class is not a folder.
 
 ## Branch and PR workflow
 
 Branching is **stacked**: each branch cuts from the previous one and merges to `main` in order.
-Branch names are `NN-topic` and map 1:1 to task numbers in the plan. Never open PR N+1 before PR N's
-branch exists. `main` is releasable after every merge.
+Branch names are `NN-topic`. Never open PR N+1 before PR N's branch exists. `main` is releasable
+after every merge.
 
 - **PR size cap:** ≤10 files, tests and test infrastructure excluded. No logic-bearing PR exceeds 4
   source files.
@@ -566,26 +622,31 @@ branch exists. `main` is releasable after every merge.
 - New dev-only files belong in `.gitattributes` as `export-ignore` so they stay out of consumer
   installs.
 
-## Documentation precedence
+## Known, and deliberately not fixed in 1.0.0
 
-`docs/superpowers/specs/2026-07-31-plugin-absorber-design.md` is authoritative. Where it and
-`engineering-plan.md` disagree, **the spec wins** — the engineering plan is a superseded first draft
-still carrying the old `stellarwp/sub-plugin-loader` package name, the `Nexcess\SubPluginLoader\`
-namespace, a `Config::set_version()` that was removed, and an `ob_start()` approach replaced by the
-`wp_admin_notice_markup` filter. `docs/superpowers/plans/2026-07-31-plugin-absorber.md` holds the
-task-by-task breakdown, and
-`docs/superpowers/plans/2026-08-12-container-required-rework.md` supersedes it wherever the two
-disagree about the container, the collaborator seams or the class names — that plan is what branches
-11 through 16 now implement, and the older plan still describes the optional-container design it
-replaced.
+**`Activator::maybe_run()` can double-run under concurrency.** It reads the option, runs the
+callback, then writes. Two simultaneous first requests both see the flag unset and both invoke the
+callback — which may be a `create_tables()`. Claiming the slot with `add_option()` before invoking
+would close the window. The ordering is not the bug and must not be "fixed" by recording first: the
+callback runs before the record so that a fatal mid-callback retries on the next request instead of
+freezing a half-finished migration in place, permanently and invisibly.
 
-Once a task's PR merges to `main`, delete that task's section from the plan in the next branch that
-touches the file; git history keeps it. A shipped task's plan describes code that already exists in
-`src/`, so all it can still do is make an agent read past it to reach what is unbuilt — and since
-the plan is edited on every branch of a stacked series, an oversized one is a standing
-merge-conflict surface. Never renumber what survives: the numbers map 1:1 to branch names. The spec
-is the durable document; the plan is scaffolding and should shrink toward empty as the series lands.
+## Documentation
+
+**This file is the durable document.** The design spec, the task-by-task implementation plan, the
+container-required rework plan and the superseded `engineering-plan.md` first draft were all deleted
+once the last PR of the 1.0.0 series was written. Every decision they still carried is restated
+above; git history has them in full if a rationale needs reading back.
+
+Do not reintroduce them, and do not write a new plan file for work that is already built. A plan
+section describing code that exists in `src/` cannot do anything but make the next reader scroll past
+it, and a plan edited on every branch of a stacked series is a standing merge-conflict surface. The
+first draft was worse than useless by the end: it still named the package `stellarwp/sub-plugin-loader`
+under a `Nexcess\SubPluginLoader\` namespace, with a `Config::set_version()` that was removed and an
+`ob_start()` approach the `wp_admin_notice_markup` filter replaced.
 
 Human-facing docs are `README.md` plus `docs/installing.md`, `docs/configuration.md`,
 `docs/conflict-handling.md`, `docs/filters.md`, and `docs/notices.md`. Keep them short and keep
-rationale here or in code comments — do not grow the README back.
+rationale here or in code comments — do not grow the README back. `docs/` is `export-ignore`d and
+`README.md` is not, so a link from the README into `docs/` must be an absolute repository URL; links
+*between* files inside `docs/` stay relative.
