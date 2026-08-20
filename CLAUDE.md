@@ -324,6 +324,19 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
 
 ## Invariants — do not "simplify" these away
 
+- **Nothing reached from a hook is allowed to throw.** Configuration still throws: `Absorber::register()`
+  rejects a bad config array on the spot, at a call in the developer's own stack trace, before
+  anything is hooked. Past that point this library is code on somebody's live site, and a white screen
+  is never the better answer — so every entry point it puts on a hook catches `Throwable`, reports
+  with `_doing_it_wrong()` and abandons that step alone: the `plugins_loaded` step in
+  `Boot\Scheduler`, and `Absorber::render_notices()` on `all_admin_notices`. `Loader::load_all()`
+  catches *per sub-plugin* as well, because one sub-plugin's throw
+  must not take the ones behind it in the registration order with it. Everything past those catches is
+  somebody else's code — `enabled`, `dependency_check`, `activation_callback`, `conflict_policy`, the
+  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, and the
+  standalone's own deactivation hook. The one failure none of this can catch is a re-declaration
+  fatal, which PHP does not raise as a `Throwable`; the guard constant, checked before the require, is
+  what prevents that one.
 - **The guard constant and the standalone basename are two separate keys.** No constant does double
   duty as both a load guard and a path resolver.
 - **`get_hook_name()` and `get_option_name()` do not share a normalisation.** Folding case into the

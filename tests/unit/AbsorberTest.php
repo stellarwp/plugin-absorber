@@ -393,6 +393,29 @@ class AbsorberTest extends WPTestCase {
 		$this->assertSame( 1, $notices->render_calls );
 	}
 
+	/**
+	 * The notice messages are host callables and the queue itself is a rebindable seam, so rendering
+	 * runs host code — on `all_admin_notices`, which every admin screen fires. A throw out of it
+	 * white-screens wp-admin, which is exactly where a site owner would go to undo whatever caused
+	 * it, so it is reported and the render is abandoned instead.
+	 */
+	public function test_render_notices_cannot_end_the_admin_request(): void {
+		$this->expect_incorrect_usage();
+
+		$container = new Test_Container();
+		$container->singleton(
+			Queue_Interface::class,
+			static function (): Queue_Interface {
+				throw new RuntimeException( 'the notice option held something unreadable' );
+			}
+		);
+		$this->set_up_container( $container );
+
+		Absorber::render_notices();
+
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
 	public function test_render_notices_does_nothing_without_a_hook_prefix(): void {
 		$container = $this->set_up_container();
 
