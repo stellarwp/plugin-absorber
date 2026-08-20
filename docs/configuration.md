@@ -19,6 +19,12 @@ hands to Telemetry, Uplink or Harbor. It is required: `Config::get_container()` 
 `Config_Exception` when none is set, and `Config::has_container()` is the probe. To replace one
 of the library's own pieces, see [Extending](extending.md).
 
+`Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )` is optional and matters only on
+multisite. It lets the library compare your plugin's activation scope against a standalone's, so it
+declines to deactivate a network-active standalone when your plugin is not itself network-activated
+— a deactivation that would otherwise pull the standalone from the network's other sites, where your
+bundled copy never loads. Left unset, that guard stays off and deactivation behaves as it always has.
+
 Both calls belong at `plugins_loaded` priority 0, in the block that owns your container rather
 than in a service provider. Priority matters twice, for unrelated reasons:
 

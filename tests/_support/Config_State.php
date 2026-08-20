@@ -30,8 +30,9 @@ class Config_State {
 	 * @var array<string,mixed>
 	 */
 	protected const DEFAULTS = [
-		'hook_prefix' => '',
-		'container'   => null,
+		'hook_prefix'          => '',
+		'container'            => null,
+		'host_plugin_basename' => '',
 	];
 
 	/**
