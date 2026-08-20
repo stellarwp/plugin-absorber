@@ -261,21 +261,6 @@ Inventory figures below are measured, not estimated: 176 test methods exist acro
 under the mandatory container, 26 under the non-nullable constructors. PHPStan runs over `tests/` at
 level 9, so most breakage surfaces from `composer test:analysis` without standing up WordPress.
 
-### Task 11 — `11-loader-load-path`
-
-- [ ] `Config::get_container()` throws; `has_container()` kept (it has no `src/` callers, but it is the probe a host uses).
-- [ ] Delete `src/Container/Resolution.php` and `src/Container/`. Its only `Config::get_container()` call site goes with it.
-- [ ] Add `Contracts\Provider_Interface` and `Provider`; bind each default only when `! $container->has( $id )`.
-- [ ] Add `Boot\Scheduler` (`LOAD_PRIORITY`, `SEQUENCE`, `wiring_window_has_closed()`, inline fallback, hook wiring as closures).
-- [ ] Add `Load\Runner` (`load_all()`, the gate chain, `has_hook_prefix()`).
-- [ ] Split `Plugin_State` → `Plugin_Deactivator` + `Plugin_Checker` + `Traits\Loads_Plugin_Functions`; split the interface. **Note:** these files landed on branch 10, so the split appears in PR 11's diff.
-- [ ] `Notices\Queue::__construct( Store $store, Renderer $renderer )` — required.
-- [ ] Slim `Loader` to accessors, `register()`, `all()`, `flush()`, `boot()`, `render_notices()`.
-- [ ] Tests: delete `Resolution_State`, drop its call from `Loader_State::reset():57`, add a `WithContainer` trait, move load/boot coverage into `Load\RunnerTest` and `Boot\SchedulerTest`, add `ProviderTest`, add `WithHaltedRedirects`.
-- [ ] Delete, do not fix: `LoaderResolveTest::test_it_falls_back_to_the_default_registrar_without_a_container`, `::test_it_ignores_a_container_with_no_binding`, `PluginStateTest::test_it_constructs_without_arguments`.
-- [ ] `Config_State::reset()` still resets the container to `null`; every test class sets one in `setUp()` instead.
-- [ ] Docs on this branch: `CLAUDE.md`, `README.md:26`, `docs/configuration.md:17-18` and its "Rebinding a collaborator" section.
-
 ### Task 12 — `12-conflict-resolver`
 
 - [ ] `Conflict\Destination` → `Conflict\Redirector`; bind it in `Provider` (it stops being a plain `new`).
@@ -287,7 +272,7 @@ level 9, so most breakage surfaces from `composer test:analysis` without standin
 
 ### Task 13 — `13-activation`
 
-- [ ] `Activation` → `Activator`, `Activation_Interface` → `Activator_Interface`; constructor injection; bind in `Provider`.
+- [x] `Activation` → `Activator`, `Activation_Interface` → `Activator_Interface`; constructor injection; bind in `Provider`.
 
 ### Task 14 — `14-activation-error-rewrite`
 

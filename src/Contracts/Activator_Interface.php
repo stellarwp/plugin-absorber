@@ -1,0 +1,35 @@
+<?php
+/**
+ * @package Nexcess\PluginAbsorber
+ */
+
+declare( strict_types=1 );
+
+namespace Nexcess\PluginAbsorber\Contracts;
+
+use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Sub_Plugin;
+
+/**
+ * Runs a sub-plugin's activation routine once, ever.
+ *
+ * A bundled plugin is `require_once`d rather than activated, so `register_activation_hook()` never
+ * fires for it and whatever that hook would have done — creating a table, seeding options — never
+ * happens. Bind a replacement to change how "once, ever" is recorded.
+ *
+ * @since 1.0.0
+ */
+interface Activator_Interface {
+	/**
+	 * Run the sub-plugin's activation callback unless it has already run for this slug.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param Sub_Plugin $sub_plugin Sub-plugin that has just been loaded.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return void
+	 */
+	public function maybe_run( Sub_Plugin $sub_plugin ): void;
+}

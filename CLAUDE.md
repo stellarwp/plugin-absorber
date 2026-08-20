@@ -143,7 +143,8 @@ the plugin to ask about, and the collaborator does the asking.
 
 ### What exists today
 
-`Activator` is not built yet. Currently:
+The re-activation rewrite — `Absorber::filter_activation_error_markup()` on `wp_admin_notice_markup` —
+is not built yet. Currently:
 
 | Path | What |
 |---|---|
@@ -157,10 +158,11 @@ the plugin to ask about, and the collaborator does the asking.
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
 | `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
 | `src/Registry_Reader.php` | The registration buffer, drained into the registrar on the way past; the object every pass reads the registry through. |
+| `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Queue` (what a notice says, who may consume it), `Store` (keeps it), `Renderer` (draws it), `Contracts\Queue_Interface`. |
-| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Config_Exception`. |
+| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
 
@@ -207,6 +209,16 @@ see that.
 `load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
 loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
 callback (only after a *successful* require).
+
+The activation callback is the last of those and runs through `Activator`, which `Loader` takes
+as a constructor argument like the notice queue and the registry reader. Last, because a bundled plugin is included rather
+than activated: `register_activation_hook()` never fires for it, so the callback stands in for
+whatever that hook would have done, and it has to run with the plugin's own code already in memory.
+Only after a require that happened, because creating tables and seeding options for a sub-plugin
+whose code is *not* loaded is worse than not creating them — and the once-ever record would then
+stand the callback down for good, the first time the sub-plugin really did load. The record is
+written after the callback returns, never before, so a callback that throws is retried next request
+rather than marked done.
 
 The guard constant is checked **before** the dependency check, not after. It is one `defined()`, it
 carries the whole re-declaration guarantee, and it is the only gate meaning "this plugin is already

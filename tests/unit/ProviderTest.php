@@ -15,6 +15,8 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Activator;
+use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
@@ -30,6 +32,7 @@ use Nexcess\PluginAbsorber\Provider;
 use Nexcess\PluginAbsorber\Registrar;
 use Nexcess\PluginAbsorber\Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Activator;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Resolver;
@@ -87,6 +90,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the notice renderer'   => [ Renderer::class, Renderer::class ];
 		yield 'the plugin checker'    => [ Plugin_Checker_Interface::class, Plugin_Checker::class ];
 		yield 'the deactivator'       => [ Plugin_Deactivator_Interface::class, Plugin_Deactivator::class ];
+		yield 'the activator'         => [ Activator_Interface::class, Activator::class ];
 		yield 'the conflict resolver' => [ Resolver_Interface::class, Resolver::class ];
 		yield 'the conflict detector' => [ Detector::class, Detector::class ];
 		yield 'the redirector'        => [ Redirector::class, Redirector::class ];
@@ -201,6 +205,10 @@ class ProviderTest extends WPTestCase {
 		yield 'the registrar'         => [ Registrar_Interface::class, new Spy_Registrar() ];
 		yield 'the notice queue'      => [ Queue_Interface::class, new Spy_Queue() ];
 		yield 'the conflict resolver' => [ Resolver_Interface::class, new Spy_Resolver() ];
+
+		// "Once, ever" is recorded in an option here, which is one opinion among several — a host
+		// that tracks it in its own migration table has to be able to say so.
+		yield 'the activator'         => [ Activator_Interface::class, new Spy_Activator() ];
 	}
 
 	/**

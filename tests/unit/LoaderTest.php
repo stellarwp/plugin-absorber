@@ -11,12 +11,14 @@ use Codeception\TestCase\WPTestCase;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
+use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Queue_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
+use Nexcess\PluginAbsorber\Tests\Support\Spy_Activator;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Queue;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
@@ -25,6 +27,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithBundledPlugins;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 use RuntimeException;
 
 /**
@@ -42,6 +45,7 @@ class LoaderTest extends WPTestCase {
 	use WithContainer;
 	use WithIncorrectUsage;
 	use WithNoticeQueue;
+	use WithSubPlugins;
 
 	/**
 	 * Guard constants a test defined through uopz.
@@ -80,6 +84,7 @@ class LoaderTest extends WPTestCase {
 		Config::set_hook_prefix( 'give' );
 		$this->set_up_container();
 		$this->clear_notices();
+		$this->clear_activations();
 		$this->reset_bundled_plugin_loads();
 		$this->should_load_calls = [];
 	}
@@ -98,6 +103,7 @@ class LoaderTest extends WPTestCase {
 		$this->stop_expecting_incorrect_usage();
 		$this->stop_recording_incorrect_usage_messages();
 		$this->clear_notices();
+		$this->clear_activations();
 		Absorber_State::reset();
 		Config_State::reset();
 		$this->tear_down_container();
@@ -134,7 +140,8 @@ class LoaderTest extends WPTestCase {
 					),
 				]
 			),
-			new Spy_Queue()
+			new Spy_Queue(),
+			new Spy_Activator()
 		);
 
 		$loader->load_all();
@@ -422,6 +429,113 @@ class LoaderTest extends WPTestCase {
 		$this->assert_the_should_load_recorder_works();
 	}
 
+	/**
+	 * The activation callback stands in for the register_activation_hook() a bundled plugin never
+	 * gets, so it has to run with the plugin's own code already in memory: a migration that calls a
+	 * function the bundled file declares would otherwise fatal.
+	 */
+	public function test_it_runs_the_activation_callback_after_requiring_the_file(): void {
+		$loads_at_activation = null;
+
+		$this->register(
+			[
+				'activation_callback' => function () use ( &$loads_at_activation ): void {
+					$loads_at_activation = $this->bundled_plugin_loads();
+				},
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+		$this->assertSame( 1, $loads_at_activation, 'The bundled file has to be in memory first.' );
+		$this->assertSame( [ 'give-recurring' => true ], $this->activation_record() );
+	}
+
+	/**
+	 * Activation is tied to a require that actually happened. Running it for a skipped sub-plugin
+	 * would create the tables and seed the options of a plugin whose code is not loaded, and the
+	 * record would then stand the callback down for good once the sub-plugin really did load.
+	 */
+	public function test_a_skipped_load_runs_no_activation_callback(): void {
+		$calls = [];
+
+		$record = static function ( Sub_Plugin $sub_plugin ) use ( &$calls ): void {
+			$calls[] = $sub_plugin->get_slug();
+		};
+
+		$this->register(
+			[
+				'enabled'             => false,
+				'activation_callback' => $record,
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 0, $this->bundled_plugin_loads() );
+		$this->assertSame( [], $calls );
+		$this->assertSame( [], $this->activation_record() );
+
+		// The recorder has to be shown to work. A closure that never reached the config array — a
+		// mistyped key, a value the constructor refused — leaves this empty for a reason that has
+		// nothing to do with the load being skipped, and the assertion above proves nothing.
+		$record( $this->make_sub_plugin() );
+
+		$this->assertSame( [ 'give-recurring' ], $calls, 'The recorder must catch a call that really happened.' );
+	}
+
+	/**
+	 * The activator is injected, not resolved inside the load path, so a host that records "once,
+	 * ever" in its own migration table binds one implementation and the load pass uses it — and the
+	 * default's option is never written behind its back.
+	 */
+	public function test_a_bound_activator_reaches_the_load_path(): void {
+		$activator = new Spy_Activator();
+		$container = new Test_Container();
+		$container->singleton(
+			Activator_Interface::class,
+			static function () use ( $activator ): Activator_Interface {
+				return $activator;
+			}
+		);
+		$this->set_up_container( $container );
+
+		$this->register( [ 'activation_callback' => static fn() => null ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ 'give-recurring' ], $activator->slugs );
+		$this->assertSame( [], $this->activation_record(), 'The default activator must not have run too.' );
+	}
+
+	/**
+	 * The activation callback is the one piece of host code that runs *after* a successful require, so
+	 * a throw from it leaves the sub-plugin loaded with its migration half-done. Unguarded it would
+	 * take the site with it on every request — the sub-plugin loads, the callback throws, the record
+	 * is never written, and the next request does it all again. Reported instead, and the record still
+	 * goes unwritten, so a fixed callback is retried rather than skipped forever.
+	 */
+	public function test_a_throwing_activation_callback_does_not_stop_the_others(): void {
+		$this->expect_incorrect_usage();
+
+		$this->register(
+			[
+				'slug'                => 'give-recurring',
+				'activation_callback' => static function (): void {
+					throw new RuntimeException( 'the migration could not run' );
+				},
+			]
+		);
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 2, $this->bundled_plugin_loads(), 'Both files loaded; the callback threw after one of them.' );
+		$this->assertSame( [], $this->activation_record(), 'A callback that threw must not be recorded as done.' );
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
 	public function test_it_loads_every_registered_sub_plugin(): void {
 		$this->register( [ 'slug' => 'give-recurring' ] );
 		$this->register( [ 'slug' => 'give-fee-recovery' ] );
@@ -622,6 +736,24 @@ class LoaderTest extends WPTestCase {
 			$this->queued_notices(),
 			'The default queue must not have been resolved alongside it.'
 		);
+	}
+
+	/**
+	 * @return void
+	 */
+	private function clear_activations(): void {
+		delete_site_option( 'give_plugin_absorber_activations' );
+	}
+
+	/**
+	 * Slugs whose activation callback has run, as the option holds them.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function activation_record(): array {
+		$done = get_site_option( 'give_plugin_absorber_activations', [] );
+
+		return is_array( $done ) ? $done : [];
 	}
 
 	/**

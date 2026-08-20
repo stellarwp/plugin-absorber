@@ -49,6 +49,7 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | Detects the active standalone and applies the policy. |
+| `Contracts\Activator_Interface` | `Activator` | Runs a sub-plugin's activation callback once, ever. |
 
 `Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
@@ -85,7 +86,7 @@ registering them instantiates nothing and a request that triggers none builds no
 | `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. |
 | `conflict_notice_message` | `callable` | | Shown on auto-deactivation and on a re-activation attempt. Empty by default. |
 | `dependency_notice_message` | `callable` | | Shown when `dependency_check` fails. Defaults to a generic, untranslated sentence naming the raw slug. |
-| `activation_callback` | `callable( Sub_Plugin )` | | Runs **exactly once, ever**, per slug. |
+| `activation_callback` | `callable( Sub_Plugin )` | | Runs **once, ever**, per slug, after a successful load. Make it idempotent. |
 | `dependency_check` | `callable( Sub_Plugin ): bool` | | Skips the load and queues a notice when it returns false. |
 
 The load guard and the standalone basename are deliberately two separate keys. No constant does
@@ -106,6 +107,41 @@ reads first reports it with `_doing_it_wrong()`, and that request resolves no co
 sub-plugin at all, rather than throwing out of a core hook. A config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
+
+## Activation
+
+A bundled plugin is `require_once`d, not activated, so `register_activation_hook()` never fires for
+it — whatever that hook would have done, creating a table or seeding options, would otherwise never
+happen at all. [`activation_callback`](#sub-plugin-keys) fills that gap:
+
+```php
+'activation_callback' => static function ( Sub_Plugin $sub_plugin ) {
+    \Give\Recurring\Install::create_tables();
+},
+```
+
+It runs once ever per slug, is passed the `Sub_Plugin`, and runs only after a require that actually
+happened — never for a sub-plugin whose load was skipped, because a schema appearing for a plugin
+that is not loaded is worse than no schema at all.
+
+**Write it to be idempotent.** "Once, ever" is bookkeeping, not a lock: the record is read, the
+callback runs, and the record is written, so two requests arriving together on a site that has never
+run it can both pass the check, and a callback that fails is deliberately left unrecorded to be
+retried. A `dbDelta()` migration or a `CREATE TABLE IF NOT EXISTS` already survives both; a blind
+`INSERT` of seed rows does not.
+
+The record lives in the `{option_prefix}_plugin_absorber_activations` option, a network option on
+multisite for the same reason the [notice queue](notices.md) is one: `deactivate_plugins()` is
+network-wide, so a merge that happened network-wide must not re-run the callback on every site. The
+slug is recorded *after* the callback returns, so a callback that fails is retried on the next
+request rather than marked done and silently skipped forever. A callback that throws cannot take the
+site down with it: the load pass reports it with `_doing_it_wrong()`, loads the sub-plugins behind it
+as usual, and leaves the record unwritten.
+
+One record for the network also means one *run* for the network, in whichever site's request reached
+the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is the callback's
+own job to loop over `get_sites()` for, or bind `Activator_Interface` and record "once, ever"
+somewhere else: your own migration table, or a per-site option.
 
 ## The bundled file is included from a function, not from global scope
 
