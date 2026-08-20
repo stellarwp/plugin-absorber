@@ -5,17 +5,16 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Plugin;
 
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
-use Nexcess\PluginAbsorber\Traits\Loads_Plugin_Functions;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
 
 /**
  * Turns a plugin off, the way WordPress's own unattended paths do.
  *
  * @since 1.0.0
  */
-class Plugin_Deactivator implements Plugin_Deactivator_Interface {
+class Deactivator implements Deactivator_Interface {
 	use Loads_Plugin_Functions;
 
 	/**

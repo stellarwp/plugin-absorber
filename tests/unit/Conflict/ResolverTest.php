@@ -17,9 +17,9 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
@@ -253,7 +253,7 @@ class ResolverTest extends WPTestCase {
 			}
 		};
 
-		$deactivator = new class() implements Plugin_Deactivator_Interface {
+		$deactivator = new class() implements Deactivator_Interface {
 			/**
 			 * @var string[]
 			 */
@@ -276,8 +276,8 @@ class ResolverTest extends WPTestCase {
 		// binding was made, and the provider leaves it alone.
 		$container = new Test_Container();
 		$container->singleton(
-			Plugin_Deactivator_Interface::class,
-			static function () use ( $deactivator ): Plugin_Deactivator_Interface {
+			Deactivator_Interface::class,
+			static function () use ( $deactivator ): Deactivator_Interface {
 				return $deactivator;
 			}
 		);
@@ -843,7 +843,7 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
-	 * Only is_plugin_active(), which is the one function Plugin_Checker::is_active() calls — and it
+	 * Only is_plugin_active(), which is the one function Checker::is_active() calls — and it
 	 * ORs the network check in itself, so stubbing is_plugin_active_for_network() alongside it
 	 * would be inert and would read as though a network path were being exercised.
 	 *

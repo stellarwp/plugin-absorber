@@ -5,7 +5,7 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber\Contracts;
+namespace Nexcess\PluginAbsorber\Plugin\Contracts;
 
 /**
  * The library's one way of asking WordPress about a plugin.
@@ -14,7 +14,7 @@ namespace Nexcess\PluginAbsorber\Contracts;
  * only identifier WordPress itself accepts. Bind a replacement to answer from somewhere other than
  * the active-plugins option.
  *
- * Separate from `Plugin_Deactivator_Interface` because the two are asked for by different code for
+ * Separate from `Plugin\Contracts\Deactivator_Interface` because the two are asked for by different code for
  * different reasons: reading plugin state is a question anything may ask, while turning a plugin
  * off is an action exactly one policy branch takes. A host that wants deactivation to be a no-op —
  * plugin state managed outside WordPress, say — should not have to reimplement the reading half
@@ -22,7 +22,7 @@ namespace Nexcess\PluginAbsorber\Contracts;
  *
  * @since 1.0.0
  */
-interface Plugin_Checker_Interface {
+interface Checker_Interface {
 	/**
 	 * Whether the plugin is active, in either scope.
 	 *

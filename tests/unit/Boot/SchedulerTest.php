@@ -18,9 +18,9 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Presenter;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Presenter;
@@ -1078,9 +1078,9 @@ class SchedulerTest extends WPTestCase {
 	private function bind_active_standalone(): void {
 		$container = new Test_Container();
 		$container->singleton(
-			Plugin_Checker_Interface::class,
-			static function (): Plugin_Checker_Interface {
-				return new class() implements Plugin_Checker_Interface {
+			Checker_Interface::class,
+			static function (): Checker_Interface {
+				return new class() implements Checker_Interface {
 					/**
 					 * @param string $basename Plugin basename.
 					 *

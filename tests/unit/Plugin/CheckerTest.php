@@ -5,13 +5,13 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Plugin;
 
 use Codeception\TestCase\WPTestCase;
 use LogicException;
 use lucatume\WPBrowser\Traits\UopzFunctions;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
-use Nexcess\PluginAbsorber\Plugin_Checker;
+use Nexcess\PluginAbsorber\Plugin\Checker;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 
 /**
  * Asking WordPress whether a plugin is active.
@@ -22,11 +22,11 @@ use Nexcess\PluginAbsorber\Plugin_Checker;
  *
  * @since 1.0.0
  */
-class PluginCheckerTest extends WPTestCase {
+class CheckerTest extends WPTestCase {
 	use UopzFunctions;
 
 	/**
-	 * @var Plugin_Checker
+	 * @var Checker
 	 */
 	private $checker;
 
@@ -36,11 +36,11 @@ class PluginCheckerTest extends WPTestCase {
 		// uopz cannot stub a function that does not exist yet.
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-		$this->checker = new Plugin_Checker();
+		$this->checker = new Checker();
 	}
 
 	public function test_it_implements_the_contract(): void {
-		$this->assertInstanceOf( Plugin_Checker_Interface::class, $this->checker );
+		$this->assertInstanceOf( Checker_Interface::class, $this->checker );
 	}
 
 	public function test_it_reports_an_active_plugin(): void {

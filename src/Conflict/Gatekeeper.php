@@ -104,7 +104,7 @@ class Gatekeeper {
 	 * the standalone off site-wide by requesting a page they are about to be bounced off.
 	 *
 	 * The capability asked for matches what resolution can do, which is why the two differ. The
-	 * deactivation is network-wide: Plugin_Deactivator leaves deactivate_plugins()'s $network_wide
+	 * deactivation is network-wide: Deactivator leaves deactivate_plugins()'s $network_wide
 	 * at its default, and core reads that as both scopes, so the standalone comes out of the
 	 * network's active plugins whichever site the request arrived on. That is authority a single
 	 * site's administrator does not hold, and asking for activate_plugins would not establish it --

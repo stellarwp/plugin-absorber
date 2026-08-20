@@ -15,8 +15,6 @@ use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
 use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
@@ -24,6 +22,10 @@ use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Notices\Writer;
+use Nexcess\PluginAbsorber\Plugin\Checker;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
+use Nexcess\PluginAbsorber\Plugin\Deactivator;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Registry\Registrar;
@@ -72,8 +74,8 @@ final class Provider implements Provider_Interface {
 		$this->bind_once( ContainerInterface::class, $container );
 
 		$this->bind_once( Registrar_Interface::class, Registrar::class );
-		$this->bind_once( Plugin_Checker_Interface::class, Plugin_Checker::class );
-		$this->bind_once( Plugin_Deactivator_Interface::class, Plugin_Deactivator::class );
+		$this->bind_once( Checker_Interface::class, Checker::class );
+		$this->bind_once( Deactivator_Interface::class, Deactivator::class );
 		$this->bind_once( Activator_Interface::class, Activator::class );
 		$this->bind_once( Store::class );
 		$this->bind_once( Renderer::class );
@@ -116,7 +118,7 @@ final class Provider implements Provider_Interface {
 			static function () use ( $container ): Detector {
 				return new Detector(
 					$container->get( Reader::class ),
-					$container->get( Plugin_Checker_Interface::class )
+					$container->get( Checker_Interface::class )
 				);
 			}
 		);
@@ -127,7 +129,7 @@ final class Provider implements Provider_Interface {
 				return new Resolver(
 					$container->get( Reader::class ),
 					$container->get( Detector::class ),
-					$container->get( Plugin_Deactivator_Interface::class ),
+					$container->get( Deactivator_Interface::class ),
 					$container->get( Writer_Interface::class ),
 					$container->get( Redirector::class )
 				);

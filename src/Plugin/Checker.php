@@ -5,17 +5,16 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Plugin;
 
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
-use Nexcess\PluginAbsorber\Traits\Loads_Plugin_Functions;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 
 /**
  * Plugin state, straight from WordPress.
  *
  * @since 1.0.0
  */
-class Plugin_Checker implements Plugin_Checker_Interface {
+class Checker implements Checker_Interface {
 	use Loads_Plugin_Functions;
 
 	/**

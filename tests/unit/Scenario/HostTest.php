@@ -13,9 +13,9 @@ use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Checker_Interface;
-use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
+use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Activator;
 use Nexcess\PluginAbsorber\Tests\Support\Spy_Gatekeeper;
@@ -80,7 +80,7 @@ class HostTest extends Bootstrap_Test_Case {
 		$writer    = new Spy_Writer();
 		$activator = new Spy_Activator();
 
-		$checker = new class() implements Plugin_Checker_Interface {
+		$checker = new class() implements Checker_Interface {
 			/**
 			 * Basenames this checker reports as active.
 			 *
@@ -108,7 +108,7 @@ class HostTest extends Bootstrap_Test_Case {
 			}
 		};
 
-		$deactivator = new class() implements Plugin_Deactivator_Interface {
+		$deactivator = new class() implements Deactivator_Interface {
 			/**
 			 * @var string[]
 			 */
@@ -138,14 +138,14 @@ class HostTest extends Bootstrap_Test_Case {
 			}
 		);
 		$container->singleton(
-			Plugin_Checker_Interface::class,
-			static function () use ( $checker ): Plugin_Checker_Interface {
+			Checker_Interface::class,
+			static function () use ( $checker ): Checker_Interface {
 				return $checker;
 			}
 		);
 		$container->singleton(
-			Plugin_Deactivator_Interface::class,
-			static function () use ( $deactivator ): Plugin_Deactivator_Interface {
+			Deactivator_Interface::class,
+			static function () use ( $deactivator ): Deactivator_Interface {
 				return $deactivator;
 			}
 		);

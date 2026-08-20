@@ -5,7 +5,7 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber\Traits;
+namespace Nexcess\PluginAbsorber\Plugin;
 
 /**
  * Makes WordPress's plugin functions available to the class using it.
