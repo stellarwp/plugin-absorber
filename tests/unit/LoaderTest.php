@@ -55,18 +55,6 @@ class LoaderTest extends WPTestCase {
 	private $constants = [];
 
 	/**
-	 * Every `_doing_it_wrong()` message seen since the recorder went on.
-	 *
-	 * @var string[]
-	 */
-	private $incorrect_usage_messages = [];
-
-	/**
-	 * @var callable|null
-	 */
-	private $incorrect_usage_message_listener = null;
-
-	/**
 	 * Every value the should_load filter was called with.
 	 *
 	 * A property rather than a local, because the recorder is a closure the filter keeps: a local
@@ -101,7 +89,6 @@ class LoaderTest extends WPTestCase {
 		$this->constants = [];
 
 		$this->stop_expecting_incorrect_usage();
-		$this->stop_recording_incorrect_usage_messages();
 		$this->clear_notices();
 		$this->clear_activations();
 		Absorber_State::reset();
@@ -250,10 +237,12 @@ class LoaderTest extends WPTestCase {
 	public function test_it_skips_when_the_bundled_file_is_missing(): void {
 		$this->expect_incorrect_usage();
 
+		$path = $this->missing_bundled_plugin_file();
+
 		Absorber::register(
 			[
 				'slug'                   => 'give-recurring',
-				'bundled_plugin_file'    => $this->missing_bundled_plugin_file(),
+				'bundled_plugin_file'    => $path,
 				'plugin_loaded_constant' => $this->make_guard_constant(),
 			]
 		);
@@ -261,7 +250,14 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
-		$this->assert_the_library_reported_incorrect_usage();
+
+		// The file gate's own sentence, and the path it refused, rather than "something was reported":
+		// a load that skipped for any other reason at all — an unreadable registry, a bootstrap with
+		// no hook prefix — reports too, and would satisfy a looser assertion just as well.
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"give-recurring" is missing or unreadable: %s', $path ),
+			'The report has to name the file gate and the path it refused.'
+		);
 	}
 
 	/**
@@ -275,10 +271,12 @@ class LoaderTest extends WPTestCase {
 	public function test_a_missing_bundled_file_reports_to_the_developer_not_the_site_owner(): void {
 		$this->expect_incorrect_usage();
 
+		$path = $this->missing_bundled_plugin_file();
+
 		Absorber::register(
 			[
 				'slug'                      => 'give-recurring',
-				'bundled_plugin_file'       => $this->missing_bundled_plugin_file(),
+				'bundled_plugin_file'       => $path,
 				'plugin_loaded_constant'    => $this->make_guard_constant(),
 				'dependency_notice_message' => static fn() => 'GiveWP 3.0 or later is required.',
 			]
@@ -287,7 +285,13 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( [], $this->queued_notices() );
-		$this->assert_the_library_reported_incorrect_usage();
+
+		// An empty queue is the same shape a load that never ran leaves behind, so what the developer
+		// was told instead has to be the file gate's own report and not any other.
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"give-recurring" is missing or unreadable: %s', $path ),
+			'The missing file has to be reported to the developer, not merely reported.'
+		);
 	}
 
 	/**
@@ -307,7 +311,10 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
-		$this->assert_the_library_reported_incorrect_usage();
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"give-recurring" is missing or unreadable: %s', sys_get_temp_dir() ),
+			'The report has to name the directory the file gate refused.'
+		);
 	}
 
 	/**
@@ -335,7 +342,10 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
-		$this->assert_the_library_reported_incorrect_usage();
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"give-recurring" is missing or unreadable: %s', $path ),
+			'The report has to name the unreadable file, not merely have happened.'
+		);
 	}
 
 	/**
@@ -674,7 +684,6 @@ class LoaderTest extends WPTestCase {
 		$this->register();
 
 		$this->expect_incorrect_usage();
-		$this->record_incorrect_usage_messages();
 
 		$this->loader()->load_all();
 
@@ -684,8 +693,11 @@ class LoaderTest extends WPTestCase {
 			$this->bundled_plugin_loads(),
 			'A read that failed has no list to load from, so nothing may load.'
 		);
-		$this->assert_the_library_reported_incorrect_usage();
-		$this->assert_a_reported_message_contains(
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'The registered sub-plugins could not be read, so none were loaded',
+			'The read is what failed, and the report has to say so rather than name some other gate.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
 			'give-recurring',
 			'The report has to name the slug, or it could have been raised for any other reason.'
 		);
@@ -800,61 +812,6 @@ class LoaderTest extends WPTestCase {
 			$this->should_load_calls,
 			'The recorder must catch a call that really happened.'
 		);
-	}
-
-	/**
-	 * Keep the *message* of every incorrect-usage report, which the shared trait deliberately does not.
-	 *
-	 * `WithIncorrectUsage` pins that the library reported something against itself, which is all most
-	 * tests need. A test about one particular failure needs more: a report raised for an unrelated
-	 * reason — no hook prefix, no container — would otherwise satisfy it just as well.
-	 *
-	 * @return void
-	 */
-	private function record_incorrect_usage_messages(): void {
-		$messages = &$this->incorrect_usage_messages;
-
-		$listener = static function ( $function_name, $message ) use ( &$messages ): void {
-			$messages[] = is_string( $message ) ? $message : '';
-		};
-
-		$this->incorrect_usage_message_listener = $listener;
-
-		add_action( 'doing_it_wrong_run', $listener, 10, 2 );
-	}
-
-	/**
-	 * @param string $needle  Text one report has to carry.
-	 * @param string $message Why it has to.
-	 *
-	 * @return void
-	 */
-	private function assert_a_reported_message_contains( string $needle, string $message ): void {
-		$this->assertNotSame( [], $this->incorrect_usage_messages, 'Nothing was reported at all.' );
-		$this->assertStringContainsString(
-			$needle,
-			implode( PHP_EOL, $this->incorrect_usage_messages ),
-			$message
-		);
-	}
-
-	/**
-	 * Take the recorder back off. Call from tearDown, for the same reason the trait's own removal is
-	 * there: a failing assertion would otherwise leave it listening for the rest of the process.
-	 *
-	 * Removed by identity rather than by clearing the hook, which WordPress and the rest of the suite
-	 * are also on.
-	 *
-	 * @return void
-	 */
-	private function stop_recording_incorrect_usage_messages(): void {
-		if ( $this->incorrect_usage_message_listener !== null ) {
-			remove_action( 'doing_it_wrong_run', $this->incorrect_usage_message_listener );
-
-			$this->incorrect_usage_message_listener = null;
-		}
-
-		$this->incorrect_usage_messages = [];
 	}
 
 	/**
