@@ -5,14 +5,14 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber\Tests\Unit;
+namespace Nexcess\PluginAbsorber\Tests\Unit\Registry;
 
 use Codeception\TestCase\WPTestCase;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -33,7 +33,7 @@ use Throwable;
  *
  * @since 1.0.0
  */
-class Registry_ReaderTest extends WPTestCase {
+class ReaderTest extends WPTestCase {
 	use WithContainer;
 
 	public function setUp(): void {
@@ -171,10 +171,10 @@ class Registry_ReaderTest extends WPTestCase {
 	/**
 	 * The reader the container builds, which is the one every pass is handed.
 	 *
-	 * @return Registry_Reader
+	 * @return Reader
 	 */
-	private function reader(): Registry_Reader {
-		return $this->resolve( Registry_Reader::class );
+	private function reader(): Reader {
+		return $this->resolve( Reader::class );
 	}
 
 	/**

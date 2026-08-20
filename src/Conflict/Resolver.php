@@ -12,7 +12,7 @@ use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
 use Throwable;
@@ -41,7 +41,7 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Registry_Reader
+	 * @var Reader
 	 */
 	private $registry;
 
@@ -76,14 +76,14 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Registry_Reader              $registry           Which sub-plugins are registered.
+	 * @param Reader                       $registry           Which sub-plugins are registered.
 	 * @param Detector                     $detector           Whether a sub-plugin is in conflict.
 	 * @param Plugin_Deactivator_Interface $plugin_deactivator Turns the standalone off.
-	 * @param Writer_Interface              $notices            Where the user is told what happened.
+	 * @param Writer_Interface             $notices            Where the user is told what happened.
 	 * @param Redirector                   $redirector         Where the user lands afterwards.
 	 */
 	public function __construct(
-		Registry_Reader $registry,
+		Reader $registry,
 		Detector $detector,
 		Plugin_Deactivator_Interface $plugin_deactivator,
 		Writer_Interface $notices,

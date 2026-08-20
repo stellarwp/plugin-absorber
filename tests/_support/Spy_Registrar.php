@@ -7,7 +7,7 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Tests\Support;
 
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**

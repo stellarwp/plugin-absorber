@@ -5,10 +5,11 @@
 
 declare( strict_types=1 );
 
-namespace Nexcess\PluginAbsorber;
+namespace Nexcess\PluginAbsorber\Registry;
 
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
  * Every registered sub-plugin, as something a pass can be handed rather than reach for.
@@ -29,7 +30,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  *
  * @since 1.0.0
  */
-class Registry_Reader {
+class Reader {
 	/**
 	 * Sub-plugins registered but not yet handed to the registrar.
 	 *

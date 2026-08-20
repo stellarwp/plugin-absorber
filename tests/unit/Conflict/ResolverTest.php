@@ -20,7 +20,7 @@ use Nexcess\PluginAbsorber\Conflict_Policy;
 use Nexcess\PluginAbsorber\Contracts\Plugin_Deactivator_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -30,9 +30,9 @@ use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\TestException;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithHaltedRedirects;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithRequestMethod;
-use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 use RuntimeException;
 
@@ -176,8 +176,8 @@ class ResolverTest extends WPTestCase {
 		// not anybody bound it -- so the provider binds its own regardless, and a double put in first
 		// would be silently replaced.
 		$this->container()->singleton(
-			Registry_Reader::class,
-			static function () use ( $reader ): Registry_Reader {
+			Reader::class,
+			static function () use ( $reader ): Reader {
 				return $reader;
 			}
 		);

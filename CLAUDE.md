@@ -79,14 +79,14 @@ seams a host may rebind:
 
 | Interface | Bound to | Responsibility |
 |---|---|---|
-| `Contracts\Registrar_Interface` | `Registrar` | holds registered `Sub_Plugin` objects |
+| `Registry\Contracts\Registrar_Interface` | `Registry\Registrar` | holds registered `Sub_Plugin` objects |
 | `Notices\Contracts\Writer_Interface` | `Notices\Writer` | what each notice says |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | one method: which policy branch a conflict takes |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | deactivates the standalone, network-aware |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | answers whether a plugin is active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
-The rest — `Boot\Scheduler`, `Loader`, `Registry_Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
+The rest — `Boot\Scheduler`, `Loader`, `Registry\Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
 `Conflict\Redirector`, `Conflict\Rewriter`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` —
 are bound as concrete classes. A host that wants one of them different rebinds the class name; there
 is no interface because nothing in the library dispatches on one. `Provider` also binds the container
@@ -95,8 +95,8 @@ unbound classes reflectively can still satisfy the collaborators that take one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. `src/Contracts/` is for the interfaces whose
-implementations sit at the root — `Registrar`, `Plugin_Deactivator`, `Plugin_Checker`, `Activator` —
-plus `Provider_Interface`.
+implementations sit at the root — `Plugin_Deactivator`, `Plugin_Checker`, `Activator` — plus
+`Provider_Interface`.
 
 **`Notices\Writer` and `Notices\Presenter` split because they change for different reasons.** One
 answers "what does this notice say", the other "who may see the pending set, and is it gone once they
@@ -145,7 +145,7 @@ Foundation's abstract does not extend.
 **`Provider` never overwrites a binding.** It binds only what the container does not already have, so
 a host that bound its own implementation wins, and the order in which the host calls
 `set_container()` and `boot()` stops deciding which implementation it gets. Everything is a
-singleton: each binding is either a registry whose contents are the point — a second `Registrar`
+singleton: each binding is either a registry whose contents are the point — a second `Registry\Registrar`
 would hold a second, emptier list — or a stateless worker with nothing to gain from a second copy.
 
 The container is **never** used to wire hooks, and the reason is no longer that it is optional.
@@ -161,7 +161,7 @@ collaborator to be built at boot.
 delegations to `$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
 depends on the peer it was handed rather than on the facade.
 
-**Nothing but `Absorber` names `Absorber`.** The registration buffer belongs to `Registry_Reader`,
+**Nothing but `Absorber` names `Absorber`.** The registration buffer belongs to `Registry\Reader`,
 which is also what reads it back out: `Absorber::register()` pushes a `Sub_Plugin` into it and
 `Absorber::all()` delegates to it, while `Conflict\Detector`, `Conflict\Resolver` and `Loader` are
 each handed one. The buffer is static because it must be — `register()` is a static call a host makes
@@ -195,13 +195,12 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin_Deactivator.php`, `src/Plugin_Checker.php` | The only files that touch WordPress plugin functions, through `Traits\Loads_Plugin_Functions`. |
-| `src/Registrar.php` | Holds registered `Sub_Plugin` objects. |
-| `src/Registry_Reader.php` | The registration buffer, drained into the registrar on the way past; the object every pass reads the registry through. |
+| `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
-| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Registrar_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
+| `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Plugin_Deactivator_Interface`, `Plugin_Checker_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
 
@@ -229,7 +228,7 @@ whenever the host's bootstrap happens to run it. This is also why `Absorber::reg
 resolves nothing — registration at plugin-file scope is a shape a host is entitled to use, and it
 would otherwise register into the throwaway.
 
-**A duplicate slug is `Registrar::register()`'s exception, not `Absorber::register()`'s.** What
+**A duplicate slug is `Registry\Registrar::register()`'s exception, not `Absorber::register()`'s.** What
 `Absorber::register()` throws is config validation, from the `Sub_Plugin` constructor, in the call
 the host can see in its own stack trace. The buffer reaches the registrar at the first read —
 `plugins_loaded` priority 5 on a request that passes the gatekeeper, priority 6 otherwise — so the
@@ -275,7 +274,7 @@ carries the whole re-declaration guarantee, and it is the only gate meaning "thi
 running" — warning that requirements are unmet for a plugin the admin can watch working would send
 them after the wrong problem. `docs/filters.md` says the same.
 
-`Registry_Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
+`Registry\Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
 host may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
 the interface signature — so it is filtered once where the untrusted value enters. All three readers —
 the load pass, the conflict pass and `Conflict\Rewriter` — read through the reader they were
@@ -365,7 +364,7 @@ all this library gets to do about it is reword the sentence core's sandbox print
 `conflict_notice_message`, the same message the merge notice carries, but wording it is as far as the
 two share: nothing in `Rewriter` is stored, drawn or authored through the notice machinery — it reads
 the request, checks the screen, verifies a nonce and edits markup core already wrote. Putting it on
-`Writer` anyway would have needed a `Registry_Reader` argument for the one method that used it — a
+`Writer` anyway would have needed a `Registry\Reader` argument for the one method that used it — a
 collaborator only that method needs — and would have forced every host binding its own
 `Notices\Contracts\Writer_Interface` to implement an error screen just to get its notices worded. It
 sits in `Conflict\` rather than `Notices\` because what it is about is the standalone conflict — the
@@ -456,9 +455,9 @@ Tabs for PHP, 4 spaces for yml/yaml/json/md (see `.editorconfig`).
 Production classes do not get a `reset()` for the suite's benefit — that becomes API the library
 supports forever. Tests clear static state by reflection through a helper under `tests/_support/`:
 `Tests\Support\Config_State::reset()` for `Config`, and `Tests\Support\Absorber_State::reset()` for
-`Absorber` plus the registration buffer on `Registry_Reader`, which also unwires the hooks `boot()`
+`Absorber` plus the registration buffer on `Registry\Reader`, which also unwires the hooks `boot()`
 added. Any older sketch showing `Config::reset()` or `Absorber::reset()` means the support helper.
-`Registrar` needs no such helper — its state is instance state behind a container binding, so a
+`Registry\Registrar` needs no such helper — its state is instance state behind a container binding, so a
 fresh container *is* the reset.
 
 ### Testing rules

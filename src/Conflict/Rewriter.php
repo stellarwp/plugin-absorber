@@ -8,7 +8,7 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Conflict;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
-use Nexcess\PluginAbsorber\Registry_Reader;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
@@ -38,16 +38,16 @@ class Rewriter {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @var Registry_Reader
+	 * @var Reader
 	 */
 	private $registry;
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param Registry_Reader $registry Which sub-plugins are registered.
+	 * @param Reader $registry Which sub-plugins are registered.
 	 */
-	public function __construct( Registry_Reader $registry ) {
+	public function __construct( Reader $registry ) {
 		$this->registry = $registry;
 	}
 

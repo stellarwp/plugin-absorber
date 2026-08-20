@@ -11,10 +11,11 @@ use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Notices\Presenter;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
 use Throwable;
 
@@ -80,7 +81,7 @@ final class Absorber {
 	 * The sub-plugin is buffered rather than handed straight to the registrar, so that registering
 	 * resolves nothing — not even the container. A host that registers before it calls
 	 * Config::set_container() would otherwise fail on a call that has nothing to do with the
-	 * container. The buffer belongs to `Registry_Reader`, which is where it is read back out: this
+	 * container. The buffer belongs to `Registry\Reader`, which is where it is read back out: this
 	 * class hands its collaborators no work and holds none of their state.
 	 *
 	 * The configuration is still validated here: building the Sub_Plugin is what rejects it, and
@@ -97,7 +98,7 @@ final class Absorber {
 	 * @return void
 	 */
 	public static function register( array $config ): void {
-		Registry_Reader::buffer( new Sub_Plugin( $config ) );
+		Reader::buffer( new Sub_Plugin( $config ) );
 	}
 
 	/**
@@ -116,7 +117,7 @@ final class Absorber {
 	 * @return array<string,Sub_Plugin>
 	 */
 	public static function all(): array {
-		return self::collaborator( Registry_Reader::class )->all();
+		return self::collaborator( Reader::class )->all();
 	}
 
 	/**

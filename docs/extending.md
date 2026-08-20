@@ -10,14 +10,14 @@ Bind any of these ids before or after `Absorber::boot()` — boot binds the defa
 *interface* your container already answers for, so your binding wins either way:
 
 ```php
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 
 $container->singleton( Registrar_Interface::class, My_Registrar::class );
 ```
 
 | Interface | Default | Responsibility |
 |---|---|---|
-| `Contracts\Registrar_Interface` | `Registrar` | Holds the registered sub-plugins. |
+| `Registry\Contracts\Registrar_Interface` | `Registry\Registrar` | Holds the registered sub-plugins. |
 | `Notices\Contracts\Writer_Interface` | `Notices\Writer` | Words the admin notices. |
 | `Contracts\Plugin_Deactivator_Interface` | `Plugin_Deactivator` | Deactivates the standalone. |
 | `Contracts\Plugin_Checker_Interface` | `Plugin_Checker` | Answers whether a plugin is active. |
@@ -36,7 +36,7 @@ want. See [the recipe](recipes.md#do-per-site-work-on-multisite).
 
 Everything without an interface is bound by class name — `Notices\Store`, `Notices\Renderer`,
 `Notices\Presenter`, `Conflict\Detector`, `Conflict\Gatekeeper`, `Conflict\Redirector`,
-`Conflict\Rewriter`, `Loader`, `Registry_Reader`, `Boot\Scheduler`. Bind one of those **after**
+`Conflict\Rewriter`, `Loader`, `Registry\Reader`, `Boot\Scheduler`. Bind one of those **after**
 `Absorber::boot()`: di52 reports `has()` true for any class that exists, bound or not, so boot cannot
 tell your binding from the container's own willingness to build the class, and replaces it.
 

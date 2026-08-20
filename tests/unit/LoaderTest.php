@@ -12,9 +12,9 @@ use lucatume\WPBrowser\Traits\UopzFunctions;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
-use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
+use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -560,7 +560,7 @@ class LoaderTest extends WPTestCase {
 
 	/**
 	 * Registrar_Interface::all() can only declare `array`, so a host implementation is free to return
-	 * anything. The default Registrar cannot produce this state — only a bound one can.
+	 * anything. The default `Registry\Registrar` cannot produce this state — only a bound one can.
 	 */
 	public function test_it_ignores_entries_that_are_not_sub_plugins(): void {
 		$constant   = $this->make_guard_constant();
