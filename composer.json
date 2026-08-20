@@ -4,12 +4,23 @@
     "type": "library",
     "license": "GPL-2.0-or-later",
     "minimum-stability": "stable",
+    "keywords": [
+        "wordpress",
+        "plugin",
+        "bundled",
+        "loader",
+        "stellarwp"
+    ],
     "authors": [
         {
             "name": "StellarWP",
             "email": "dev@stellarwp.com"
         }
     ],
+    "support": {
+        "issues": "https://github.com/stellarwp/plugin-absorber/issues",
+        "source": "https://github.com/stellarwp/plugin-absorber"
+    },
     "require": {
         "php": ">=7.4",
         "stellarwp/container-contract": "^1.0"
@@ -20,9 +31,9 @@
         "lucatume/di52": "^3.0",
         "lucatume/wp-browser": "^3.6.5",
         "php-stubs/wordpress-stubs": "~6.4.0",
-        "phpstan/phpstan": "^1.10",
+        "phpstan/phpstan": "~1.12.0",
         "phpunit/phpunit": "^9.5",
-        "szepeviktor/phpstan-wordpress": "^1.3"
+        "szepeviktor/phpstan-wordpress": "~1.3.0"
     },
     "autoload": {
         "psr-4": {

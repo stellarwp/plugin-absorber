@@ -34,6 +34,13 @@ jobs:
         # PHP version fires on every later one, so 8.5 catches what 8.0-8.4
         # would, and every leg resolves identical dependencies because
         # config.platform.php pins resolution to 7.4 regardless of runtime.
+        #
+        # That pin is also the only reason the 8.5 leg has a test harness at
+        # all: wp-browser 3.8.1 declares php ">=7.1 <8.0", so it installs
+        # because resolution sees 7.4, then executes on 8.5. Its constraint is
+        # bypassed rather than satisfied. That is deliberate -- wp-browser 4.x
+        # is unreachable while 7.4 is the floor -- and the leg passes today. If
+        # it ever stops passing, drop the column rather than chasing it.
         php:
           - "7.4"
           - "8.5"
@@ -109,7 +116,6 @@ jobs:
         run: |
           ${SLIC_BIN} use ${{ github.event.repository.name }}
           ${SLIC_BIN} composer set-version 2
-          ${SLIC_BIN} composer validate
           ${SLIC_BIN} composer install
 
       # The slic image ships a fixed WordPress that varies by PHP version, and

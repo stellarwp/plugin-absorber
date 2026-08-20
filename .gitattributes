@@ -1,6 +1,8 @@
 * text=auto eol=lf
 
+/.claude            export-ignore
 /.github            export-ignore
+/.superpowers       export-ignore
 /docs               export-ignore
 /tests              export-ignore
 /.editorconfig      export-ignore

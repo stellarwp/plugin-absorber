@@ -40,6 +40,25 @@ jobs:
           extensions: mbstring, intl
           coverage: none
 
+      # Manifest validity does not vary by PHP or WordPress version, so it is
+      # asserted once here rather than on all four legs of the test matrix.
+      # --strict promotes the advisory notices -- a missing description, a
+      # non-canonical license string -- to failures, since those are what a
+      # consumer reads on Packagist. --no-check-lock because composer.lock is
+      # deliberately not committed for a library.
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-lock
+
+      # This is the only thing that reads cspell.json and the `# cspell:ignore`
+      # directives the workflows carry; without it both are decorative. Run
+      # before the composer install, so vendor/ is not on disk yet and there is
+      # nothing there to spellcheck -- the ignorePaths entry for it is a
+      # backstop, not what does the work. The major version is pinned: a minor
+      # cspell release that widens its dictionaries would otherwise turn a
+      # comment red without a commit here.
+      - name: Spellcheck
+        run: npx --yes cspell@8 lint --no-progress .
+
       # ext-* only, never the blanket --ignore-platform-reqs. The blanket form
       # also switches off the config.platform.php pin, which resolves dev
       # dependencies requiring PHP 8.1+ that cannot run here at all -- PHPStan
