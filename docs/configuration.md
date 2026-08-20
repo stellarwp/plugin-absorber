@@ -38,7 +38,7 @@ precede `Absorber::boot()`.
 |---|---|:--:|---|
 | `slug` | `string` | ✔ | Unique id — registry key, notice id, activation-tracking key. |
 | `bundled_plugin_file` | `string` | ✔ | Absolute path to the **bundled** plugin's main file. This is what gets `require_once`d. |
-| `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads. Both copies must define the *same* name, **at file scope**. **Load guard only** — see [Conflict handling](conflict-handling.md#the-load-guard). |
+| `plugin_loaded_constant` | `string` | ✔ | A constant the plugin defines when it loads, **at file scope**. Both copies normally define the *same* name, which is what stands one of them down. **Load guard only** — see [Conflict handling](conflict-handling.md#the-load-guard). |
 | `standalone_plugin_basename` | `string` | | The standalone's `dir/file.php` basename, used to detect and deactivate it. Omit when there is no standalone. **Detection only.** |
 | `enabled` | `bool\|callable` | | `true` by default. A `callable( Sub_Plugin ): bool` is re-evaluated on every call, not cached. |
 | `conflict_policy` | `string\|callable` | | `Conflict_Policy::DEACTIVATE` by default. See [Conflict handling](conflict-handling.md#policies). |
@@ -196,7 +196,7 @@ add_action( 'plugins_loaded', function () {
         'bundled_plugin_file'        => GIVE_PLUGIN_DIR . 'sub-plugins/give-stripe/give-stripe.php',
         'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
         'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
-        // The standalone is still ahead of the bundled copy, so let it win for now.
+        // Not taking this one over yet: ship the bundled copy, but leave any standalone running.
         'conflict_policy'            => Conflict_Policy::DEFER,
         'dependency_check'           => static fn() => function_exists( 'curl_init' ),
         'dependency_notice_message'  => static fn() => __( 'Stripe payments need the cURL extension.', 'give' ),
