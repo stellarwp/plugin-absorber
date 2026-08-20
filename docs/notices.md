@@ -18,8 +18,12 @@ the site owner is never told their plugin was turned off.
 must not be shown one — a subscriber loading their profile page would otherwise silently swallow the
 only warning an administrator was ever going to get.
 
-On multisite `activate_plugins` maps through `manage_network_plugins`, so it is a network
-administrator, not the site administrator who installed the plugin, who sees these.
+On multisite `activate_plugins` usually maps through `manage_network_plugins`, so it is normally a
+network administrator, not the site administrator who installed the plugin, who sees these. Not
+always, though: a network that has enabled the Plugins menu for its sites turns that mapping off, and
+site administrators hold `activate_plugins` directly. Conflict resolution therefore asks for
+`manage_network_plugins` by name rather than relying on the mapping — see
+[conflict handling](conflict-handling.md#when-resolution-runs).
 
 ## Rendering them yourself
 

@@ -23,17 +23,18 @@ Any implementation of StellarWP's `ContainerInterface` will do — the one your 
 to Telemetry, Uplink or Harbor. `Config::get_container()` throws `Config_Exception` when none is
 set; `Config::has_container()` is the probe if you need to ask.
 
-Priority matters twice. Conflict resolution runs at `plugins_loaded` priority 1 and the load at
-priority 2, and WordPress silently ignores a callback added at or past the priority it is already
-dispatching — so configuring us from a provider that itself runs at priority 1 races us. And a host
-that builds its container lazily may *replace* it at priority 0; hand us the container before that
-happens and we hold an orphan whose bindings were discarded.
+Priority matters twice, for two unrelated reasons. Conflict resolution runs at `plugins_loaded`
+priority 5 and the load at priority 6, and WordPress silently ignores a callback added at or past the
+priority it is already dispatching — so boot has to land before 5, which leaves 0 through 4. And a
+host that builds its container lazily may *replace* it at priority 0; hand us the container before
+that happens and we hold an orphan whose bindings were discarded. It is that second one that picks 0
+out of the five, so if your container is already built by then, anywhere below 5 works.
 
 ## Rebinding a collaborator
 
 `Absorber::boot()` binds the defaults, and skips any id your container already has — so your binding
 wins whether you make it before boot or after, and nothing is resolved until `plugins_loaded`
-priority 1 in any case:
+priority 5 in any case:
 
 ```php
 use Nexcess\PluginAbsorber\Contracts\Registrar_Interface;
@@ -52,6 +53,13 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 `Plugin_Checker_Interface` is the seam to rebind when your plugin filters `option_active_plugins` or
 `site_option_active_sitewide_plugins` — LearnDash injects and then strips a synthetic path — because
 `is_plugin_active()` then does not report what is in the database.
+
+Rebinding `Resolver_Interface` does not put you in charge of *when* resolution may run. Both gates —
+[an interactive admin `GET` that carries no action, and the capability to deactivate across the
+network](conflict-handling.md#when-resolution-runs) — live in `Conflict\Gatekeeper`, which the hook
+consults rather than the resolver, so an implementation that never thought about either is still
+safe. Everything the resolver *does* — which policy branch, what the notice says,
+where the user lands — is yours.
 
 `set_container()` is a configuration call like `set_hook_prefix()`, and order does not matter among
 the configuration calls: it may come before or after your `Absorber::register()` calls, so long as it
@@ -91,10 +99,11 @@ at include time.
 Register each slug exactly once. A slug also names the sub-plugin's notices and its once-ever
 activation record, so a second registration under the same slug is refused with a
 `Config_Exception` naming both bundled files rather than quietly dropping one of the two from the
-load. Registrations are buffered and nothing reads them until the load pass at `plugins_loaded`
-priority 2, so that is where the collision surfaces — not at the second `register()` call and not at
-`boot()`. It is reported with `_doing_it_wrong()` and that request loads no sub-plugin at all, rather
-than thrown out of a core hook. A config array the library cannot use is still rejected on the spot.
+load. Registrations are buffered and nothing reads them until `plugins_loaded` — the conflict pass at
+priority 5 on an admin page view, the load pass at priority 6 on everything else — so that is where
+the collision surfaces, not at the second `register()` call and not at `boot()`. Whichever pass
+reads first reports it with `_doing_it_wrong()`, and that request resolves no conflict and loads no
+sub-plugin at all, rather than throwing out of a core hook. A config array the library cannot use is still rejected on the spot.
 Register unconditionally and put anything you cannot decide up front — a licence that may not be
 active, a setting the site owner can change — in `enabled`, which is re-evaluated on every load.
 

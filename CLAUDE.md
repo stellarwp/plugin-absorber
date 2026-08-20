@@ -167,26 +167,42 @@ the plugin to ask about, and the collaborator does the asking.
 ```
 Config::set_hook_prefix( 'give' );
 Config::set_container( $container );          // required
-Absorber::register( [ …config… ] );           // once per sub-plugin; a duplicate slug throws
-Absorber::boot();                             // idempotent
+Absorber::register( [ …config… ] );             // once per sub-plugin; a duplicate slug throws
+Absorber::boot();                               // idempotent
     → Provider::register()                    // every binding
     → Boot\Scheduler                          // every hook, as a closure over the container
 
-plugins_loaded @1      → Conflict\Resolver::resolve_all()   [gated by Conflict\Gatekeeper]
-plugins_loaded @2      → Loader::load_all()
-all_admin_notices      → Absorber::render_notices()         [is_admin() only]
+plugins_loaded @5      → Conflict\Gatekeeper, Conflict\Detector, then Conflict\Resolver::resolve_all()
+plugins_loaded @6      → Loader::load_all()
+all_admin_notices      → Absorber::render_notices()           [is_admin() only]
 wp_admin_notice_markup → Absorber::filter_activation_error_markup() [is_admin() only]
 ```
 
 **A host calls `Config::set_container()` at `plugins_loaded` priority 0, from its own container
-block and not from a service provider.** Priority, because conflict resolution runs at priority 1 and
-WordPress silently ignores a callback added at or past the priority it is already dispatching —
-LearnDash and MemberDash both wire Harbor's `set_container()` at priority 1, so a host copying that
-habit races us. Its own block, because LearnDash's `App::container()` builds a container lazily when
-none is set and the plugin then *replaces* it at priority 0: anything that grabbed the container
-earlier holds an orphan whose bindings are discarded. This is also why `Absorber::register()` buffers
-and resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
+block and not from a service provider.** This is a recommendation, not the barrier: booting anywhere
+below priority 5 wires cleanly. It is priority 0 rather than plugin-file scope because LearnDash's
+`App::container()` builds a container lazily when none is set and the plugin then *replaces* it at
+priority 0 — anything that grabbed the container earlier holds an orphan whose bindings are
+discarded. Its own block rather than a service provider, for the same reason: a provider runs
+whenever the host's bootstrap happens to run it. This is also why `Absorber::register()` buffers and
+resolves nothing — registration at plugin-file scope, which the spec sanctions, would otherwise
 register into the throwaway.
+
+**The too-late barrier measures against the first step in the sequence, not the last.**
+`Boot\Scheduler` compares the priority `plugins_loaded` is already dispatching against the lowest
+priority it has to wire — conflict resolution at 5, not the load at 6 — and over that line it runs
+the whole sequence inline in hook order rather than wiring any of it. Measuring against the load
+would let a host booting at priority 5 wire the load and silently lose the conflict pass, which is
+the half of the sequence a fatal depends on. The comparison is inclusive, because a callback added
+at the priority currently being dispatched is accepted and never reached.
+
+**Resolution sits at 5, not at 1, so the barrier leaves a host somewhere to stand.** At 1 the only
+slot left was 0, which turned a documented convention into a hard requirement — and LearnDash and
+MemberDash both wire Harbor's `set_container()` at `plugins_loaded` priority 1, so a host copying the
+habit it already has landed exactly on the barrier and silently got the inline fallback. Five slots
+cost the load pass four priorities it was not using. The load stays one behind resolution, because a
+standalone that survives the conflict defines the guard constant as it loads and the load pass has to
+see that.
 
 `load_all()` gates each sub-plugin in order, skipping on the first failure: enabled → not already
 loaded → dependencies met → file exists → `should_load` filter → `require_once` → activation
@@ -199,10 +215,17 @@ them after the wrong problem. `docs/filters.md` and the spec agree.
 
 `Registry_Reader::all()` narrows to `Sub_Plugin` instances itself, so no caller repeats that guard. A
 host may bind a registrar returning anything, and PHP 7.4 cannot express `array<string,Sub_Plugin>` in
-the interface signature — so it is filtered once where the untrusted value enters. The load pass and
-`Conflict\Detector` read through the reader they were constructed with rather than through the
-registrar they could resolve for themselves, because it drains the pending registrations before it
-reads and a registrar asked directly would miss anything registered since the last flush.
+the interface signature — so it is filtered once where the untrusted value enters. Both passes read
+through the reader they were constructed with rather than through the registrar they could resolve for
+themselves, because it drains the pending registrations before it reads and a registrar asked directly
+would miss anything registered since the last flush.
+
+**Both passes also catch `Config_Exception` around that read.** A duplicate slug is only found when
+the buffer reaches the registrar, which is a read — long after both `register()` calls returned — and
+it arrives inside `plugins_loaded`, the hook that exists to prevent a fatal, so this is the last place
+allowed to cause one. The conflict pass needs the guard more than the load pass, not less: its request
+gate means the only requests reaching it are admin page views, so an escaping throw lands on exactly
+the screens the mistaken registration would have to be corrected from.
 
 The container is no longer the other half of that. A pass is handed a reader that already holds its
 registrar, so a container that cannot supply one fails while the *pass* is being built — where an
@@ -238,11 +261,29 @@ out of the destination — only a validated screen name and a re-encoded query l
 `admin_url()`, or `network_admin_url()`/`user_admin_url()` in the other two admins, supplies
 everything in front of them.
 
-**Who may have a conflict resolved is `Conflict\Gatekeeper`'s business, not the resolver's.** It
-gates on an interactive admin `GET` (`plugins_loaded` fires on every request) *and* on
-`current_user_can( 'activate_plugins' )` (`plugins_loaded` runs before `auth_redirect()`, so an
-unauthenticated GET of an admin URL gets that far). The hook resolves the gatekeeper rather than the
-resolver, so a host binding its own `Resolver_Interface` cannot drop either gate by omission. The
+**Who may have a conflict resolved is `Conflict\Gatekeeper`'s business, not the resolver's.** Two
+methods, because the two gates are asked at different moments. `request_may_resolve()` reads the
+request and nothing else: an interactive admin `GET` (`plugins_loaded` fires on every request,
+including cron, CLI and a visitor's POST), and not one carrying an action — a redirect-and-`exit`
+discards the work behind `update.php?action=upgrade-plugin` exactly as it would a POST's, and
+`plugins.php?action=activate` is the request `plugin_sandbox_scrape()` replays, so exiting there
+makes core report the plugin being activated as fatal. Any action arg at all, never a list of the
+dangerous ones: half of wp-admin takes an `action`, plugins add their own, and a known-safe list
+would have to stay right about every one of them forever. `user_may_resolve()` asks for
+`manage_network_plugins` on multisite and `activate_plugins` otherwise — `plugins_loaded` runs
+before `auth_redirect()`, so an unauthenticated GET of an admin URL gets that far, and the
+capability has to match the reach of the act: `deactivate_plugins()` left at the default
+`$network_wide` takes the standalone out of the *network's* active plugins, which a single site's
+administrator holds no authority to do.
+
+`Boot\Scheduler::sequence()` asks the two halves either side of `Conflict\Detector::has_conflict()`,
+and that order is the point. `current_user_can()` resolves and caches the current user, so asking it
+on every admin GET would settle who is signed in at `plugins_loaded` priority 5 — ahead of an SSO or
+JWT plugin adding its `determine_current_user` filter from its own `plugins_loaded` callback, whose
+users are then treated as logged out for the rest of the request, on requests with nothing to
+resolve. The detector reports and changes nothing, so it is the cheap question that goes in front of
+the expensive one. All three live in the step rather than in the resolver, so a host binding its own
+cannot drop one by omission — and a request that fails any of them never builds a resolver. The
 capability gate covers every policy, not just the destructive one, and that is free: the other
 branches only queue a notice, and `Notices\Queue::render()` refuses to render *or clear* for a user
 without the same capability, so queuing earlier would only park it until a capable admin arrives.
@@ -349,7 +390,7 @@ treatment. Any older sketch showing `Config::reset()` or `Absorber::reset()` mea
   rejects a bad config array on the spot, at a call in the developer's own stack trace, before
   anything is hooked. Past that point this library is code on somebody's live site, and a white screen
   is never the better answer — so every entry point it puts on a hook catches `Throwable`, reports
-  with `_doing_it_wrong()` and abandons that step alone: the `plugins_loaded` step in
+  with `_doing_it_wrong()` and abandons that step alone: both `plugins_loaded` steps in
   `Boot\Scheduler`, and `Absorber::render_notices()` on `all_admin_notices`. `Loader::load_all()` and
   `Conflict\Resolver::resolve_all()` catch *per sub-plugin* as well, because one sub-plugin's throw
   must not take the ones behind it in the registration order with it. Everything past those catches is

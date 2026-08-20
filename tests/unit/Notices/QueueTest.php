@@ -17,8 +17,7 @@ use Nexcess\PluginAbsorber\Notices\Renderer;
 use Nexcess\PluginAbsorber\Notices\Store;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
-use RuntimeException;
-use WP_Error;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUsers;
 use wpdb;
 
 /**
@@ -26,6 +25,7 @@ use wpdb;
  */
 class QueueTest extends WPTestCase {
 	use WithSubPlugins;
+	use WithUsers;
 
 	private const OPTION = 'give_plugin_absorber_notices';
 
@@ -41,16 +41,9 @@ class QueueTest extends WPTestCase {
 		$this->clear_queue();
 
 		// render() consumes the queue, so it is gated on a capability. Most tests care about the
-		// queue rather than the gate, so they run as someone who has it.
-		$user_id = $this->create_user( 'administrator' );
-
-		// On multisite activate_plugins is a network capability, so an administrator of a site is
-		// not enough — see test_a_site_administrator_on_multisite_cannot_consume_the_queue().
-		if ( is_multisite() ) {
-			grant_super_admin( $user_id );
-		}
-
-		wp_set_current_user( $user_id );
+		// queue rather than the gate, so they run as someone who has it — which on multisite is a
+		// network administrator, see test_a_site_administrator_on_multisite_cannot_consume_the_queue().
+		$this->become_plugin_administrator();
 	}
 
 	public function tearDown(): void {
@@ -651,30 +644,6 @@ class QueueTest extends WPTestCase {
 
 	private function clear_queue(): void {
 		delete_site_option( self::OPTION );
-	}
-
-	/**
-	 * @param string $role Role to give the new user.
-	 *
-	 * @throws RuntimeException When the user cannot be created, rather than letting a later
-	 *                          capability assertion fail for an unrelated reason.
-	 *
-	 * @return int
-	 */
-	private function create_user( string $role ): int {
-		$user_id = wp_insert_user(
-			[
-				'user_login' => uniqid( 'absorber-' ),
-				'user_pass'  => wp_generate_password(),
-				'role'       => $role,
-			]
-		);
-
-		if ( $user_id instanceof WP_Error ) {
-			throw new RuntimeException( 'Could not create a ' . $role . ': ' . $user_id->get_error_message() );
-		}
-
-		return $user_id;
 	}
 
 	/**
