@@ -84,8 +84,8 @@ class HostTest extends Bootstrap_Test_Case {
 			/**
 			 * Basenames this checker reports as active.
 			 *
-			 * Writable, because the standalone really does go away between the two requests below and a
-			 * checker that never noticed would resolve the same conflict for ever.
+			 * Writable, because the host's own deactivator is what empties it — the resolver asks this
+			 * checker again after deactivating, and only redirects on an answer that changed.
 			 *
 			 * @var string[]
 			 */
@@ -115,13 +115,31 @@ class HostTest extends Bootstrap_Test_Case {
 			public $basenames = [];
 
 			/**
+			 * What turning the plugin off does to the site this test describes.
+			 *
+			 * A double that only recorded would describe a site where deactivation never works, which
+			 * is a different scenario — and one the resolver deliberately refuses to redirect on.
+			 *
+			 * @var callable|null
+			 */
+			public $turns_off = null;
+
+			/**
 			 * @param string $basename Plugin basename.
 			 *
 			 * @return void
 			 */
 			public function deactivate( string $basename ): void {
 				$this->basenames[] = $basename;
+
+				if ( $this->turns_off !== null ) {
+					( $this->turns_off )( $basename );
+				}
 			}
+		};
+
+		$deactivator->turns_off = static function ( string $basename ) use ( $checker ): void {
+			$checker->active = array_values( array_diff( $checker->active, [ $basename ] ) );
 		};
 
 		$checker->active = [ self::STANDALONE ];
@@ -178,9 +196,10 @@ class HostTest extends Bootstrap_Test_Case {
 		$this->assertSame( [ self::STANDALONE ], $deactivator->basenames, 'The host deactivator is the one asked to turn it off.' );
 		$this->assertSame( [ self::SLUG ], $writer->merge_notices, 'The host notice writer is told what happened.' );
 
-		// What the host's own deactivator did, as far as its own checker is concerned. Nothing is
-		// re-registered between the two — this is the next page view, not a second bootstrap.
-		$checker->active = [];
+		// The host's own deactivator has already emptied its own checker, which is what let the
+		// request above end in a redirect at all. Nothing is re-registered between the two — this is
+		// the next page view, not a second bootstrap.
+		$this->assertSame( [], $checker->active, 'The host deactivator turned the standalone off for the host checker.' );
 
 		$this->run_request();
 

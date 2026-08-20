@@ -75,6 +75,17 @@ class ResolverTest extends WPTestCase {
 	private $deactivations = [];
 
 	/**
+	 * Standalones the stubbed WordPress keeps reporting as active however often they are deactivated.
+	 *
+	 * The site that filters `option_active_plugins` to put a plugin back, the host that rebound the
+	 * deactivator to a no-op, and the rebound checker that means something else by "active" all look
+	 * like this from in here: `deactivate_plugins()` was called and the plugin is still running.
+	 *
+	 * @var string[]
+	 */
+	private $immovable_standalones = [];
+
+	/**
 	 * @var string|null
 	 */
 	private $request_uri;
@@ -91,7 +102,8 @@ class ResolverTest extends WPTestCase {
 		// uopz cannot stub a function that does not exist yet.
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-		$this->deactivations = [];
+		$this->deactivations         = [];
+		$this->immovable_standalones = [];
 
 		// The request the whole file describes: an admin GET of an ordinary screen. Both keys are set
 		// rather than inherited, because the redirect reads REQUEST_URI for the screen to re-request and
@@ -242,14 +254,23 @@ class ResolverTest extends WPTestCase {
 			}
 
 			/**
+			 * In conflict when first asked about a sub-plugin, and gone when asked again — which is
+			 * what the bound deactivator standing between the two questions is meant to have
+			 * accomplished. Frozen at true it would describe a standalone that survived, which is
+			 * `test_a_standalone_that_survives_deactivation_does_not_redirect`'s subject and not this
+			 * test's.
+			 *
 			 * @param Sub_Plugin $sub_plugin Sub-plugin to test.
 			 *
 			 * @return bool
 			 */
 			public function is_in_conflict( Sub_Plugin $sub_plugin ): bool {
-				$this->asked[] = $sub_plugin->get_slug();
+				$slug      = $sub_plugin->get_slug();
+				$first_ask = ! in_array( $slug, $this->asked, true );
 
-				return true;
+				$this->asked[] = $slug;
+
+				return $first_ask;
 			}
 		};
 
@@ -306,7 +327,9 @@ class ResolverTest extends WPTestCase {
 
 		$this->capture_resolution();
 
-		$this->assertSame( [ 'give-recurring' ], $detector->asked );
+		// Twice: once to find the conflict, and once after the deactivation to find out whether it is
+		// still there. The second ask is what decides the redirect.
+		$this->assertSame( [ 'give-recurring', 'give-recurring' ], $detector->asked );
 		$this->assertSame( [ 'give-recurring/give-recurring.php' ], $deactivator->deactivated );
 		$this->assertSame( [ 'give-recurring' ], $notices->merge_notices );
 		$this->assertSame(
@@ -475,6 +498,105 @@ class ResolverTest extends WPTestCase {
 			$this->queued_notices(),
 			'The request goes on rendering, so the notice it will render must still be there.'
 		);
+	}
+
+	/**
+	 * The redirect exists to re-request the screen with the standalone's code out of memory, and a
+	 * standalone that is still active has none of that to offer. Redirecting anyway is a loop: the next
+	 * request detects the same conflict, deactivates to no effect, redirects again, and the browser
+	 * gives up with the admin out of reach. The merge notice is what makes it silent — a request that
+	 * exits never reaches `all_admin_notices`, so the one explanation the site owner would get is
+	 * destroyed by the loop that made them need it.
+	 *
+	 * Nothing exotic is required to get here: a site or mu-plugin filtering `option_active_plugins`
+	 * puts the standalone straight back into the active list, which is a pattern `learndash-core`
+	 * itself uses.
+	 */
+	public function test_a_standalone_that_survives_deactivation_does_not_redirect(): void {
+		$this->standalone_is( true );
+		$this->standalone_survives_deactivation( 'give-recurring/give-recurring.php' );
+		$this->register();
+
+		$this->resolve_all();
+
+		$this->assertCount( 1, $this->deactivations, 'The policy still runs: deactivation is asked for.' );
+		$this->assertArrayHasKey(
+			'give-recurring:merge',
+			$this->queued_notices(),
+			'The request goes on rendering, so the notice explaining the deactivation must survive to be drawn.'
+		);
+	}
+
+	/**
+	 * The same failure through the seam a host owns rather than through the site's own filters: a
+	 * bound `Deactivator_Interface` that records and does nothing leaves the standalone exactly where
+	 * it was, and the checker behind the detector says so without any help from this test.
+	 */
+	public function test_a_rebound_deactivator_that_turns_nothing_off_does_not_redirect(): void {
+		$deactivator = new class() implements Deactivator_Interface {
+			/**
+			 * @var string[]
+			 */
+			public $deactivated = [];
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return void
+			 */
+			public function deactivate( string $basename ): void {
+				$this->deactivated[] = $basename;
+			}
+		};
+
+		// Before the provider, which is where an interface seam goes: nothing can build an interface
+		// unprompted, so the provider reads the binding as the host's and leaves it alone.
+		$container = new Test_Container();
+		$container->singleton(
+			Deactivator_Interface::class,
+			static function () use ( $deactivator ): Deactivator_Interface {
+				return $deactivator;
+			}
+		);
+
+		$this->set_up_container( $container );
+
+		$this->standalone_is( true );
+		$this->register();
+
+		$this->resolve_all();
+
+		$this->assertSame( [ 'give-recurring/give-recurring.php' ], $deactivator->deactivated );
+		$this->assertSame(
+			[],
+			$this->deactivations,
+			'The bound deactivator is what deactivates, so nothing was ever taken out of the active list.'
+		);
+		$this->assertArrayHasKey( 'give-recurring:merge', $this->queued_notices() );
+	}
+
+	/**
+	 * One stubborn standalone must not cost the site the redirect the other one earned. The request
+	 * still has a plugin's code in memory that a fresh one would shed, so it is still worth taking —
+	 * and it cannot loop for ever on the strength of the first, because the request it lands on
+	 * deactivates to no effect and stops there.
+	 */
+	public function test_it_still_redirects_when_one_of_two_standalones_really_went_away(): void {
+		$this->standalone_is( true );
+		$this->standalone_survives_deactivation( 'give-recurring/give-recurring.php' );
+		$this->register();
+		$this->register_fee_recovery();
+
+		$this->capture_resolution();
+
+		$this->assertSame(
+			[ 'give-recurring/give-recurring.php', 'give-fee-recovery/give-fee-recovery.php' ],
+			array_column( $this->deactivations, 'plugins' )
+		);
+
+		$queued = $this->queued_notices();
+		$this->assertArrayHasKey( 'give-recurring:merge', $queued );
+		$this->assertArrayHasKey( 'give-fee-recovery:merge', $queued );
 	}
 
 	public function test_deactivate_is_the_default_policy(): void {
@@ -847,11 +969,56 @@ class ResolverTest extends WPTestCase {
 	 * ORs the network check in itself, so stubbing is_plugin_active_for_network() alongside it
 	 * would be inert and would read as though a network path were being exercised.
 	 *
-	 * @param bool $active Whether the standalone is active.
+	 * Active *until it has been deactivated*, rather than active for ever. The resolver asks a second
+	 * time before it redirects, so a stub frozen at true would describe a site where deactivation
+	 * never works and every deactivating test would assert against that instead of the ordinary case.
+	 * The recorded calls are what it reads, so the two stubs answer the same question consistently and
+	 * a standalone deliberately made immovable stays that way.
+	 *
+	 * @param bool $active Whether the standalone starts out active.
 	 *
 	 * @return void
 	 */
 	private function standalone_is( bool $active ): void {
-		$this->setFunctionReturn( 'is_plugin_active', $active );
+		if ( ! $active ) {
+			$this->setFunctionReturn( 'is_plugin_active', false );
+
+			return;
+		}
+
+		// uopz runs a replacement with no class scope, so $this is fatal inside the closure. Both
+		// properties are bound by reference instead, which is also what lets a test arrange the
+		// immovable list after this call. See tests/README.md.
+		$deactivations = &$this->deactivations;
+		$immovable     = &$this->immovable_standalones;
+
+		$this->setFunctionReturn(
+			'is_plugin_active',
+			static function ( $basename ) use ( &$deactivations, &$immovable ): bool {
+				if ( in_array( $basename, $immovable, true ) ) {
+					return true;
+				}
+
+				foreach ( $deactivations as $deactivation ) {
+					if ( in_array( $basename, (array) $deactivation['plugins'], true ) ) {
+						return false;
+					}
+				}
+
+				return true;
+			},
+			true
+		);
+	}
+
+	/**
+	 * A standalone WordPress keeps reporting as active however often it is deactivated.
+	 *
+	 * @param string $basename Standalone plugin basename.
+	 *
+	 * @return void
+	 */
+	private function standalone_survives_deactivation( string $basename ): void {
+		$this->immovable_standalones[] = $basename;
 	}
 }
