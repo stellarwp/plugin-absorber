@@ -536,3 +536,182 @@ sequenceDiagram
     Q-->>WP: draws it as notice-error
     Q->>Q: clears the queue
 ```
+
+#### `Scenario/ConflictTest.php` — a standalone copy is still installed
+
+Each of these puts a real basename into the real `active_plugins` option, so
+core's own `deactivate_plugins()` is what turns it off and the real option is
+what says whether it worked. Priority 5 is the step under test, and which branch
+it takes is the sub-plugin's `conflict_policy`:
+
+```mermaid
+flowchart TD
+    A[plugins_loaded priority 5] --> B{request may resolve?}
+    B -- "not an admin GET, or carries an action" --> Z[return]
+    B -- yes --> C{standalone active?}
+    C -- no --> Z
+    C -- yes --> D{user may resolve?}
+    D -- "cannot activate_plugins" --> Z
+    D -- yes --> E{conflict_policy}
+    E -- DEFER --> Z
+    E -- NOTICE_ONLY --> F[queue a notice]
+    E -- "DEACTIVATE (default)" --> G[deactivate, queue, redirect, exit]
+```
+
+The gates are asked in that order on purpose: the detector reports and changes
+nothing, so the cheap question goes in front of `current_user_can()`, which
+resolves and caches the current user for the rest of the request.
+
+**DEACTIVATE deactivates, notifies and redirects.** The default policy, against
+core's own `deactivate_plugins()` rather than a stub of it. The standalone
+leaves `active_plugins`, a merge notice is queued, and the user is sent back to
+re-render what they asked for now that the standalone's code is out of memory.
+The destination is asserted, not merely that a redirect happened.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant R as Conflict Resolver
+    participant D as Plugin Deactivator
+    participant Q as Notice queue
+    participant Rd as Redirector
+
+    Note over WP: active_plugins holds the standalone
+    WP->>R: plugins_loaded priority 5
+    R->>D: deactivate( standalone ) — silent, network-aware
+    R->>Q: queue_merge_notice()
+    R->>Rd: after_deactivation( request URI )
+    Rd-->>R: admin_url( 'plugins.php' )
+    R->>WP: wp_safe_redirect() then exit
+    Note over WP: the load pass at priority 6 never runs
+```
+
+**The merge notice renders on the next admin screen, and clears.** All the way
+to the screen. This notice is raised exactly once and never re-queued, so the
+admin page load after the deactivation has to draw it — and consume it, or the
+owner reads the same deactivation report for ever. It is a warning, not an
+error: the library has already handled it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant R as Conflict Resolver
+    participant Q as Notice queue
+
+    WP->>R: request one — resolves and redirects
+    R->>Q: queue_merge_notice()
+    Note over WP,Q: request two, the screen the user landed on
+    WP->>Q: all_admin_notices
+    Q-->>WP: draws it as notice-warning
+    Q->>Q: clears the queue
+```
+
+**The request after a deactivation does not loop.** The failure mode a merge
+notice queued on every request would produce: a redirect loop, or a screen
+reporting the same deactivation for ever. Nothing is re-registered between the
+two requests — a duplicate slug throws — because this is the next page view, not
+a second bootstrap. The second request must *not* halt, and the helper fails the
+test if it does.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant R as Conflict Resolver
+    participant L as Loader
+
+    WP->>R: request one — deactivates, queues, redirects
+    Note over WP: the queue is emptied, so a second notice would be visible
+    WP->>R: request two
+    R->>R: no standalone active — nothing to resolve
+    WP->>L: plugins_loaded priority 6
+    L->>L: with the standalone gone, the bundled copy takes over
+```
+
+**DEFER leaves the standalone active and loads nothing.** The policy hands the
+request to the standalone. WordPress includes an active plugin from
+`wp-settings.php` long before `plugins_loaded`, so by the time the resolver runs
+the standalone has already defined the guard constant — which is what stands the
+bundled copy down. Defining it up front is what makes this the scenario the
+policy describes, rather than a resolver that merely declined to act.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant R as Conflict Resolver
+    participant L as Loader
+
+    Note over WP: the standalone loaded from wp-settings.php and defined the guard
+    WP->>R: plugins_loaded priority 5
+    R->>R: policy is DEFER — no-op
+    WP->>L: plugins_loaded priority 6
+    L->>L: the guard is defined — stand down
+    Note right of L: standalone still active, nothing queued
+```
+
+**NOTICE_ONLY notifies without deactivating.** A policy that only talks must not
+end the request, which is what the non-halting helper asserts.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant R as Conflict Resolver
+    participant Q as Notice queue
+
+    WP->>R: plugins_loaded priority 5
+    R->>Q: queue_conflict_notice() — the host's own sentence
+    R-->>WP: returns; no deactivation, no redirect
+    Note over WP: the standalone is still in active_plugins
+```
+
+**A user who cannot activate plugins resolves nothing.** The gate that survives
+every policy and every rebinding: whoever cannot activate a plugin must not be
+able to deactivate one by loading an admin page. Nothing is consumed by
+refusing — the standalone is still there to detect on the next request, from
+someone who can act on it, which is what the second half asserts.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WP as WordPress
+    participant G as Gatekeeper
+    participant R as Conflict Resolver
+
+    Note over WP: signed in as a subscriber
+    WP->>G: user_may_resolve()
+    G-->>WP: false — cannot activate_plugins
+    WP--xR: no resolver is built
+    Note over WP: same site, now signed in as an administrator
+    WP->>G: user_may_resolve()
+    G-->>WP: true
+    WP->>R: resolve_all() — deactivates and queues
+```
+
+**A reactivation attempt yields the friendly message.** The one conflict the
+load guard cannot prevent: the owner reinstalls the standalone and presses
+Activate, WordPress includes it on top of the bundled copy, and the
+re-declaration is a real fatal that core's sandbox reports as "the plugin
+triggered a fatal error" — true, and useless. All the library gets to do is
+reword the sentence. Driven through core's own filter dispatch rather than by
+calling the rewriter, because the admin-only `add_filter()` is half of what has
+to work. The notice box stays core's — its classes, its dismiss button, its
+wrapper; only the sentence inside is ours.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Owner
+    participant WP as WordPress
+    participant Rw as Conflict Rewriter
+
+    Owner->>WP: presses Activate on the standalone
+    WP->>WP: sandbox includes it — re-declaration fatal
+    WP->>WP: redirects to plugins.php with plugin and _error_nonce
+    WP->>Rw: wp_admin_notice_markup filter
+    Rw->>Rw: screen is plugins, arg names a registered standalone, nonce verifies
+    Rw-->>WP: core's sentence swapped for the host's, wrapper untouched
+```
