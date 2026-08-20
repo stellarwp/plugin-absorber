@@ -138,7 +138,7 @@ class StoreTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( self::OPTION_WOO, Store::option_name() );
+		$this->assertSame( self::OPTION_WOO, ( new Store() )->option_name() );
 	}
 
 	/**
@@ -149,7 +149,7 @@ class StoreTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'Give-Core' );
 
-		$this->assertSame( self::OPTION_NORMALISED, Store::option_name() );
+		$this->assertSame( self::OPTION_NORMALISED, ( new Store() )->option_name() );
 
 		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 

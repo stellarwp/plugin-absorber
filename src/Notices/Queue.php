@@ -23,7 +23,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * bypasses every binding a host made, and it is the one a test or a stray `new` reaches for.
  *
  * A host already using stellarwp/admin-notices can bind its own implementation of Queue_Interface
- * and read the same option, whose name is `self::option_name()`.
+ * and read the same option, whose name is `option_name()`.
  *
  * @since 1.0.0
  */
@@ -180,16 +180,14 @@ class Queue implements Queue_Interface {
 	}
 
 	/**
-	 * The option name backing the queue. Read it directly to render these notices yourself.
-	 *
 	 * @since 1.0.0
 	 *
 	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return string
 	 */
-	public static function option_name(): string {
-		return Store::option_name();
+	public function option_name(): string {
+		return $this->store->option_name();
 	}
 
 	/**

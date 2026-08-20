@@ -24,6 +24,16 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  */
 class Spy_Queue implements Queue_Interface {
 	/**
+	 * The option this spy would keep notices in, if it kept any.
+	 *
+	 * Deliberately not the default queue's name: a test that reads the real option while a spy is
+	 * bound is reading somewhere nothing was written, and should say so rather than agree.
+	 *
+	 * @var string
+	 */
+	public $option = 'spy_queue_notices';
+
+	/**
 	 * Slugs handed to queue_merge_notice(), in order.
 	 *
 	 * @var string[]
@@ -83,5 +93,12 @@ class Spy_Queue implements Queue_Interface {
 	 */
 	public function render(): void {
 		++$this->render_calls;
+	}
+
+	/**
+	 * @return string
+	 */
+	public function option_name(): string {
+		return $this->option;
 	}
 }

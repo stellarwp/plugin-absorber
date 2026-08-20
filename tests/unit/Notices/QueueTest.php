@@ -555,7 +555,7 @@ class QueueTest extends WPTestCase {
 		Config_State::reset();
 		Config::set_hook_prefix( 'woo' );
 
-		$this->assertSame( self::OPTION_FOR_OTHER_PREFIX, Queue::option_name() );
+		$this->assertSame( self::OPTION_FOR_OTHER_PREFIX, $this->make_queue()->option_name() );
 
 		$this->make_queue()->queue_merge_notice( $this->make_sub_plugin() );
 
