@@ -14,7 +14,10 @@ use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithUsers;
 use RuntimeException;
+use WP_Error;
+use WP_Network;
 
 /**
  * "Once, ever", and where that is recorded.
@@ -28,6 +31,7 @@ use RuntimeException;
  */
 class ActivatorTest extends WPTestCase {
 	use WithSubPlugins;
+	use WithUsers;
 
 	private const OPTION = 'give_plugin_absorber_activations';
 
@@ -208,6 +212,104 @@ class ActivatorTest extends WPTestCase {
 		( new Activator() )->maybe_run( $this->recording_sub_plugin( $calls ) );
 
 		$this->assertCount( 1, $calls, 'The slug has to be retried, not skipped forever.' );
+	}
+
+	/**
+	 * The record is a *site* option, so where there is a network it is the network's and every site
+	 * reads the same one.
+	 *
+	 * That matches the deactivation it follows. `Plugin\Deactivator` leaves `deactivate_plugins()`'s
+	 * `$network_wide` at core's null default, which takes the standalone out of the *network's* active
+	 * plugins — so a per-site record would have the host's migration run again on every other site in
+	 * the network, each of them creating tables for a plugin that was already merged once.
+	 *
+	 * Both halves are asserted because either alone is satisfiable by the wrong implementation: a
+	 * record written per-site is still readable from the site that wrote it, and an option nothing
+	 * wrote is absent from every site there is.
+	 */
+	public function test_the_record_is_network_wide(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'There is no second site to read the record from on singlesite.' );
+		}
+
+		$calls      = [];
+		$sub_plugin = $this->recording_sub_plugin( $calls );
+
+		( new Activator() )->maybe_run( $sub_plugin );
+
+		$this->assertFalse(
+			get_option( self::OPTION, false ),
+			'A per-site option would be invisible to every other site in the network.'
+		);
+
+		$blog_id = $this->create_site();
+
+		switch_to_blog( $blog_id );
+
+		try {
+			$this->assertSame(
+				[ 'give-recurring' => true ],
+				$this->recorded(),
+				'The record has to be readable from another site in the network.'
+			);
+
+			( new Activator() )->maybe_run( $sub_plugin );
+		} finally {
+			// In a finally so a failed assertion cannot leave the rest of the process running against
+			// the second site, or leave its tables behind.
+			restore_current_blog();
+			wp_delete_site( $blog_id );
+		}
+
+		$this->assertCount( 1, $calls, 'A callback recorded on one site must not run again on another.' );
+	}
+
+	/**
+	 * A second site on the same network, for the one assertion that needs somewhere else to read from.
+	 *
+	 * @throws RuntimeException When multisite has no network, or the site cannot be created — rather
+	 *                          than switching to a blog id that was never made and reading options out
+	 *                          of tables that do not exist.
+	 *
+	 * @return int
+	 */
+	private function create_site(): int {
+		$network = get_network();
+
+		if ( ! $network instanceof WP_Network ) {
+			throw new RuntimeException( 'Multisite with no network to create a site on.' );
+		}
+
+		$name   = 'absorber-' . uniqid();
+		$domain = $network->domain;
+		$path   = $network->path . $name . '/';
+
+		// A subdomain network puts the new site in front of the network's domain instead of below its
+		// path. WPLoader installs a subdirectory network, but a fixture that only works on one of the
+		// two would fail as a broken test rather than as a broken library.
+		if ( is_subdomain_install() ) {
+			$domain = $name . '.' . $network->domain;
+			$path   = $network->path;
+		}
+
+		// Creating a site runs core's populate_options(), which calls delete_expired_transients(), whose
+		// DELETE self-joins the options table under two aliases. The suite runs inside a transaction on
+		// TEMPORARY tables, and MySQL cannot open one of those twice in a statement -- so the query
+		// fails, harmlessly, on a site that has no transients to expire. Suppressed for the one call
+		// rather than left to print a WordPress database error into every CI log.
+		global $wpdb;
+
+		$suppressing = $wpdb->suppress_errors( true );
+
+		$blog_id = wpmu_create_blog( $domain, $path, 'Plugin Absorber', $this->create_user( 'administrator' ) );
+
+		$wpdb->suppress_errors( $suppressing );
+
+		if ( $blog_id instanceof WP_Error ) {
+			throw new RuntimeException( 'Could not create a second site: ' . $blog_id->get_error_message() );
+		}
+
+		return $blog_id;
 	}
 
 	/**
