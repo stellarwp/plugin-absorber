@@ -158,11 +158,11 @@ class Redirector {
 	 * with PHP_QUERY_RFC3986, so no value can add a parameter, open a fragment or arrive as markup,
 	 * whatever it holds.
 	 *
-	 * Deliberately not sanitize_text_field(), which is what stood here and must not be restored.
-	 * wp_parse_str() has already url-decoded these values, and _sanitize_text_fields() deletes every
-	 * '%xx' sequence it can find and entity-encodes a bare '<' -- so a search for '100%ab' would be
-	 * re-run as '100', and one for 'a<b' as 'a&lt;b'. Re-rendering the screen the user asked for is
-	 * the entire point of the redirect, and that quietly re-renders a different one.
+	 * Deliberately not sanitize_text_field(). wp_parse_str() has already url-decoded these values,
+	 * and _sanitize_text_fields() deletes every '%xx' sequence it can find and entity-encodes a bare
+	 * '<' -- so a search for '100%ab' would be re-run as '100', and one for 'a<b' as 'a&lt;b'.
+	 * Re-rendering the screen the user asked for is the entire point of the redirect, and that
+	 * quietly re-renders a different one.
 	 *
 	 * @since 1.0.0
 	 *
