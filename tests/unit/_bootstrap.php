@@ -9,3 +9,6 @@
  *
  * @package Nexcess\PluginAbsorber
  */
+
+declare( strict_types=1 );
+
