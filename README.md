@@ -54,6 +54,8 @@ whose bindings were discarded.
 - [Conflict handling](docs/conflict-handling.md) — the policies, when they run, and the guard's limits.
 - [Filters](docs/filters.md) — the runtime overrides for policies and notice text.
 - [Notices](docs/notices.md) — where the queue lives, who may see it, and how to render it yourself.
+- [Tests](tests/README.md) — running the suite, the fixtures and traits it offers, and every scenario
+  it drives the library through.
 
 ## License
 

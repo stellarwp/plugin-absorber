@@ -127,7 +127,26 @@ trait WithBundledPlugins {
 	}
 
 	/**
-	 * Remove every fixture this test wrote. Call from tearDown.
+	 * Remove every fixture written by a test that never reached its own cleanup.
+	 *
+	 * PHPUnit runs an `@after` method whether the test passed, failed or errored, which a line at the
+	 * end of a test body does not survive: a failed assertion aborts the test where it stands, so that
+	 * is exactly the line that does not run on the day it matters. Tests that clear other state
+	 * alongside these files still call `remove_bundled_plugin_files()` from their own tearDown, and
+	 * the second call is a no-op over an emptied list.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @after
+	 *
+	 * @return void
+	 */
+	protected function remove_bundled_plugin_files_after_test(): void {
+		$this->remove_bundled_plugin_files();
+	}
+
+	/**
+	 * Remove every fixture this test wrote. Safe to call more than once.
 	 *
 	 * @since 1.0.0
 	 *
