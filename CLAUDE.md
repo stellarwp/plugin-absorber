@@ -646,7 +646,10 @@ under a `Nexcess\SubPluginLoader\` namespace, with a `Config::set_version()` tha
 `ob_start()` approach the `wp_admin_notice_markup` filter replaced.
 
 Human-facing docs are `README.md` plus `docs/installing.md`, `docs/configuration.md`,
-`docs/conflict-handling.md`, `docs/filters.md`, and `docs/notices.md`. Keep them short and keep
-rationale here or in code comments — do not grow the README back. `docs/` is `export-ignore`d and
+`docs/recipes.md`, `docs/conflict-handling.md`, `docs/filters.md`, `docs/notices.md` and
+`docs/extending.md`. Keep them short and keep rationale here or in code comments — do not grow the
+README back. They are written for a host developer integrating the library, not for a maintainer:
+`docs/extending.md` is the only one that names internal classes, and every other file describes
+behaviour instead. `docs/` is `export-ignore`d and
 `README.md` is not, so a link from the README into `docs/` must be an absolute repository URL; links
 *between* files inside `docs/` stay relative.

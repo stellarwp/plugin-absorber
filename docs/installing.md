@@ -11,7 +11,7 @@ here rather than enforced in `require`.
 ## Strauss
 
 Prefix this library with [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md).
-Two or more plugins shipping different versions of it will collide otherwise.
+Two plugins shipping different versions of it will collide otherwise.
 
 > **Nothing may rewrite a sub-plugin's `plugin_loaded_constant`.** Those are real, shared runtime
 > constants: the whole safety mechanism depends on the bundled copy and the standalone defining the

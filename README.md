@@ -12,8 +12,8 @@ composer require stellarwp/plugin-absorber
 ```
 
 **Use [Strauss](https://github.com/stellarwp/global-docs/blob/main/docs/strauss-setup.md)** — two
-plugins shipping different versions of this library will collide otherwise. See
-[Installing][installing] for the one prefixing rule you must not get wrong.
+plugins shipping different versions of this library will collide otherwise. [Installing][installing]
+has the one prefixing rule you must not get wrong.
 
 ## Quick start
 
@@ -23,7 +23,7 @@ use Nexcess\PluginAbsorber\Absorber;
 
 add_action( 'plugins_loaded', function () {
     Config::set_hook_prefix( 'give' );            // required — keys the hooks and options
-    Config::set_container( give()->container );   // required — every collaborator resolves from it
+    Config::set_container( give()->container );   // required — every part of the library comes from it
 
     Absorber::register( [
         'slug'                       => 'give-recurring',
@@ -36,22 +36,14 @@ add_action( 'plugins_loaded', function () {
 }, 0 );
 ```
 
-The container is required — any StellarWP `ContainerInterface` implementation, the one you already
-hand to Telemetry or Uplink. Every collaborator comes from it.
+The container is required, and any StellarWP `ContainerInterface` implementation will do — the one
+you already hand to Telemetry or Uplink.
 
-Keep the `, 0`. `boot()` wires conflict resolution at `plugins_loaded` priority 5 and the load at
-priority 6, and WordPress silently ignores a callback added at or past the priority it is already
-dispatching — so anything below priority 5 wires cleanly, the priority 1 where several hosts wire
-their container today included. Booting later is reported through `_doing_it_wrong()` and both steps
-run inline instead — which on an admin page view can end the request in a redirect before `boot()`
-returns.
-
-Priority 0 is the recommendation, in the block that owns your container rather than in a service
-provider: a host that builds one lazily and replaces it at priority 0 leaves us holding an orphan
-whose bindings were discarded.
-
-A [complete bootstrap][configuration] — two sub-plugins, every optional key — closes the
-configuration doc.
+**Keep the `, 0`.** Anything below `plugins_loaded` priority 5 wires cleanly, but priority 0 is the
+recommendation, in the block that owns your container rather than in a service provider. Booting at 5
+or later still works and is reported through `_doing_it_wrong()`, with the whole sequence running
+inline instead. [Configuration][configuration] explains both, and closes with a complete bootstrap —
+two sub-plugins, every optional key.
 
 ## Docs
 
@@ -62,6 +54,7 @@ configuration doc.
 - [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
 - [Filters][filters] — the runtime overrides for policies and notice text.
 - [Notices][notices] — where the queue lives, who may see it, and how to render it yourself.
+- [Extending][extending] — swapping out a piece of the library.
 - [Tests][tests] — running the suite, the fixtures and traits it offers, and every scenario it drives
   the library through.
 
@@ -75,6 +68,7 @@ source.
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
 [notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
+[extending]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/extending.md
 [tests]: https://github.com/stellarwp/plugin-absorber/blob/main/tests/README.md
 
 ## License

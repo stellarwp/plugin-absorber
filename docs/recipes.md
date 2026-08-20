@@ -18,37 +18,21 @@ Absorber::register( [
 ] );
 ```
 
-`enabled` is the first of five gates, and the only one ahead of the guard constant:
+`enabled` is the first gate, ahead of the guard constant —
+[how a sub-plugin loads](configuration.md#how-a-sub-plugin-loads) has the rest of the chain. Three
+things follow from where it sits.
 
-```mermaid
-flowchart TD
-    A["enabled"] -->|false| S1["skipped, silently"]
-    A -->|true| B["plugin_loaded_constant already defined?"]
-    B -->|yes| S2["skipped: a copy is already running"]
-    B -->|no| C["dependency_check"]
-    C -->|false| S3["skipped, dependency notice queued"]
-    C -->|true| D["bundled file is readable?"]
-    D -->|no| S4["skipped, reported with _doing_it_wrong"]
-    D -->|yes| E["should_load filter"]
-    E -->|false| S5["skipped, silently"]
-    E -->|true| F["require_once"]
-    F --> G["activation_callback, once ever"]
-```
+**Switching the toggle off unloads nothing.** The `require_once` on this request already happened;
+the next request is the one that skips it. Anything that has to stop immediately is the sub-plugin's
+own business to gate.
 
-Three things follow from where it sits.
+**A disabled sub-plugin is invisible to conflict resolution too.** The toggle is checked first there
+as well, so an off toggle also stops the standalone being deactivated: off means this library leaves
+the plugin alone, standalone included.
 
-**Switching the toggle off unloads nothing.** The `require_once` on the current request already
-happened; the next request is the one that skips it. Anything that has to stop immediately — a
-feature, an endpoint — is the sub-plugin's own business to gate.
-
-**A disabled sub-plugin is invisible to conflict resolution as well.** `Conflict\Detector` asks
-`is_enabled()` before it asks anything else, so an off toggle also stops the standalone being
-deactivated. That is the intent: off means this library leaves the plugin alone, standalone
-included, and a site running the standalone keeps running it.
-
-**Keep the callable cheap.** It is called on the conflict pass and again on the load pass, so at
-least twice on an admin page view. An option read is fine; a remote licence check belongs behind a
-cached value.
+**Keep the callable cheap.** It runs on the conflict pass and again on the load pass, so at least
+twice on an admin page view. An option read is fine; a remote licence check belongs behind a value
+you have already cached.
 
 ## Register several add-ons from one manifest
 
@@ -63,36 +47,25 @@ extended at include time has to be registered before its extender.
 
 ```php
 $sub_plugins = [
-    [
-        'slug'                       => 'give-recurring',
-        'plugin_loaded_constant'     => 'GIVE_RECURRING_VERSION',
-        'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
-    ],
-    [
-        'slug'                       => 'give-stripe',
-        'plugin_loaded_constant'     => 'GIVE_STRIPE_VERSION',
-        'standalone_plugin_basename' => 'give-stripe/give-stripe.php',
-    ],
+    'give-recurring' => 'GIVE_RECURRING_VERSION',
+    'give-stripe'    => 'GIVE_STRIPE_VERSION',
 ];
 
-foreach ( $sub_plugins as $sub_plugin ) {
-    Absorber::register(
-        $sub_plugin + [
-            'bundled_plugin_file' => sprintf(
-                '%1$ssub-plugins/%2$s/%2$s.php',
-                GIVE_PLUGIN_DIR,
-                $sub_plugin['slug']
-            ),
-            'enabled'             => static fn( Sub_Plugin $sub ) => give_addon_is_enabled( $sub->get_slug() ),
-        ]
-    );
+foreach ( $sub_plugins as $slug => $constant ) {
+    Absorber::register( [
+        'slug'                       => $slug,
+        'bundled_plugin_file'        => GIVE_PLUGIN_DIR . "sub-plugins/{$slug}/{$slug}.php",
+        'plugin_loaded_constant'     => $constant,
+        'standalone_plugin_basename' => "{$slug}/{$slug}.php",
+        'enabled'                    => static fn() => give_addon_is_enabled( $slug ),
+    ] );
 }
 ```
 
 An entry the library cannot use throws `Config_Exception` out of the `Absorber::register()` call it
-is in, so a typo names itself in a stack trace pointing at your loop rather than surfacing later
-from inside a core hook. A duplicate `slug` is the one that does surface later — the registrations
-are buffered and collide at the first read, on `plugins_loaded`.
+is in, so a typo names itself in a stack trace pointing at your loop. A duplicate `slug` surfaces
+later: registrations are buffered, and the collision is raised at the first read on
+`plugins_loaded`.
 
 ## Choose a policy, and know what the site owner sees
 
@@ -117,15 +90,14 @@ flowchart TD
 | `NOTICE_ONLY` | left running | the bundled copy stands down | unchanged until someone acts on the notice |
 | `DEFER` | left running | the bundled copy stands down | unchanged, and nothing is said |
 
-The redirect under `DEACTIVATE` is why the deactivation is not silent to the user: it re-renders the
-screen with the standalone's code gone. It happens once per request no matter how many standalones
-were turned off, and only on an interactive admin `GET` that carries no `action` —
-[conflict handling](conflict-handling.md#when-resolution-runs) has the full gate list.
+The redirect under `DEACTIVATE` re-renders the screen with the standalone's code gone. It happens
+once per request however many standalones were turned off, and only on an interactive admin `GET`
+carrying no `action` — [conflict handling](conflict-handling.md#when-resolution-runs) has the gates.
 
 ## Ship the absorption over several releases
 
-Bundling the code and taking over from the standalone do not have to be the same release. Moving
-the `conflict_policy` one step per release lets a site be warned before anything of theirs is turned
+Bundling the code and taking over from the standalone do not have to be the same release. Moving the
+`conflict_policy` one step per release lets a site be warned before anything of theirs is turned
 off:
 
 ```mermaid
@@ -136,12 +108,9 @@ flowchart LR
 ```
 
 Release 1 is the safe one to leave in place for a while: the bundled copy ships dormant on every
-site that has the standalone, which is exactly the population you are least sure about, and the
-guard constant is doing the work rather than any decision of yours. Release 3 is the only one that
-touches a site's active plugins.
-
-Nothing here needs a code change per release beyond the constant — or none at all, if the policy
-comes from a callable reading a value you can move without shipping:
+site that has the standalone, which is the population you are least sure about. Release 3 is the
+only one that touches a site's active plugins. Each step is a one-constant change — or none at all,
+if the policy comes from a callable reading a value you can move without shipping:
 
 ```php
 /**
@@ -157,13 +126,13 @@ misspelt option cannot turn a plugin off.
 
 ## Defer to a standalone that is a new codebase
 
-This is an edge case, but one that has occurred before: a later version of a standalone that shares no
-code with the version you bundled, while still shipping under the same folder and file name.
+This is an edge case, but one that has occurred before: a later version of a standalone that shares
+no code with the version you bundled, while still shipping under the same folder and file name.
 
-LearnDash's ProPanel is a case where this happened. `learndash-propanel/learndash_propanel.php` was ProPanel
-2.x, which LearnDash absorbed into its Reports module. ProPanel 3.0 arrived at that same path as a
-new codebase — its own namespace, its own `LDRP_*` constants, none of the 2.x code. That leaves the
-basename all the two versions have in common, so `standalone_plugin_basename` cannot tell them
+LearnDash's ProPanel is a case where this happened. `learndash-propanel/learndash_propanel.php` was
+ProPanel 2.x, which LearnDash absorbed into its Reports module. ProPanel 3.0 arrived at that same
+path as a new codebase — its own namespace, its own `LDRP_*` constants, none of the 2.x code. The
+basename is all the two versions have in common, so `standalone_plugin_basename` cannot tell them
 apart. The version installed at that path can, so read it and defer:
 
 ```php
@@ -192,31 +161,24 @@ add_filter( 'learndash/plugin_absorber/conflict_policy', static function ( $poli
 }, 10, 2 );
 ```
 
-**What `DEFER` does here is not what it does in the ordinary case.** `DEFER` means one thing only:
-the conflict pass leaves the standalone alone. What becomes of the *bundled* copy is decided one
-priority later by the load guard, and turns entirely on whether the standalone defines the guard
-constant:
+**`DEFER` here does not stand the bundled copy down.** The policy only leaves the standalone alone;
+[the load guard](conflict-handling.md#the-load-guard) decides the rest, one priority later:
 
 | The standalone at that basename | The guard constant | The bundled copy, under `DEFER` |
 |---|---|---|
-| an older version of the same code | defined by it | stands down; the standalone keeps the site |
+| an older version of the same code | defined by it | stands down |
 | a new codebase at the same path | never defined | **loads, alongside it** |
 
-The second row is what this recipe is for. ProPanel 2.x defines `LD_PP_PLUGIN_DIR` and 3.x defines
-only `LDRP_*`, so with 3.x active the bundled Reports module loads as well — which is correct, since
-the two share a file name and nothing else and have nothing to re-declare between them.
-
-Treat that as the exception rather than a shape to design for. Two copies of a plugin loading at
-once is normally the fatal this library exists to prevent, and it is only safe here because the two
-are not copies of each other. Reach for it when a new codebase has taken over the basename, behind a
-filter that establishes which version is installed — not as a general way to run bundled and
-standalone side by side.
+ProPanel 2.x defines `LD_PP_PLUGIN_DIR` and 3.x defines only `LDRP_*`, so with 3.x active the
+bundled Reports module loads too — correct here, since the two share a file name and nothing else.
+Treat it as the exception it is: two copies loading at once is normally the fatal this library
+exists to prevent, and it is safe only because these two are not copies of each other.
 
 ## Do per-site work on multisite
 
-Deactivation is network-wide, the notice queue is a network option, and so is the activation
-record — so `activation_callback` runs **once for the network**, in whichever site's request
-reached the load pass first. Per-site work loops:
+Deactivation is network-wide, the notice queue is a network option, and so is the activation record,
+so `activation_callback` runs **once for the network** — in whichever site's request reached the
+load pass first. Per-site work loops:
 
 ```php
 'activation_callback' => static function ( Sub_Plugin $sub_plugin ) {
@@ -234,11 +196,8 @@ reached the load pass first. Per-site work loops:
 },
 ```
 
-That is the right shape for a handful of sites and the wrong one for a large network, where the
-loop runs inside `plugins_loaded` on one unlucky request. Bind `Activator_Interface` instead and
-record "once, ever" per site — a per-site option, or your own migration table — so each site pays
-only for itself.
-
-Write the callback to be idempotent either way. "Once, ever" is bookkeeping rather than a lock: the
-record is written after the callback returns, so a failure is retried, and two first requests
-arriving together can both run it.
+That is the right shape for a handful of sites and the wrong one for a large network, where the loop
+runs inside `plugins_loaded` on one unlucky request. Replace the once-ever bookkeeping — see
+[Extending](extending.md) — and record it per site, so each site pays only for itself. Either way,
+write the callback to be idempotent: "once, ever" is bookkeeping rather than a lock, and
+[activation](configuration.md#activation) has the retry and concurrency detail.
