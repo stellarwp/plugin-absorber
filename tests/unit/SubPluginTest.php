@@ -64,9 +64,25 @@ class SubPluginTest extends WPTestCase {
 		unset( $config[ $missing_key ] );
 
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $missing_key );
+		$this->expectExceptionMessage( "required key \"{$missing_key}\" is missing" );
 
 		new Sub_Plugin( $config );
+	}
+
+	/**
+	 * A key set to null is not a different mistake from an absent one: isset() is false for both,
+	 * so both are reported as missing. Asserted here rather than left among the malformed values,
+	 * where it would land on this throw while claiming to test the other one.
+	 *
+	 * @dataProvider required_keys
+	 *
+	 * @param string $key Required key explicitly set to null.
+	 */
+	public function test_it_treats_a_null_required_key_as_missing( string $key ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( "required key \"{$key}\" is missing" );
+
+		$this->make_sub_plugin( [ $key => null ] );
 	}
 
 	/**
@@ -81,27 +97,115 @@ class SubPluginTest extends WPTestCase {
 	/**
 	 * @dataProvider unusable_required_values
 	 *
-	 * @param mixed $value Value to put under a required key.
+	 * @param string $key   Required key to put the value under.
+	 * @param mixed  $value Value the key cannot be used as.
 	 */
-	public function test_it_rejects_a_required_key_that_is_not_a_non_empty_string( $value ): void {
+	public function test_it_rejects_a_required_key_that_is_not_a_non_empty_string( string $key, $value ): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( 'slug' );
+		$this->expectExceptionMessage( "key \"{$key}\" must be a non-empty string" );
 
-		$this->make_sub_plugin( [ 'slug' => $value ] );
+		$this->make_sub_plugin( [ $key => $value ] );
 	}
 
 	/**
-	 * An array is the one that matters: it survives a truthiness check and then casts to the
-	 * string "Array", which every sub-plugin making the same mistake would collide on.
+	 * Every required key against every shape, rather than one key standing in for the other two.
+	 * plugin_loaded_constant is why: it carries the whole re-declaration guarantee, and a
+	 * regression that stopped checking it would leave an array there to cast to the string
+	 * "Array" -- defined( "Array" ) is false, so the load proceeds into the fatal this library
+	 * exists to prevent, silently.
 	 *
-	 * @return Generator<string,array{0:mixed}>
+	 * An array is the shape that matters most: it survives a truthiness check and then collides
+	 * with every other sub-plugin making the same mistake. `null` is absent because it is not a
+	 * malformed value -- it is reported as a missing key, which the test above asserts.
+	 *
+	 * @return Generator<string,array{0:string,1:mixed}>
 	 */
 	public static function unusable_required_values(): Generator {
-		yield 'empty string' => [ '' ];
-		yield 'array'        => [ [ 'give', 'recurring' ] ];
-		yield 'null'         => [ null ];
-		yield 'integer'      => [ 42 ];
-		yield 'object'       => [ new \stdClass() ];
+		$values = [
+			'empty string' => '',
+			'array'        => [ 'give', 'recurring' ],
+			'integer'      => 42,
+			'boolean'      => true,
+			'object'       => new \stdClass(),
+		];
+
+		foreach ( [ 'slug', 'bundled_plugin_file', 'plugin_loaded_constant' ] as $key ) {
+			foreach ( $values as $shape => $value ) {
+				yield "{$key}: {$shape}" => [ $key, $value ];
+			}
+		}
+	}
+
+	/**
+	 * The manifest loop in the docs registers several sub-plugins from one stack frame, so the
+	 * message is the only thing that says which entry was wrong. The slug names it when the slug
+	 * is usable, the bundled file when the slug is itself the key at fault -- and when neither can
+	 * be read, saying so plainly still tells the host which of the two to go and look for.
+	 *
+	 * @dataProvider unusable_entries
+	 *
+	 * @param array<string,mixed> $config   Config as a host might have written it.
+	 * @param string              $expected What the message must contain to identify the entry.
+	 */
+	public function test_a_rejection_names_the_entry_it_is_about( array $config, string $expected ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( $expected );
+
+		new Sub_Plugin( $config );
+	}
+
+	/**
+	 * @return Generator<string,array{0:array<string,mixed>,1:string}>
+	 */
+	public static function unusable_entries(): Generator {
+		yield 'the slug, when it is usable' => [
+			[
+				'slug'                => 'give-recurring',
+				'bundled_plugin_file' => '/tmp/give-recurring/give-recurring.php',
+			],
+			'for "give-recurring"',
+		];
+		yield 'the bundled file, when the slug is the key at fault' => [
+			[
+				'slug'                => [ 'give-recurring' ],
+				'bundled_plugin_file' => '/tmp/give-recurring/give-recurring.php',
+			],
+			'for "/tmp/give-recurring/give-recurring.php"',
+		];
+		yield 'neither, said plainly' => [
+			[ 'plugin_loaded_constant' => 'GIVE_RECURRING_VERSION' ],
+			'with no usable slug or bundled_plugin_file',
+		];
+	}
+
+	/**
+	 * The type is the difference between finding a stray `[]` and rereading the whole manifest. An
+	 * object reports its class, because a Closure and a WP_Error are the same "object" and a very
+	 * different mistake; the empty string is named as one, since "string given" under a key that
+	 * must be a non-empty string says nothing at all.
+	 *
+	 * @dataProvider reported_types
+	 *
+	 * @param mixed  $value    Value to put under a required key.
+	 * @param string $expected Type the message must report.
+	 */
+	public function test_a_rejection_names_the_type_it_received( $value, string $expected ): void {
+		$this->expectException( Config_Exception::class );
+		$this->expectExceptionMessage( ", {$expected} given." );
+
+		$this->make_sub_plugin( [ 'plugin_loaded_constant' => $value ] );
+	}
+
+	/**
+	 * @return Generator<string,array{0:mixed,1:string}>
+	 */
+	public static function reported_types(): Generator {
+		yield 'array'        => [ [ 'give', 'recurring' ], 'array' ];
+		yield 'integer'      => [ 42, 'integer' ];
+		yield 'boolean'      => [ true, 'boolean' ];
+		yield 'object'       => [ new \stdClass(), 'stdClass' ];
+		yield 'closure'      => [ static fn(): string => 'GIVE_RECURRING_VERSION', 'Closure' ];
+		yield 'empty string' => [ '', 'empty string' ];
 	}
 
 	/**
@@ -111,7 +215,7 @@ class SubPluginTest extends WPTestCase {
 	 */
 	public function test_it_rejects_a_callable_only_key_that_cannot_be_called( string $key ): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $key );
+		$this->expectExceptionMessage( "key \"{$key}\" must be callable" );
 
 		$this->make_sub_plugin( [ $key => 'absorber_no_such_function' ] );
 	}
@@ -132,7 +236,7 @@ class SubPluginTest extends WPTestCase {
 	 */
 	public function test_it_rejects_a_standalone_basename_that_is_not_a_string(): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( 'standalone_plugin_basename' );
+		$this->expectExceptionMessage( 'key "standalone_plugin_basename" must be a string, Closure given.' );
 
 		$this->make_sub_plugin( [ 'standalone_plugin_basename' => static fn() => 'give/give.php' ] );
 	}
@@ -142,15 +246,32 @@ class SubPluginTest extends WPTestCase {
 	 * to the string "Array", and a [ class, method ] pair naming a method that does not exist would
 	 * become the notice text itself.
 	 *
-	 * @dataProvider deferrable_keys
+	 * Asserted on the requirement rather than on the key alone: conflict_policy is checked by one
+	 * loop and the two message keys by another, and a key that quietly moved between the two would
+	 * still name itself in whichever message it landed in.
 	 *
-	 * @param string $key Key that holds a string or a callable.
+	 * @dataProvider deferrable_key_requirements
+	 *
+	 * @param string $key         Key that holds a string or a callable.
+	 * @param string $requirement What its message must say the key has to be.
 	 */
-	public function test_it_rejects_a_deferrable_key_that_is_neither_a_string_nor_a_callable( string $key ): void {
+	public function test_it_rejects_a_deferrable_key_that_is_neither_a_string_nor_a_callable( string $key, string $requirement ): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $key );
+		$this->expectExceptionMessage( "key \"{$key}\" must be {$requirement}," );
 
 		$this->make_sub_plugin( [ $key => [ Deferred_Message::class, 'no_such_method' ] ] );
+	}
+
+	/**
+	 * The policy also takes a string; the two message keys take no string at all. Spelled out here
+	 * so that a key moving between the two loops fails this test rather than passing it.
+	 *
+	 * @return Generator<string,array{0:string,1:string}>
+	 */
+	public static function deferrable_key_requirements(): Generator {
+		yield 'conflict_policy'           => [ 'conflict_policy', 'a policy string or a non-string callable' ];
+		yield 'conflict_notice_message'   => [ 'conflict_notice_message', 'a non-string callable' ];
+		yield 'dependency_notice_message' => [ 'dependency_notice_message', 'a non-string callable' ];
 	}
 
 	/**
@@ -165,7 +286,7 @@ class SubPluginTest extends WPTestCase {
 	 */
 	public function test_it_rejects_a_deferrable_value_of_any_other_shape( $value ): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( 'conflict_policy' );
+		$this->expectExceptionMessage( 'key "conflict_policy" must be a policy string or a non-string callable' );
 
 		$this->make_sub_plugin( [ 'conflict_policy' => $value ] );
 	}
@@ -198,9 +319,40 @@ class SubPluginTest extends WPTestCase {
 	 */
 	public function test_it_rejects_a_message_that_is_already_a_string( string $key, string $message ): void {
 		$this->expectException( Config_Exception::class );
-		$this->expectExceptionMessage( $key );
+		$this->expectExceptionMessage( "key \"{$key}\" must be a non-string callable, string given." );
 
 		$this->make_sub_plugin( [ $key => $message ] );
+	}
+
+	/**
+	 * This is the failure a host hits the first time it writes `__()` into its config array, so
+	 * saying what is refused is not enough on its own -- the message has to say what to write
+	 * instead, and why the library cares.
+	 *
+	 * @dataProvider message_key_strings
+	 *
+	 * @param string $key     Key that only ever holds a callable.
+	 * @param string $message String of any shape.
+	 */
+	public function test_the_message_key_rejection_offers_the_remedy( string $key, string $message ): void {
+		try {
+			$this->make_sub_plugin( [ $key => $message ] );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString(
+				'Wrap the text in a callable',
+				$exception->getMessage(),
+				'The host has to be told what to write instead.'
+			);
+			$this->assertStringContainsString(
+				'init',
+				$exception->getMessage(),
+				'And why: translation has to wait for the textdomain.'
+			);
+
+			return;
+		}
+
+		$this->fail( "A string under {$key} must be rejected." );
 	}
 
 	/**
