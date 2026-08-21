@@ -52,6 +52,7 @@ class RendererTest extends WPTestCase {
 	public static function notice_severities(): Generator {
 		yield 'merge'         => [ 'give-recurring:' . Writer::TYPE_MERGE, 'notice-warning' ];
 		yield 'conflict'      => [ 'give-recurring:' . Writer::TYPE_CONFLICT, 'notice-warning' ];
+		yield 'stranding'     => [ 'give-recurring:' . Writer::TYPE_STRANDING, 'notice-warning' ];
 		yield 'dependency'    => [ 'give-recurring:' . Writer::TYPE_DEPENDENCY, 'notice-error' ];
 		yield 'unknown type'  => [ 'give-recurring:invented', 'notice-warning' ];
 		yield 'no type at all' => [ 'give-recurring', 'notice-warning' ];

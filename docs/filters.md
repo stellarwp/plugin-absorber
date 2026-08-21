@@ -7,6 +7,7 @@
 | `{prefix}/plugin_absorber/conflict_policy` | `string $policy`, `Sub_Plugin $sub_plugin` | Final say over the conflict policy. |
 | `{prefix}/plugin_absorber/conflict_notice_message` | `string $message`, `Sub_Plugin $sub_plugin` | Final say over the conflict notice text. Receives the configured message, or the caller's fallback when nothing is configured. |
 | `{prefix}/plugin_absorber/dependency_notice_message` | `string $message`, `Sub_Plugin $sub_plugin` | Final say over the dependency notice text. Receives the configured message, or the generic default sentence when nothing is configured. |
+| `{prefix}/plugin_absorber/stranding_notice_message` | `string $message`, `Sub_Plugin $sub_plugin` | Final say over the multisite stranding notice text. Receives the generic default; this notice has no config key, so the filter is its only override. |
 
 Each runs last, after the configured value and any fallback, and fires when the value is asked for
 rather than when the sub-plugin is registered — so it is also the place to call `__()`. A
