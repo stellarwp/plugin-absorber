@@ -1,5 +1,3 @@
-<!-- cSpell:ignore upstack -->
-
 # AGENTS.md
 
 This file provides guidance to coding agents when working with code in this repository. `CLAUDE.md`
@@ -657,23 +655,30 @@ gets no PR of its own:
 
 ```bash
 gh stack init --base main 34-first 35-second 36-third
-gh stack view                     # confirm the order before submitting
+gh stack view --json              # confirm the order before submitting
 ```
+
+`view` takes `--json` because a bare `gh stack view` is the interactive TUI; `--short` is the
+one-line-per-branch form for a human reading along.
 
 `--base` is whatever the bottom branch cut from. That is `main` for an ordinary series — and it is
 the **tip branch of the lower stack** when a second stack is built on top of one that is still open,
 which is the only way to keep the lower stack's PRs out of the new one.
 
 **Append one already-existing branch** to a stack that exists. `gh stack init` refuses this with
-"already exists in a stack". Check out a member of the stack — the tip is the natural one — and:
+"already exists in a stack", and `gh stack add` is what takes it: a name that is already a branch in
+git is adopted, and only a name that is not gets created, which is the same rule `init` follows.
+`add` has to run from the **top** of the stack, so get there with `gh stack top` rather than by
+naming a branch — anywhere else it exits `5` with "can only add branches on top of the stack":
 
 ```bash
-git checkout 36-third
+gh stack top
 gh stack add 37-fourth
 ```
 
-`gh stack modify` also adds branches, but it is an interactive TUI, so it cannot be driven from a
-script or by an agent.
+`add` leaves the working tree alone, so uncommitted changes follow you onto the branch it checks
+out; commit or stash first. `gh stack modify` also adds branches, but it is an interactive TUI, so
+it cannot be driven from a script or by an agent.
 
 **Propagate an edit made low in the stack** by cascading rebase, never by merging the lower branch
 upward: commit the edit on the lower branch, check out the **lowest changed** branch, and rebase
