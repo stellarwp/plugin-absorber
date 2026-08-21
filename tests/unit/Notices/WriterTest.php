@@ -144,6 +144,16 @@ class WriterTest extends WPTestCase {
 			'give-recurring could not be loaded because its requirements are not met.',
 			true,
 		];
+
+		// The stranding notice has no config key -- the filter is its only override -- so only its
+		// fallback is exercised here, the way it lands under its own slug:type key.
+		yield 'stranding, fallback' => [
+			'queue_stranding_notice',
+			[],
+			'give-recurring:stranding',
+			'give-recurring',
+			false,
+		];
 	}
 
 	/**
@@ -173,6 +183,21 @@ class WriterTest extends WPTestCase {
 
 		$this->assertSame( 'Ours.', $queue['give-recurring:merge'] );
 		$this->assertSame( 'Ours.', $queue['give-recurring:conflict'] );
+	}
+
+	/**
+	 * The stranding notice is the one conflict-flavoured notice that must not tell the user to
+	 * deactivate the standalone: on the topology it fires for, a network-wide deactivation is exactly
+	 * what would strand the sites the host never reached. It borrows nothing from the conflict
+	 * notice's "you can safely deactivate the standalone" wording.
+	 */
+	public function test_the_stranding_notice_does_not_say_the_standalone_is_safe_to_deactivate(): void {
+		$this->make_writer()->queue_stranding_notice( $this->make_sub_plugin() );
+
+		$message = $this->queue()['give-recurring:stranding'] ?? '';
+
+		$this->assertStringContainsString( 'give-recurring', $message );
+		$this->assertStringNotContainsStringIgnoringCase( 'safely deactivate', $message );
 	}
 
 	public function test_queueing_the_same_slug_and_type_twice_does_not_duplicate(): void {

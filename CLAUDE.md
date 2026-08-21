@@ -200,7 +200,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). Cross-cutting only: a trait used by one folder lives in that folder. |
-| `src/Notices/` | `Writer` (what a notice says, stored under `slug:type`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it), `Contracts\Writer_Interface`. |
+| `src/Notices/` | `Writer` (what a notice says, stored under `slug:type` — `merge`, `conflict`, `stranding`, `dependency`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it, `notice-error` for `dependency` and `notice-warning` for the rest), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Activator_Interface`, `Config_Exception`. |
 
 ### Boot lifecycle
@@ -391,8 +391,9 @@ runnable inline as well as wirable.
 
 - Filters: `{$hook_prefix}/plugin_absorber/should_load` (`Loader`),
   `{$hook_prefix}/plugin_absorber/conflict_policy`,
-  `{$hook_prefix}/plugin_absorber/conflict_notice_message` and
-  `{$hook_prefix}/plugin_absorber/dependency_notice_message` (all three `Sub_Plugin`)
+  `{$hook_prefix}/plugin_absorber/conflict_notice_message`,
+  `{$hook_prefix}/plugin_absorber/dependency_notice_message` and
+  `{$hook_prefix}/plugin_absorber/stranding_notice_message` (all four `Sub_Plugin`)
 - Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
   `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 

@@ -1,7 +1,8 @@
 # Notices
 
-The three notices this library raises — the standalone was deactivated, the standalone is still
-active, a dependency check failed — are queued in a single option named
+The notices this library raises — the standalone was deactivated, the standalone is still active, a
+network-active standalone was left active to avoid stranding sites, a dependency check failed — are
+queued in a single option named
 `{option_prefix}_plugin_absorber_notices`, where `{option_prefix}` is the hook prefix lowercased
 with hyphens folded to underscores: a hook prefix of `Give-Core` stores
 `give_core_plugin_absorber_notices`. On multisite it is a **network** option, so the queue is shared
@@ -29,13 +30,22 @@ the [activation-error screen](conflict-handling.md#reactivating-the-standalone) 
 try to re-activate it. Write one sentence that reads sensibly both as a report of something already
 done and as the explanation standing in for a fatal-error warning.
 
+## The stranding notice
+
+On multisite only, a network-active standalone whose bundled copy ships in a host plugin that is not
+itself network-activated is left active rather than deactivated: turning it off across the network
+would remove it from the sites the host is not active on, where nothing loads the bundled copy. This
+notice explains that, and — unlike the one-time deactivation notice — it recurs until the topology is
+resolved, either by network-activating the host or by removing the standalone from the Network Admin.
+Its text is the `stranding_notice_message` [filter](filters.md); there is no config key for it.
+
 ## Rendering them yourself
 
 `Absorber::notices()->option_name()` tells you where the queue is kept, so you can render it
 yourself without replacing anything. The value is an `array<string,string>` keyed `slug:type`, where
-the type is `merge`, `conflict` or `dependency` — `give-recurring:merge`, for example. The first
-two render as `notice-warning` and the third as `notice-error`, since a dependency notice reports a
-plugin that did not load at all. The messages may contain markup; the built-in rendering passes
+the type is `merge`, `conflict`, `stranding` or `dependency` — `give-recurring:merge`, for example.
+The first three render as `notice-warning` and the last as `notice-error`, since a dependency notice
+reports a plugin that did not load at all. The messages may contain markup; the built-in rendering passes
 them through `wp_kses_post()`, so a link, emphasis or a list survives while scripts and event
 handlers are stripped. Paragraphs come from `wpautop()`, so send the message unwrapped and let a
 blank line break it — a `<p>` of your own is left as it is rather than nested inside another.

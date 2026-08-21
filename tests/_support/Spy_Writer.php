@@ -55,6 +55,13 @@ class Spy_Writer implements Writer_Interface {
 	public $dependency_notices = [];
 
 	/**
+	 * Slugs handed to queue_stranding_notice(), in order.
+	 *
+	 * @var string[]
+	 */
+	public $stranding_notices = [];
+
+	/**
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
 	 *
 	 * @return void
@@ -79,6 +86,15 @@ class Spy_Writer implements Writer_Interface {
 	 */
 	public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void {
 		$this->dependency_notices[] = $sub_plugin->get_slug();
+	}
+
+	/**
+	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
+	 *
+	 * @return void
+	 */
+	public function queue_stranding_notice( Sub_Plugin $sub_plugin ): void {
+		$this->stranding_notices[] = $sub_plugin->get_slug();
 	}
 
 	/**
