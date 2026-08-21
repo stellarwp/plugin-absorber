@@ -299,10 +299,13 @@ registrar now fails like every other binding rather than being the one collabora
 binding surfaced late and politely.
 
 `Conflict\Resolver` switches on the policy: `DEFER` no-ops, `NOTICE_ONLY` queues a notice, and
-`DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects. It is
+`DEACTIVATE` (the default) deactivates network-aware, queues a merge notice, and redirects — unless
+the multisite stranding guard, `Conflict\Detector::deactivation_would_strand_sites()`, declines the
+deactivation, in which case it queues a stranding notice and leaves the standalone alone. It is
 the worked example of required injection — `Conflict\Detector` to say which sub-plugins are in
-conflict, `Plugin\Contracts\Deactivator_Interface` to turn the standalone off, `Writer_Interface` for the notice
-and `Conflict\Redirector` for the destination, all four constructor arguments with no default — so
+conflict and whether deactivating one would strand sites, `Plugin\Contracts\Deactivator_Interface`
+to turn the standalone off, `Writer_Interface` for the notice and `Conflict\Redirector` for the
+destination, all four constructor arguments with no default — so
 the object a test builds is the object the provider builds, and a host's rebinding of either plugin
 seam reaches it, the deactivator directly and the checker through the detector, without the resolver
 knowing a container exists.
@@ -553,9 +556,16 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
   and must not treat an unrecognised value as consent to deactivate.
 - **Filters run last** — after the configured value and any fallback — which is what makes deferred
   translation work. A non-scalar filter return becomes `''`, never a fatal cast.
-- **`deactivate_plugins()` is called silent, with no `$network_wide` argument.** Silent because a
-  `flush_rewrite_rules()` in the standalone's deactivation hook at `plugins_loaded` 404s the site.
-  The `null` default takes both the network and blog branches; a computed `true` strands an entry.
+- **`deactivate_plugins()` is called silent, with no `$network_wide` argument — and, under
+  `DEACTIVATE`, only after the stranding guard clears.** Silent because a `flush_rewrite_rules()` in
+  the standalone's deactivation hook at `plugins_loaded` 404s the site. The `null` default takes both
+  the network and blog branches; a computed `true` strands an entry. The one topology the `null`
+  default over-reaches is a **network-active standalone whose host is not network-active**: pulling it
+  network-wide removes it from the sites the host never loads on, where nothing stands in for it.
+  There `Conflict\Detector::deactivation_would_strand_sites()` reports the danger and `Conflict\Resolver`
+  declines — the standalone stays, the load guard defers the bundled copy network-wide, and a stranding
+  notice explains it. The guard is opt-in via `Config::set_host_plugin_basename()`; unset, behaviour is
+  exactly the `null` default in every topology, so no host regresses.
 - **`Plugin\Loads_Plugin_Functions` guards on `deactivate_plugins()`**, not `is_plugin_active()` —
   the latter is a common third-party shim.
 - **Strauss must not rewrite `plugin_loaded_constant` values.** They are shared runtime constants;

@@ -62,7 +62,8 @@ notice is neither shown nor cleared for a user without the same capability.
 The deactivation itself is silent, and covers both scopes on multisite. Silent because the
 standalone's own deactivation hook would otherwise run this early: a routine `flush_rewrite_rules()`
 in it would regenerate the rules before `init` declared a single post type, and every custom
-permalink on the site would start 404ing.
+permalink on the site would start 404ing. On multisite it can also decline outright — see
+[the stranding guard](#the-multisite-stranding-guard).
 
 **A site that never loads wp-admin never resolves.** Every gate above needs an interactive admin
 page view. Any website administered entirely over SFTP, Composer, or WP-CLI — one whose owner never
@@ -89,6 +90,25 @@ With several sub-plugins in conflict, all of them are resolved before the one re
 and the redirect is skipped entirely once headers have been sent — the request then finishes
 rendering instead of dying blank. The [merge notice](notices.md) is queued first either way, so the
 explanation survives whether or not the request ends in a redirect.
+
+## The multisite stranding guard
+
+`deactivate_plugins()` runs with no `$network_wide` argument, so a network-active standalone is taken
+out of *every* site's plugins. But the bundled copy only loads where the host plugin runs, so on a
+network where the host is active on only some sites, deactivating a network-active standalone would
+remove it from the sites the host never reached — leaving them with no copy of it at all, bundled or
+standalone.
+
+When the host names itself with `Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )`,
+the `DEACTIVATE` policy checks for exactly that case — a network-active standalone whose host is not
+itself network-activated — and declines: the standalone is left active, [the load
+guard](#the-load-guard) stands the bundled copy down network-wide as under `DEFER`, and a [stranding
+notice](notices.md) tells a network administrator why and how to finish, by network-activating the
+host or removing the standalone from the Network Admin. It recurs until one of those is done.
+
+The guard is **opt-in and single-site-safe**: with no host basename set it never fires, and off a
+network it never fires, so in every other topology — both network-active, both per-site, or a
+per-site standalone — deactivation behaves exactly as it always has.
 
 ## The load guard
 

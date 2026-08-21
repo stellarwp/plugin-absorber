@@ -576,6 +576,74 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
+	 * The multisite stranding guard: when the detector reports that deactivating this standalone would
+	 * strand sites -- a network-active standalone whose host is not itself network-active -- the
+	 * DEACTIVATE policy declines. Nothing is deactivated, so there is no merge notice and no redirect;
+	 * a stranding notice explains why the standalone is still there. Whether that condition holds is
+	 * `DetectorTest`'s; that the resolver obeys it is this test's, so the detector is a double.
+	 */
+	public function test_it_declines_to_deactivate_when_that_would_strand_sites(): void {
+		$detector = new class() extends Detector {
+			/**
+			 * No plugin checker and no parent constructor: this stands in for the two answers the
+			 * resolver reads, not for how a real detector reaches them.
+			 */
+			public function __construct() {
+			}
+
+			/**
+			 * @param Sub_Plugin $sub_plugin Sub-plugin to test.
+			 *
+			 * @return bool
+			 */
+			public function is_in_conflict( Sub_Plugin $sub_plugin ): bool {
+				return true;
+			}
+
+			/**
+			 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
+			 *
+			 * @return bool
+			 */
+			public function deactivation_would_strand_sites( Sub_Plugin $sub_plugin ): bool {
+				return true;
+			}
+		};
+
+		$container = new Test_Container();
+		$this->set_up_container( $container );
+
+		// A concrete class, so it is bound after the provider, which would otherwise replace it.
+		$container->singleton(
+			Detector::class,
+			static function () use ( $detector ): Detector {
+				return $detector;
+			}
+		);
+
+		$this->register();
+		$this->resolve_all();
+
+		$this->assertSame(
+			[],
+			$this->deactivations,
+			'A standalone whose deactivation would strand sites must be left active.'
+		);
+
+		$queued = $this->queued_notices();
+		$this->assertArrayHasKey(
+			'give-recurring:stranding',
+			$queued,
+			'The superadmin has to be told why the standalone was left active.'
+		);
+		$this->assertArrayNotHasKey(
+			'give-recurring:merge',
+			$queued,
+			'Nothing was deactivated, so there is no merge to report.'
+		);
+	}
+
+	/**
 	 * One stubborn standalone must not cost the site the redirect the other one earned. The request
 	 * still has a plugin's code in memory that a fresh one would shed, so it is still worth taking —
 	 * and it cannot loop for ever on the strength of the first, because the request it lands on
