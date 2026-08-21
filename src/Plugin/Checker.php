@@ -32,4 +32,19 @@ class Checker implements Checker_Interface {
 		// sub-plugin per request.
 		return is_plugin_active( $basename );
 	}
+
+	/**
+	 * @since 1.0.0
+	 *
+	 * @param string $basename Plugin basename.
+	 *
+	 * @return bool
+	 */
+	public function is_network_active( string $basename ): bool {
+		$this->load_plugin_functions();
+
+		// is_plugin_active_for_network() checks is_multisite() itself and returns false off a
+		// network, so the stranding guard that reads this needs no is_multisite() test of its own.
+		return is_plugin_active_for_network( $basename );
+	}
 }

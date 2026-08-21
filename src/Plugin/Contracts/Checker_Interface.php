@@ -36,4 +36,22 @@ interface Checker_Interface {
 	 * @return bool
 	 */
 	public function is_active( string $basename ): bool;
+
+	/**
+	 * Whether the plugin is active across the whole network.
+	 *
+	 * Network scope only, unlike `is_active()`, which counts either scope. The two are asked for
+	 * different reasons: `is_active()` answers "the standalone's code is going to run this request",
+	 * while this answers "deactivating it reaches every site" -- the question the conflict resolver's
+	 * stranding guard turns on. Returns `false` whenever the site is not multisite, because
+	 * WordPress's own `is_plugin_active_for_network()` does, so a caller needs no `is_multisite()`
+	 * guard of its own and the stranding guard is a no-op off a network.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $basename Plugin basename.
+	 *
+	 * @return bool
+	 */
+	public function is_network_active( string $basename ): bool;
 }

@@ -85,7 +85,7 @@ seams a host may rebind:
 | `Notices\Contracts\Writer_Interface` | `Notices\Writer` | what each notice says |
 | `Conflict\Contracts\Resolver_Interface` | `Conflict\Resolver` | one method: which policy branch a conflict takes |
 | `Plugin\Contracts\Deactivator_Interface` | `Plugin\Deactivator` | deactivates the standalone, network-aware |
-| `Plugin\Contracts\Checker_Interface` | `Plugin\Checker` | answers whether a plugin is active |
+| `Plugin\Contracts\Checker_Interface` | `Plugin\Checker` | answers whether a plugin is active (either scope), and whether it is network-active |
 | `Contracts\Activator_Interface` | `Activator` | run-once activation-callback tracking |
 
 The rest — `Boot\Scheduler`, `Loader`, `Registry\Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
@@ -196,7 +196,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
-| `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
+| `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active in either scope, and whether it is network-active — `is_plugin_active_for_network()`, which is `false` off a network so no caller needs an `is_multisite()` guard), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
