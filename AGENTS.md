@@ -1,3 +1,5 @@
+<!-- cSpell:ignore upstack -->
+
 # AGENTS.md
 
 This file provides guidance to coding agents when working with code in this repository. `CLAUDE.md`
@@ -670,7 +672,8 @@ git checkout 36-third
 gh stack add 37-fourth
 ```
 
-`gh stack modify` also adds branches, but it is an interactive TUI and is unusable headlessly.
+`gh stack modify` also adds branches, but it is an interactive TUI, so it cannot be driven from a
+script or by an agent.
 
 **Propagate an edit made low in the stack** by cascading rebase, never by merging the lower branch
 upward: commit the edit on the lower branch, check out the **lowest changed** branch, and rebase
