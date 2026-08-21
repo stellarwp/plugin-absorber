@@ -637,6 +637,16 @@ portion that cannot compile, pass the suite or be described in one `What` line i
 it belongs with the branch that completes it. When the work genuinely is one decision, one PR is
 the right answer and a stack of one is nothing but ceremony.
 
+**Every PR in a stack is titled `<shared prefix> [X/Y]: <rest of the title>`** — so
+`Conflict handling [2/4]: resolve the standalone conflict` sits between the `[1/4]` and the `[3/4]`
+of the same prefix. The prefix names the work all of them belong to and `X/Y` names the position and
+the size, which is the whole of what a reviewer scanning the PR list needs: that these belong
+together, which one to open first, and how much more is coming. `Y` is a count, so appending a
+branch renumbers every PR already open — retitle them in the same pass as the `gh stack add`, or the
+numbering says the series is shorter than it is. `gh stack submit --auto` generates a title from the
+branch's commits and carries no prefix, so titles are written or corrected with `gh pr edit --title`
+afterwards; a later submit preserves them.
+
 **A PR based on another branch is not automatically a stack.** The commonest reason to cut from an
 open branch instead of `main` is that both touch the same file and cutting from `main` would
 guarantee a conflict — that is a base branch and nothing more. Point the PR's base at the branch
