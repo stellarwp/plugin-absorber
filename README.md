@@ -39,9 +39,11 @@ add_action( 'plugins_loaded', function () {
 The container is required, and any StellarWP `ContainerInterface` implementation will do — the one
 you already hand to Telemetry or Uplink.
 
-On multisite, optionally add `Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )` so the
-library never deactivates a network-active standalone when your plugin is not itself network-activated
-— which would leave the network's other sites with no copy of it at all.
+If your plugin can run on multisite, add
+`Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )`. It is a no-op off a network, so set
+it unconditionally: where it matters is the one topology the library must not deactivate a standalone
+in — a network-active standalone whose host plugin is not itself network-activated, where a
+network-wide deactivation would leave the network's other sites with no copy of it at all.
 
 **Keep the `, 0`.** Anything below `plugins_loaded` priority 5 wires cleanly, but priority 0 is the
 recommendation, in the block that owns your container rather than in a service provider. Booting at 5
