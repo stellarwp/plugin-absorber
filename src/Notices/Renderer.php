@@ -24,8 +24,8 @@ class Renderer {
 	 * The `notice-*` class each notice type renders with.
 	 *
 	 * A dependency notice reports a plugin that did not load at all, which is `notice-error` by
-	 * WordPress convention. The other two report a conflict the library has already handled — the
-	 * site works, so they are warnings.
+	 * WordPress convention. The other three report a conflict the library has already handled or held
+	 * off — the site works, so they are warnings.
 	 *
 	 * @since 1.0.0
 	 *
@@ -34,6 +34,7 @@ class Renderer {
 	private const CLASSES = [
 		Writer::TYPE_MERGE      => 'notice-warning',
 		Writer::TYPE_CONFLICT   => 'notice-warning',
+		Writer::TYPE_STRANDING  => 'notice-warning',
 		Writer::TYPE_DEPENDENCY => 'notice-error',
 	];
 
