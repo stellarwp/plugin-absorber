@@ -7,6 +7,7 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Conflict;
 
+use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
@@ -99,5 +100,39 @@ class Detector {
 		}
 
 		return $this->plugin_checker->is_active( $sub_plugin->get_standalone_plugin_basename() );
+	}
+
+	/**
+	 * Whether deactivating this standalone would strand sites the bundled copy will never reach.
+	 *
+	 * `deactivate_plugins()` takes a network-active standalone out of *every* site's plugins, but the
+	 * bundled copy only loads where the host plugin runs. So on the one topology of a network-active
+	 * standalone whose host is not itself network-active, a network-wide deactivation removes it from
+	 * the sites the host never loads on, where nothing stands in for it. The resolver reads this and
+	 * declines, leaving the load guard to defer the bundled copy network-wide instead.
+	 *
+	 * Opt-in, and cheap in the common case: with no host basename configured the guard stands down on
+	 * a single string compare, before any option is read. It needs no `is_multisite()` test either --
+	 * `Checker_Interface::is_network_active()` is `false` off a network, so the whole predicate is
+	 * `false` on a single site.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
+	 *
+	 * @return bool
+	 */
+	public function deactivation_would_strand_sites( Sub_Plugin $sub_plugin ): bool {
+		$host_basename = Config::get_host_plugin_basename();
+
+		if ( $host_basename === '' ) {
+			return false;
+		}
+
+		if ( ! $this->plugin_checker->is_network_active( $sub_plugin->get_standalone_plugin_basename() ) ) {
+			return false;
+		}
+
+		return ! $this->plugin_checker->is_network_active( $host_basename );
 	}
 }

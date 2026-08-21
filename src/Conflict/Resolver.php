@@ -188,6 +188,18 @@ class Resolver implements Resolver_Interface {
 				return false;
 
 			case Conflict_Policy::DEACTIVATE:
+				// A network-active standalone whose bundled replacement ships in a host that is not
+				// itself network-active: deactivating it network-wide would pull it from the sites the
+				// host never reached, where nothing loads the bundled copy. Leave it -- the load guard
+				// defers the bundled copy network-wide instead -- and say why. Opt-in and
+				// single-site-safe: false whenever no host basename is configured, and false off a
+				// network, so this is the ordinary deactivation in every other case.
+				if ( $this->detector->deactivation_would_strand_sites( $sub_plugin ) ) {
+					$this->notices->queue_stranding_notice( $sub_plugin );
+
+					return false;
+				}
+
 				$this->deactivate( $sub_plugin );
 
 				// Asked again rather than assumed, because turning the standalone off is not the same
