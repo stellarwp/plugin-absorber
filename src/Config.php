@@ -27,6 +27,11 @@ class Config {
 	protected static $container = null;
 
 	/**
+	 * @var string
+	 */
+	protected static $host_plugin_basename = '';
+
+	/**
 	 * Set the unique per-host slug that keys this library's hooks and options.
 	 *
 	 * It is stored exactly as given: hook names repeat it verbatim, and only `get_option_name()`
@@ -158,6 +163,42 @@ class Config {
 	 */
 	public static function has_container(): bool {
 		return self::$container !== null;
+	}
+
+	/**
+	 * Tell the library the host plugin's own basename, so a standalone's activation scope can be
+	 * compared against the host's on multisite.
+	 *
+	 * Optional, and read by one thing: the conflict resolver's guard against deactivating a
+	 * network-active standalone whose bundled replacement ships in a host that is not itself
+	 * network-active -- a deactivation that would strand the sites the host never reached. Left
+	 * unset, that guard stands down and deactivation behaves exactly as it always has. Stored
+	 * exactly as given: a basename is a path, `directory/file.php`, not a hook-naming value, so the
+	 * hook-prefix validator's character rules deliberately do not apply here.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $basename Host plugin basename, e.g. `plugin_basename( __FILE__ )`.
+	 *
+	 * @return void
+	 */
+	public static function set_host_plugin_basename( string $basename ): void {
+		self::$host_plugin_basename = $basename;
+	}
+
+	/**
+	 * The host plugin basename, or an empty string when none was set.
+	 *
+	 * Does not throw the way `get_hook_prefix()` and `get_container()` do. Those name a step the host
+	 * must take before boot; this is optional, and an empty string is the honest answer for a host
+	 * that did not opt into the multisite guard -- the same value that stands the guard down.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return string
+	 */
+	public static function get_host_plugin_basename(): string {
+		return self::$host_plugin_basename;
 	}
 
 	/**

@@ -66,7 +66,8 @@ declarations).
 
 ### Public surface
 
-A two-class static facade — `Config` (hook prefix + container) and `Absorber` (register/boot, plus
+A two-class static facade — `Config` (hook prefix, container, and optionally the host plugin
+basename) and `Absorber` (register/boot, plus
 accessors) — matching the shape of `stellarwp/assets` and `stellarwp/admin-notices`. Everything
 else is an implementation detail behind it. `Absorber` is
 `final`: every member is private static and every internal call is `self::`, so a subclass could
@@ -187,7 +188,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 
 | Path | What |
 |---|---|
-| `src/Config.php` | Static facade: hook prefix + container. |
+| `src/Config.php` | Static facade: hook prefix, container, and the optional host plugin basename. |
 | `src/Absorber.php` | Static facade: registration, `boot()`, the accessors, and the two notice trampolines. Holds no collaborator's state. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
