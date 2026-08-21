@@ -622,6 +622,83 @@ after every merge.
 - New dev-only files belong in `.gitattributes` as `export-ignore` so they stay out of consumer
   installs.
 
+### Stacking with `gh stack`
+
+**Stack whenever the work divides into portions a human could review separately.** The size cap
+above is the floor, not the test: a change that fits in ten files still gets split if a reviewer
+would have to hold two unrelated arguments in their head to sign it off. The unit is a decision a
+reviewer can accept or reject on its own — one hook wired, one collaborator extracted, one
+invariant enforced — with its own tests and its own `Why this way` block. A reviewer who can finish
+a PR in one sitting reads it; a reviewer facing everything at once skims it, and skimming is how a
+wrong decision reaches `main` with an approval on it.
+
+What that rules out is splitting for its own sake. Each branch has to leave `main` releasable, so a
+portion that cannot compile, pass the suite or be described in one `What` line is not a portion —
+it belongs with the branch that completes it. When the work genuinely is one decision, one PR is
+the right answer and a stack of one is nothing but ceremony.
+
+**A PR based on another branch is not automatically a stack.** The commonest reason to cut from an
+open branch instead of `main` is that both touch the same file and cutting from `main` would
+guarantee a conflict — that is a base branch and nothing more. Point the PR's base at the branch
+below it and stop; do not run `gh stack init`. A Stack on GitHub is a claim to the reviewer that the
+PRs are one piece of work meant to be read in order, and making that claim about two changes that
+merely share a file sends them looking for a through-line that was never there. Reach for the
+tooling below only when the ordering is the argument.
+
+The stack is managed with the **`github/gh-stack`** extension, invoked `gh stack`. Do not hand-roll
+the stack with merges: `rebase` and `submit` force-update the branches the stack owns, which is what
+keeps each PR's diff to its own commits. Four operations cover the whole workflow, and none of them
+are guessable from `--help`, so use these verbatim.
+
+**Adopt existing branches into a stack**, bottom to top, naming the trunk with `--base` so the trunk
+gets no PR of its own:
+
+```bash
+gh stack init --base main 34-first 35-second 36-third
+gh stack view                     # confirm the order before submitting
+```
+
+`--base` is whatever the bottom branch cut from. That is `main` for an ordinary series — and it is
+the **tip branch of the lower stack** when a second stack is built on top of one that is still open,
+which is the only way to keep the lower stack's PRs out of the new one.
+
+**Append one already-existing branch** to a stack that exists. `gh stack init` refuses this with
+"already exists in a stack". Check out a member of the stack — the tip is the natural one — and:
+
+```bash
+git checkout 36-third
+gh stack add 37-fourth
+```
+
+`gh stack modify` also adds branches, but it is an interactive TUI and is unusable headlessly.
+
+**Propagate an edit made low in the stack** by cascading rebase, never by merging the lower branch
+upward: commit the edit on the lower branch, check out the **lowest changed** branch, and rebase
+that branch and everything above it:
+
+```bash
+git checkout 35-second
+gh stack rebase --upstack --preserve-dates
+```
+
+`--preserve-dates` — the alias for `--committer-date-is-author-date` — goes on *every* rebase, not
+just this one. Without it each rebase restamps the committer date of every commit it rewrites, and
+a stack is rebased repeatedly, so the whole history walks forward to whenever the last submit
+happened.
+
+`--upstack` is the other half: a rebase with no scope flag re-creates *every* commit in the stack, so
+the submit after it force-pushes lower branches nothing changed on. Take the full-stack form only
+when the trunk moved or the bottom branch itself did — and with the same flag:
+
+```bash
+gh stack rebase --preserve-dates
+```
+
+**Publish** with `gh stack submit --auto`: it pushes every branch, force where the rebase made that
+necessary, and links them as a Stack on GitHub. It preserves existing PR titles, bodies and draft
+state, so it is safe to re-run; `--open` is the flag that marks them ready for review. A
+non-interactive run implies `--auto`.
+
 ## Known, and deliberately not fixed in 1.0.0
 
 **`Activator::maybe_run()` can double-run under concurrency.** It reads the option, runs the
