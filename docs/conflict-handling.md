@@ -64,6 +64,16 @@ standalone's own deactivation hook would otherwise run this early: a routine `fl
 in it would regenerate the rules before `init` declared a single post type, and every custom
 permalink on the site would start 404ing.
 
+**A site that never loads wp-admin never resolves.** Every gate above needs an interactive admin
+page view. Any website administered entirely over SFTP, Composer, or WP-CLI — one whose owner never
+opens an admin screen in a browser — keeps the standalone active for as long as that holds. There
+is still no fatal, because [the load guard](#the-load-guard) runs on every request and stands the
+bundled copy down regardless; what waits is the *switchover*. The standalone, frozen at the version
+installed, goes on serving in place of the bundled copy the host ships updates for until the first
+request that clears every gate above arrives. That is the price of never ending a non-admin request
+with a redirect — one that would drop a visitor's POST or cut a WP-CLI run short — and on such a
+site the switchover is simply deferred until then.
+
 ## The redirect
 
 The standalone's code is already in memory by the time the conflict is resolved — WordPress
