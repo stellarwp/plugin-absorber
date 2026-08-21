@@ -1,3 +1,5 @@
+<!-- cSpell:ignore LDRP -->
+
 # Recipes
 
 The shapes hosts actually write. [Configuration](configuration.md) is the key-by-key reference
