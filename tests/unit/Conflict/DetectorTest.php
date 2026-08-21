@@ -481,6 +481,15 @@ class DetectorTest extends WPTestCase {
 
 				return $this->answer;
 			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_network_active( string $basename ): bool {
+				return false;
+			}
 		};
 	}
 
@@ -530,6 +539,15 @@ class DetectorTest extends WPTestCase {
 				( $this->record )( $basename );
 
 				return in_array( $basename, $this->active, true );
+			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_network_active( string $basename ): bool {
+				return false;
 			}
 		};
 	}
