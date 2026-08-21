@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Tests\Unit\Scenario;
 
+use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
 
 /**
@@ -44,6 +45,15 @@ class ConflictTest extends Bootstrap_Test_Case {
 	 * @var string
 	 */
 	private const SECOND_SLUG = 'absorber-fee-recovery';
+
+	/**
+	 * A host plugin basename, for the multisite stranding scenarios. Only ever an entry in
+	 * `active_sitewide_plugins` and the value handed to `Config::set_host_plugin_basename()` — no
+	 * fixture file stands behind it, because the guard reads its activation state and nothing more.
+	 *
+	 * @var string
+	 */
+	private const HOST = 'absorber-host/absorber-host.php';
 
 	/**
 	 * Here rather than in the parent because only this file builds a request that carries query args:
@@ -86,6 +96,98 @@ class ConflictTest extends Bootstrap_Test_Case {
 		// The request really ended in the resolver. The bundled copy loads on the next one, which is
 		// what the standalone's own guard constant forces in production.
 		$this->assertSame( 0, $this->bundled_plugin_loads() );
+	}
+
+	/**
+	 * The multisite stranding guard, end to end: a network-active standalone whose bundled copy ships
+	 * in a host plugin that is not itself network-active is left active rather than deactivated. A
+	 * network-wide deactivation would strip it from the sites the host never loads on, with nothing to
+	 * replace it — so the standalone stays, a stranding notice explains why, and, as under DEFER, its
+	 * own guard constant stands the bundled copy down.
+	 */
+	public function test_a_network_active_standalone_is_left_when_the_host_is_not_network_active(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Network activation only exists on multisite.' );
+		}
+
+		update_site_option( 'active_sitewide_plugins', [ self::STANDALONE => time() ] );
+
+		// A host basename that is not itself network-active: the bundled copy would not load on the
+		// sites the standalone is being removed from, which is the whole reason to leave it.
+		Config::set_host_plugin_basename( self::HOST );
+
+		$constant = $this->define_guard( 'ABSORBER_E2E_STRANDING_GUARD' );
+
+		$this->register(
+			[
+				'standalone_plugin_basename' => self::STANDALONE,
+				'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+			],
+			$constant
+		);
+
+		$this->boot();
+
+		// Must not halt: declining to deactivate leaves nothing to shed and nowhere to redirect.
+		$this->run_request();
+
+		$this->assertArrayHasKey(
+			self::STANDALONE,
+			(array) get_site_option( 'active_sitewide_plugins', [] ),
+			'A standalone whose deactivation would strand sites stays network-active.'
+		);
+		$this->assertArrayHasKey( self::SLUG . ':stranding', $this->queued_notices() );
+
+		$rendered = $this->render_admin_notices();
+
+		$this->assertStringContainsString( 'notice-warning', $rendered );
+		$this->assertStringContainsString( 'network-activate', $rendered );
+
+		$this->assertSame(
+			0,
+			$this->bundled_plugin_loads(),
+			'The standalone stayed, so its guard constant stands the bundled copy down.'
+		);
+	}
+
+	/**
+	 * The other half: when the host plugin is itself network-active, its bundled copy loads on every
+	 * site the standalone is removed from, so the network-wide deactivation strands nothing and the
+	 * resolver takes it — exactly as it does with no host basename configured at all.
+	 */
+	public function test_a_network_active_standalone_is_deactivated_when_the_host_is_network_active(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Network activation only exists on multisite.' );
+		}
+
+		update_site_option(
+			'active_sitewide_plugins',
+			[
+				self::STANDALONE => time(),
+				self::HOST       => time(),
+			]
+		);
+
+		Config::set_host_plugin_basename( self::HOST );
+
+		$this->register(
+			[
+				'standalone_plugin_basename' => self::STANDALONE,
+				'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+			]
+		);
+
+		$this->boot();
+
+		$location = $this->run_halted_request();
+
+		$this->assertArrayNotHasKey(
+			self::STANDALONE,
+			(array) get_site_option( 'active_sitewide_plugins', [] ),
+			'With the host network-active too, the standalone is safe to deactivate network-wide.'
+		);
+		$this->assertArrayHasKey( self::SLUG . ':merge', $this->queued_notices() );
+		$this->assertSame( admin_url( 'plugins.php' ), $location );
 	}
 
 	/**
