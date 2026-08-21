@@ -643,9 +643,10 @@ of the same prefix. The prefix names the work all of them belong to and `X/Y` na
 the size, which is the whole of what a reviewer scanning the PR list needs: that these belong
 together, which one to open first, and how much more is coming. `Y` is a count, so appending a
 branch renumbers every PR already open — retitle them in the same pass as the `gh stack add`, or the
-numbering says the series is shorter than it is. `gh stack submit --auto` generates a title from the
-branch's commits and carries no prefix, so titles are written or corrected with `gh pr edit --title`
-afterwards; a later submit preserves them.
+numbering says the series is shorter than it is. Nothing about the prefix survives `gh stack submit
+--auto`, which titles a single-commit branch with that commit's subject and a multi-commit branch
+with its own name, hyphens and underscores turned into spaces. There is no flag for a title, so set
+it with `gh pr edit --title` after submitting; a later submit leaves what is already there alone.
 
 **A PR based on another branch is not automatically a stack.** The commonest reason to cut from an
 open branch instead of `main` is that both touch the same file and cutting from `main` would
