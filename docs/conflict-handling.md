@@ -70,9 +70,9 @@ opens an admin screen in a browser — keeps the standalone active for as long a
 is still no fatal, because [the load guard](#the-load-guard) runs on every request and stands the
 bundled copy down regardless; what waits is the *switchover*. The standalone, frozen at the version
 installed, goes on serving in place of the bundled copy the host ships updates for until the first
-interactive admin `GET` arrives. That is the price of never ending a non-admin request with a
-redirect — one that would drop a visitor's POST or cut a WP-CLI run short — and on such a site the
-switchover is simply deferred until then.
+request that clears every gate above arrives. That is the price of never ending a non-admin request
+with a redirect — one that would drop a visitor's POST or cut a WP-CLI run short — and on such a
+site the switchover is simply deferred until then.
 
 ## The redirect
 
