@@ -128,6 +128,59 @@ class CheckerTest extends WPTestCase {
 		$this->assertSame( 1, $calls );
 	}
 
+	public function test_it_reports_a_network_active_plugin(): void {
+		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
+
+		$this->assertTrue( $this->checker->is_network_active( 'give-recurring/give-recurring.php' ) );
+	}
+
+	public function test_it_reports_a_plugin_that_is_not_network_active(): void {
+		$this->setFunctionReturn( 'is_plugin_active_for_network', false );
+
+		$this->assertFalse( $this->checker->is_network_active( 'give-recurring/give-recurring.php' ) );
+	}
+
+	/**
+	 * The basename reaches the stranding guard's comparison next, so asserting only the return value
+	 * would let the wrong plugin decide whether a network-wide deactivation is safe.
+	 */
+	public function test_it_passes_the_basename_through_to_the_network_check(): void {
+		$received = null;
+
+		$this->setFunctionReturn(
+			'is_plugin_active_for_network',
+			static function ( $basename ) use ( &$received ) {
+				$received = $basename;
+
+				return true;
+			},
+			true
+		);
+
+		$this->checker->is_network_active( 'give-recurring/give-recurring.php' );
+
+		$this->assertSame( 'give-recurring/give-recurring.php', $received );
+	}
+
+	/**
+	 * The mirror of the single-scope check: is_network_active() asks the network function and only
+	 * that one. is_plugin_active() ORs the network check into its answer, so reaching for it here
+	 * would report a merely site-active standalone as network-active and wave through a network-wide
+	 * deactivation the stranding guard exists to refuse.
+	 */
+	public function test_the_network_check_asks_only_the_network_function(): void {
+		$this->setFunctionReturn(
+			'is_plugin_active',
+			static function () {
+				throw new LogicException( 'is_network_active() must not ask the site-scope function.' );
+			},
+			true
+		);
+		$this->setFunctionReturn( 'is_plugin_active_for_network', true );
+
+		$this->assertTrue( $this->checker->is_network_active( 'give-recurring/give-recurring.php' ) );
+	}
+
 	/**
 	 * `Plugin\Loads_Plugin_Functions` guards on `deactivate_plugins()`, and it has to keep doing so.
 	 * `is_plugin_active()` is a common third-party shim: guarded on that name, something else defining
