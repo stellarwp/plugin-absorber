@@ -143,6 +143,46 @@ class Scheduler {
 	}
 
 	/**
+	 * Whether plugins_loaded has already carried the dispatch past the load pass, so that a
+	 * registration made now is one the load pass will not see.
+	 *
+	 * Here rather than in `Registry\Reader`, which is what asks. What the answer turns on is this
+	 * library's own priorities and how far the hook it lives on has got — the two facts
+	 * `wiring_window_has_closed()` weighs a few lines below, off the same measurement. A registry
+	 * that read the hook for itself would hold a second copy of a rule that moves every time a
+	 * priority here does, and the copy that was not updated would be the one a host heard from.
+	 *
+	 * Static, because registration is. `Absorber::register()` resolves nothing, so the question it
+	 * asks on the way past cannot need a container answered first.
+	 *
+	 * Measured against the load pass because that is the last step in the sequence and the last read
+	 * of the registry there is; the wiring window is measured against the first. A step added behind
+	 * the load pass is the one change that would make this number the wrong one.
+	 *
+	 * The comparison is exclusive where the wiring window's is inclusive, because the two are not
+	 * the same question. A callback appended to the priority being dispatched lands on an array the
+	 * running loop already copied, so it can never fire whatever else sits in that priority. A
+	 * registration is read by a callback already in that priority — the load pass — and whether it
+	 * has run yet is its position within the priority, which nothing exposes. Where the answer
+	 * cannot be known, this says nothing rather than warning about a sub-plugin that loaded.
+	 *
+	 * It says nothing outside the dispatch either, and that is the deliberate limit of it. Before
+	 * plugins_loaded every registration is early. After it, a host that has not booted yet is not
+	 * late — `wire()` finds the window shut and runs the whole sequence inline, and that pass reads
+	 * the buffer like any other — and nothing here can tell that host from one whose load pass ran
+	 * five priorities ago.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return bool
+	 */
+	public static function registration_window_has_closed(): bool {
+		$position = self::plugins_loaded_position();
+
+		return $position !== null && $position > self::LOAD_PRIORITY;
+	}
+
+	/**
 	 * The plugins_loaded steps, in run order, as priority and callback.
 	 *
 	 * Stated once because wire() expresses this order twice — as hook priorities when it can still
@@ -294,9 +334,32 @@ class Scheduler {
 			return true;
 		}
 
+		$position = self::plugins_loaded_position();
+
+		return $position !== null && $position >= min( array_column( $this->sequence(), 'priority' ) );
+	}
+
+	/**
+	 * The plugins_loaded priority being dispatched, or null when the hook is not dispatching at all.
+	 *
+	 * The one place this library reads how far the hook has got, so that the two windows either side
+	 * of it differ in the priority they measure and in the comparison they make, and in nothing
+	 * else. Both used to reach into `$GLOBALS['wp_filter']` for themselves, which is a second
+	 * dialect of the same reading.
+	 *
+	 * `WP_Hook::current_priority()` answers `false` while the hook is not iterating, and that
+	 * covers both "not yet" and "over" — a caller that has to tell those two apart asks
+	 * `did_action()` as well.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return int|null
+	 */
+	private static function plugins_loaded_position(): ?int {
 		$hook = $GLOBALS['wp_filter']['plugins_loaded'] ?? null;
 
-		return $hook instanceof WP_Hook
-			&& $hook->current_priority() >= min( array_column( $this->sequence(), 'priority' ) );
+		$priority = $hook instanceof WP_Hook ? $hook->current_priority() : false;
+
+		return is_int( $priority ) ? $priority : null;
 	}
 }

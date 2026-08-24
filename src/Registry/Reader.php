@@ -7,6 +7,7 @@ declare( strict_types=1 );
 
 namespace Nexcess\PluginAbsorber\Registry;
 
+use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
@@ -64,6 +65,16 @@ class Reader {
 	 * a registration that reached a registrar before that point would go into the container being
 	 * thrown away. Buffering is what lets the container arrive at any point before boot.
 	 *
+	 * A registration that arrives after the load pass has gone by is buffered like any other and
+	 * reported, because a buffer nothing reads again leaves next to nothing behind to go on: no
+	 * notice, no skip, no missing file — a sub-plugin that simply is not there. The report is a
+	 * `_doing_it_wrong()`, which is the reach every other report in this library has and no further:
+	 * it prints where a site is debugging, and fires core's `doing_it_wrong_run` wherever it is not,
+	 * for a host that listens. `Absorber::boot()` has had a barrier for the same mistake since it was
+	 * written, and boot is the call a host is *less* likely to misplace: registration is what a
+	 * service provider tends to carry, and a provider runs whenever the host's bootstrap happens to
+	 * run it.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin to hold.
@@ -72,6 +83,33 @@ class Reader {
 	 */
 	public static function buffer( Sub_Plugin $sub_plugin ): void {
 		self::$pending[] = $sub_plugin;
+
+		if ( ! Scheduler::registration_window_has_closed() ) {
+			return;
+		}
+
+		// Reported, and the report is the whole of the remedy. `boot()` can offer an inline fallback
+		// because what it was late for had not happened yet: the sequence was still there to be run
+		// by hand. Nothing is left to run here. The load pass has been and gone, this library has
+		// nothing further on `plugins_loaded`, and requiring the file from a registration instead
+		// would be a load pass of one that skipped every gate the real one applies and ran behind the
+		// conflict step that decides whether a bundled copy may load at all. It would land on top of
+		// a standalone nobody stood down, which is the re-declaration fatal this library exists to
+		// prevent.
+		//
+		// Buffered first, and buffered regardless: this is a report, not a refusal. `Absorber::all()`
+		// still answers with the registration, and a host whose own `boot()` is late enough to run
+		// the sequence inline reads it from there -- with a report of its own about the boot.
+		_doing_it_wrong(
+			self::class . '::buffer',
+			sprintf(
+				'Absorber::register() ran after plugins_loaded had gone past the load pass, so "%s"'
+					. ' arrived too late to be read. Register at plugin-file scope, or no later than'
+					. ' plugins_loaded priority 5.',
+				$sub_plugin->get_slug()
+			),
+			'1.0.0'
+		);
 	}
 
 	/**

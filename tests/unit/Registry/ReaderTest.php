@@ -8,7 +8,10 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Tests\Unit\Registry;
 
 use Codeception\TestCase\WPTestCase;
+use Generator;
+use LogicException;
 use Nexcess\PluginAbsorber\Absorber;
+use Nexcess\PluginAbsorber\Boot\Scheduler;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
@@ -19,6 +22,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Spy_Registrar;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
+use ReflectionClass;
 use RuntimeException;
 use Throwable;
 
@@ -53,6 +57,17 @@ class ReaderTest extends WPTestCase {
 	 */
 	private $report_recorder = null;
 
+	/**
+	 * plugins_loaded callbacks these tests added, as [ callback, priority ] pairs.
+	 *
+	 * Tracked so tearDown can take back exactly what a test put there. `remove_all_actions()` would
+	 * strip the hook bare instead, discarding every callback WordPress and the rest of the suite have
+	 * on it for the remainder of the process.
+	 *
+	 * @var array<int,array{0:callable,1:int}>
+	 */
+	private $added_actions = [];
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -62,6 +77,13 @@ class ReaderTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
+		// In tearDown rather than at the end of a test body: a failed assertion would otherwise leave
+		// a callback that registers a sub-plugin on plugins_loaded for the rest of the process.
+		foreach ( $this->added_actions as [ $callback, $priority ] ) {
+			remove_action( 'plugins_loaded', $callback, $priority );
+		}
+		$this->added_actions = [];
+
 		$this->stop_recording_reports();
 		$this->stop_expecting_incorrect_usage();
 		Absorber_State::reset();
@@ -330,6 +352,166 @@ class ReaderTest extends WPTestCase {
 			array_keys( $this->reader()->all() ),
 			'The buffered registration must still be there once the container is usable.'
 		);
+	}
+
+	/**
+	 * The mistake with no symptom: a registration made after the load pass has gone by is read by
+	 * nothing, so the sub-plugin is simply absent — no notice, no skip, no missing file, and nothing
+	 * for a support engineer to pull on.
+	 *
+	 * `Absorber::boot()` has had a barrier for this since it was written. Registration is the call a
+	 * host is likelier to misplace, because a service provider is where a WordPress plugin usually
+	 * puts it and a provider runs whenever the host's bootstrap happens to run it.
+	 */
+	public function test_a_registration_past_the_load_pass_is_reported(): void {
+		$this->set_up_container();
+		$this->expect_incorrect_usage();
+
+		$this->register_from_plugins_loaded( self::load_priority() + 1 );
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'"give-recurring"',
+			'The report has to name the sub-plugin that will not load, or the host cannot find it.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'after plugins_loaded had gone past the load pass',
+			'A registration read by nothing is what failed, and the report has to say so rather than'
+				. ' name some other gate.'
+		);
+	}
+
+	/**
+	 * Reported, not refused. The registration is buffered like any other, so a host reading
+	 * `Absorber::all()` still sees what it registered — and a `boot()` late enough to run the
+	 * sequence inline still has something to load.
+	 */
+	public function test_a_registration_past_the_load_pass_is_still_buffered(): void {
+		$this->set_up_container();
+		$this->expect_incorrect_usage();
+
+		$this->register_from_plugins_loaded( self::load_priority() + 1 );
+
+		$this->assertSame(
+			[ 'give-recurring' ],
+			array_keys( $this->reader()->all() ),
+			'The guard reports a registration; it must not throw one away.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * The other side of the barrier, and the reason it is measured where it is. A host module
+	 * registering from its own `plugins_loaded` callback at the conflict pass's priority is a
+	 * documented shape — the load pass reads a priority later and loads it — and so is a
+	 * registration in the load pass's own priority, where whether the pass has run yet is the
+	 * position within that priority and nothing exposes it.
+	 *
+	 * @dataProvider priorities_the_load_pass_may_still_read
+	 *
+	 * @param int $priority plugins_loaded priority the host registers from.
+	 */
+	public function test_a_registration_the_load_pass_may_still_read_is_left_alone( int $priority ): void {
+		$this->set_up_container();
+		$this->expect_incorrect_usage();
+		$this->record_reports();
+
+		$this->register_from_plugins_loaded( $priority );
+
+		$this->assertSame( [], $this->reports, 'A registration this early is not a mistake to report.' );
+
+		// The recorder has to be shown to work, or a guard that never ran at all satisfies the
+		// assertion above however it had behaved.
+		$this->register_from_plugins_loaded( self::load_priority() + 1, 'give-fee-recovery' );
+
+		$this->assertCount(
+			1,
+			$this->reports,
+			'The recorder must catch a registration that really did arrive too late.'
+		);
+	}
+
+	/**
+	 * @return Generator<string,array{0:int}>
+	 */
+	public static function priorities_the_load_pass_may_still_read(): Generator {
+		yield 'while the conflict pass is dispatching' => [ self::load_priority() - 1 ];
+		yield 'in the load pass own priority'          => [ self::load_priority() ];
+	}
+
+	/**
+	 * The deliberate limit of the guard: outside a `plugins_loaded` dispatch it says nothing.
+	 *
+	 * Not an oversight, and not for want of knowing the hook is over. A host that has not booted yet
+	 * is not late — `Absorber::boot()` finds the wiring window shut and runs the whole sequence
+	 * inline, and that pass reads the buffer like any other — and from a static call that resolves
+	 * nothing there is no telling that host from one whose load pass ran already. A report that
+	 * fired on both would be wrong on the shape this library documents a rescue for.
+	 */
+	public function test_a_registration_made_outside_the_dispatch_is_left_alone(): void {
+		$this->set_up_container();
+		$this->expect_incorrect_usage();
+		$this->record_reports();
+
+		$this->register( 'give-recurring' );
+
+		$this->assertSame(
+			[],
+			$this->reports,
+			'Outside the dispatch a late boot can still rescue the registration, so nothing is said.'
+		);
+
+		$this->register_from_plugins_loaded( self::load_priority() + 1, 'give-fee-recovery' );
+
+		$this->assertCount(
+			1,
+			$this->reports,
+			'The recorder must catch a registration that really did arrive too late.'
+		);
+	}
+
+	/**
+	 * The priority the load pass is wired at, read from the scheduler rather than restated, so that
+	 * "one past it" goes on meaning that if the number ever moves.
+	 *
+	 * @throws LogicException When the constant is missing or not an int, rather than registering at
+	 *                        priority zero and passing for the wrong reason.
+	 *
+	 * @return int
+	 */
+	private static function load_priority(): int {
+		$priority = ( new ReflectionClass( Scheduler::class ) )->getConstant( 'LOAD_PRIORITY' );
+
+		if ( ! is_int( $priority ) ) {
+			throw new LogicException( 'Boot\Scheduler::LOAD_PRIORITY must be an int.' );
+		}
+
+		return $priority;
+	}
+
+	/**
+	 * Register one sub-plugin from a `plugins_loaded` callback at the given priority, and dispatch.
+	 *
+	 * The callback comes back off the hook as soon as the dispatch is over: a test that dispatches
+	 * twice would otherwise register the same sub-plugin again on the second pass, from a priority
+	 * it is no longer about.
+	 *
+	 * @param int    $priority plugins_loaded priority to register from.
+	 * @param string $slug     Slug to register under.
+	 *
+	 * @return void
+	 */
+	private function register_from_plugins_loaded( int $priority, string $slug = 'give-recurring' ): void {
+		$callback = function () use ( $slug ): void {
+			$this->register( $slug );
+		};
+
+		$this->added_actions[] = [ $callback, $priority ];
+
+		add_action( 'plugins_loaded', $callback, $priority );
+
+		do_action( 'plugins_loaded' );
+
+		remove_action( 'plugins_loaded', $callback, $priority );
 	}
 
 	/**
