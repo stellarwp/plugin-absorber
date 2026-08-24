@@ -20,8 +20,10 @@ use Nexcess\PluginAbsorber\Traits\Guards_Plugin_Capability;
  * The capability check lives here rather than in `Renderer` because it guards the clearing as much as
  * the drawing: the two have to be decided together, or a user who may not see the queue could still
  * destroy it. Which capability is `Traits\Guards_Plugin_Capability`'s answer, shared with the gate
- * that decides who may have a conflict resolved at all — the notices report what that gate let
- * happen, so consuming one is the same authority as causing it.
+ * that decides who may have a conflict resolved at all — the conflict notices report what that gate
+ * let happen, so consuming one is the same authority as causing it. The dependency notice is queued
+ * off the load path, behind no gate at all, and is held to the same capability for the reason above:
+ * whoever consumes the queue consumes all of it.
  *
  * The queue is single-consumer. Rendering consumes it for everybody, so the first eligible
  * administrator to load any admin screen is the only person who ever sees a given notice —
