@@ -584,13 +584,14 @@ sequenceDiagram
 ```
 
 **A duplicate slug is reported, and what was registered behind it still loads.**
-The collision is the registrar's exception and it is raised long after both
+The collision is the registrar's refusal and it is found long after both
 `Absorber::register()` calls returned, from inside `plugins_loaded` — the hook
-this library exists to keep a site off the floor on. Both passes guard the read,
-so the conflict pass reports it and the load pass, finding the buffer already
-drained, gets on with the load. The whole batch is registered before the
-collision is rethrown, which is what keeps a host from silently losing every
-sub-plugin it registered after the mistake.
+this library exists to keep a site off the floor on. So it is reported where it
+is found and nothing is raised out of the read: the conflict pass reports it and
+resolves what it has, and the load pass behind it loads the registry that read
+left standing. Only the colliding entry is refused, which is what keeps a host
+from silently losing every sub-plugin it registered after the mistake — or,
+back when the read still threw, every sub-plugin it registered at all.
 
 ```mermaid
 sequenceDiagram
@@ -604,8 +605,8 @@ sequenceDiagram
     Note over R: first read — the conflict pass, priority 5
     R->>Reg: A, then A again, then B
     Reg-->>R: the second A collides
-    R-->>R: whole batch registered, the first collision rethrown after it
-    Note over R: the pass reports it and abandons its own step
+    R-->>R: the second A refused and reported; A and B kept
+    Note over R: the pass carries on with the registry it has
     Note over R: second read — priority 6, buffer already drained
     R-->>L: A and B
     L->>L: both load
@@ -707,9 +708,9 @@ sequenceDiagram
 **The request after a deactivation does not loop.** The failure mode a merge
 notice queued on every request would produce: a redirect loop, or a screen
 reporting the same deactivation for ever. Nothing is re-registered between the
-two requests — a duplicate slug throws — because this is the next page view, not
-a second bootstrap. The second request must *not* halt, and the helper fails the
-test if it does.
+two requests — a duplicate slug is refused — because this is the next page view,
+not a second bootstrap. The second request must *not* halt, and the helper fails
+the test if it does.
 
 ```mermaid
 sequenceDiagram
