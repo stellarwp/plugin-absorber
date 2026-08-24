@@ -408,7 +408,7 @@ runnable inline as well as wirable.
 - Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
   `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 
-The hooks are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
+The names are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
 the segment between the host's prefix and the key's own name. Hook names and option names differ in
 one respect:
 `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, because the
@@ -768,8 +768,8 @@ under a `Nexcess\SubPluginLoader\` namespace, with a `Config::set_version()` tha
 
 Human-facing docs are `README.md` plus `docs/installing.md`, `docs/configuration.md`,
 `docs/recipes.md`, `docs/conflict-handling.md`, `docs/filters.md`, `docs/actions.md`,
-`docs/notices.md` and `docs/extending.md`. Keep them short and keep rationale here or in code comments — do not grow the
-README back. They are written for a host developer integrating the library, not for a maintainer:
+`docs/notices.md` and `docs/extending.md`. Keep them short and keep rationale here or in code
+comments — do not grow the README back. They are written for a host developer integrating the library, not for a maintainer:
 `docs/extending.md` is the only one that names internal classes, and every other file describes
 behaviour instead. `docs/` is `export-ignore`d and
 `README.md` is not, so a link from the README into `docs/` must be an absolute repository URL; links

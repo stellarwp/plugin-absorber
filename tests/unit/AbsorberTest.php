@@ -57,13 +57,6 @@ class AbsorberTest extends WPTestCase {
 	 */
 	private $plugins_loaded_count = null;
 
-	/**
-	 * Whether a test attached a listener to the error action, so tearDown knows to take it off.
-	 *
-	 * @var bool
-	 */
-	private $error_listener_attached = false;
-
 	public function setUp(): void {
 		parent::setUp();
 
@@ -74,12 +67,6 @@ class AbsorberTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
-		if ( $this->error_listener_attached ) {
-			remove_all_actions( 'give/plugin_absorber/error' );
-
-			$this->error_listener_attached = false;
-		}
-
 		// The counter is process-global, so a test that left it rewound would tell the next one it is
 		// still early enough to wire a plugins_loaded callback.
 		if ( $this->plugins_loaded_count !== null ) {
@@ -708,27 +695,6 @@ class AbsorberTest extends WPTestCase {
 	}
 
 	/**
-	 * Collect what the `error` action carries into a list the caller can assert on.
-	 *
-	 * Removed in tearDown by `remove_all_actions()` rather than by identity, because a listener left
-	 * attached would keep filling an array belonging to a test that has already finished.
-	 *
-	 * @param array<int,mixed> $announced Filled with each message announced, in order.
-	 *
-	 * @return void
-	 */
-	private function announce_errors_into( array &$announced ): void {
-		add_action(
-			'give/plugin_absorber/error',
-			static function ( $message ) use ( &$announced ): void {
-				$announced[] = $message;
-			}
-		);
-
-		$this->error_listener_attached = true;
-	}
-
-	/**
 	 * The other half of the same guarantee: a rewriter the container cannot build at all is a host's
 	 * broken binding, and it arrives on the same screen with the same consequence.
 	 */
@@ -815,6 +781,26 @@ class AbsorberTest extends WPTestCase {
 	 *
 	 * @return Spy_Rewriter
 	 */
+	/**
+	 * Collect what the `error` action carries into a list the caller can assert on.
+	 *
+	 * Nothing takes the listener off again, for the reason no other listener in this suite does
+	 * either: wp-browser's teardown restores `$wp_filter` wholesale from the snapshot it took on the
+	 * first setUp, so a hook added during a test cannot outlive it.
+	 *
+	 * @param array<int,mixed> $announced Filled with each message announced, in order.
+	 *
+	 * @return void
+	 */
+	private function announce_errors_into( array &$announced ): void {
+		add_action(
+			'give/plugin_absorber/error',
+			static function ( $message ) use ( &$announced ): void {
+				$announced[] = $message;
+			}
+		);
+	}
+
 	private function bind_rewriter(): Spy_Rewriter {
 		$rewriter = new Spy_Rewriter();
 
