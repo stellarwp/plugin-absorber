@@ -138,7 +138,7 @@ class Resolver implements Resolver_Interface {
 				}
 			} catch ( Throwable $thrown ) {
 				_doing_it_wrong(
-					self::class,
+					self::class . '::resolve_all',
 					sprintf(
 						'The conflict for "%s" threw while being resolved, so it was abandoned: %s',
 						$sub_plugin->get_slug(),

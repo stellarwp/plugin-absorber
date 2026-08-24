@@ -171,7 +171,7 @@ class Reader {
 				// duplicate" rather than by path alone, because the two registrations may well name
 				// the same file, and a bare path then reads as if the surviving one went too.
 				_doing_it_wrong(
-					self::class,
+					self::class . '::flush',
 					sprintf(
 						'%1$s The original registration was kept; the duplicate %2$s was discarded.',
 						$exception->getMessage(),

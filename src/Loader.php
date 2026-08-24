@@ -98,7 +98,7 @@ class Loader {
 				$this->load( $sub_plugin );
 			} catch ( Throwable $thrown ) {
 				_doing_it_wrong(
-					self::class,
+					self::class . '::load_all',
 					sprintf(
 						'The sub-plugin "%s" threw while loading, so it was abandoned: %s',
 						$sub_plugin->get_slug(),
@@ -149,7 +149,7 @@ class Loader {
 
 		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
 			_doing_it_wrong(
-				self::class,
+				self::class . '::load',
 				sprintf(
 					'The bundled plugin file for "%s" is missing or unreadable: %s',
 					$sub_plugin->get_slug(),

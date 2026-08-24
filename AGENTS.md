@@ -490,6 +490,12 @@ deliberately does not change is the hook boundary — WordPress's own files are 
 calling our typed methods still coerces weakly, and a callback that receives a loose type from a
 filter behaves exactly as it did.
 
+**Every `_doing_it_wrong()` names `Class::method`, never a bare class name.** WordPress prints it as
+"Function %s was called incorrectly", so it is the only part of a report that says where in this
+library the sentence came from, and a class alone cannot separate two reports made by the same one.
+Written `self::class . '::method'` rather than `__METHOD__`, because `__METHOD__` inside a trait
+names the trait rather than the class that actually stood down.
+
 **Comments describe behaviour, not the plan.** Never reference a task or plan-step number in a code
 comment; the code outlives the plan. Comments earn their place by explaining *why*, especially where
 a plausible alternative is wrong.

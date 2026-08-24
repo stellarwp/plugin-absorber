@@ -120,6 +120,16 @@ trait WithIncorrectUsage {
 				$report,
 				'The report has to name this library, or the host goes looking in WordPress.'
 			);
+
+			// The member, not just the class. Which method reported is the only thing separating two
+			// reports from the same class -- the facade makes two, from separate trampolines -- and
+			// pinning the shape rather than the name is what keeps this assertion loose enough to
+			// survive a rename while still refusing a bare class name.
+			$this->assertStringContainsString(
+				'::',
+				$report,
+				'The report has to name the member it was made from, not just the class.'
+			);
 		}
 	}
 
