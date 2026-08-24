@@ -59,6 +59,7 @@ two sub-plugins, every optional key.
   releases.
 - [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
 - [Filters][filters] — the runtime overrides for policies and notice text.
+- [Actions][actions] — what the library reports as it loads and skips.
 - [Notices][notices] — where the queue lives, who may see it, and how to render it yourself.
 - [Extending][extending] — swapping out a piece of the library.
 - [Tests][tests] — running the suite, the fixtures and traits it offers, and every scenario it drives

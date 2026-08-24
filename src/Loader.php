@@ -27,6 +27,62 @@ class Loader {
 	use Guards_Hook_Prefix;
 
 	/**
+	 * The `enabled` key, or the callable behind it, said no.
+	 *
+	 * This and the four that follow are the values the `skipped` action's second argument takes, and
+	 * they are public API from the moment they ship: a host comparing against
+	 * `Loader::SKIPPED_DISABLED` rather than against `'disabled'` is the point of naming them at all.
+	 * They sit on this class because each one names a gate in `load()` and nothing outside the load
+	 * pass decides one — where `Conflict_Policy` earns a class of its own by carrying behaviour
+	 * (`default()`, `is_valid()`) and by being read by the value object, the resolver and the host
+	 * alike.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string
+	 */
+	public const SKIPPED_DISABLED = 'disabled';
+
+	/**
+	 * The guard constant was already defined, so the code is in memory — a standalone copy loaded
+	 * ahead of this pass, or a second registration of the same plugin.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string
+	 */
+	public const SKIPPED_ALREADY_LOADED = 'already_loaded';
+
+	/**
+	 * The `dependency_check` callable said the requirements are not met. The one skip that also
+	 * queues a notice for the site owner.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string
+	 */
+	public const SKIPPED_DEPENDENCIES_UNMET = 'dependencies_unmet';
+
+	/**
+	 * `bundled_plugin_file` does not name a readable file. A broken build in the host plugin, so it
+	 * is announced through `error` as well as here.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string
+	 */
+	public const SKIPPED_FILE_UNREADABLE = 'file_unreadable';
+
+	/**
+	 * The `should_load` filter returned something falsy.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var string
+	 */
+	public const SKIPPED_FILTERED = 'filtered';
+
+	/**
 	 * @since 1.0.0
 	 *
 	 * @var Reader
@@ -116,6 +172,10 @@ class Loader {
 			//
 			// A re-declaration is the one failure this cannot catch, because PHP does not raise it as
 			// a Throwable -- which is what the guard constant, checked before any of this, is for.
+			//
+			// The loaded and skipped actions run host code inside this same try, exactly as the
+			// should_load filter already does, so a listener that throws costs its own sub-plugin and
+			// nothing behind it.
 			try {
 				$this->load( $sub_plugin );
 			} catch ( Throwable $thrown ) {
@@ -145,6 +205,8 @@ class Loader {
 	 */
 	private function load( Sub_Plugin $sub_plugin ): void {
 		if ( ! $sub_plugin->is_enabled() ) {
+			$this->announce_skip( $sub_plugin, self::SKIPPED_DISABLED );
+
 			return;
 		}
 
@@ -153,11 +215,14 @@ class Loader {
 		// means "the plugin is already running" -- warning that requirements are unmet for a
 		// plugin the admin can see working would be worse than useless.
 		if ( $sub_plugin->is_already_loaded() ) {
+			$this->announce_skip( $sub_plugin, self::SKIPPED_ALREADY_LOADED );
+
 			return;
 		}
 
 		if ( ! $sub_plugin->are_dependencies_met() ) {
 			$this->notices->queue_dependency_notice( $sub_plugin );
+			$this->announce_skip( $sub_plugin, self::SKIPPED_DEPENDENCIES_UNMET );
 
 			return;
 		}
@@ -170,6 +235,11 @@ class Loader {
 		$file = $sub_plugin->get_bundled_plugin_file();
 
 		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
+			// Reported and announced both, because this gate is two things at once: a build the
+			// host has to fix, which is what `_doing_it_wrong()` carries, and a sub-plugin that is
+			// not going to be there, which is what anything watching `skipped` is counting. A host
+			// watching both sees this one twice, and that is said plainly in the docs rather than
+			// solved by picking one.
 			_doing_it_wrong(
 				self::class,
 				sprintf(
@@ -179,6 +249,7 @@ class Loader {
 				),
 				'1.0.0'
 			);
+			$this->announce_skip( $sub_plugin, self::SKIPPED_FILE_UNREADABLE );
 
 			return;
 		}
@@ -189,6 +260,8 @@ class Loader {
 		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
 
 		if ( ! $should_load ) {
+			$this->announce_skip( $sub_plugin, self::SKIPPED_FILTERED );
+
 			return;
 		}
 
@@ -204,5 +277,34 @@ class Loader {
 		// for a sub-plugin that was skipped would be worse: the schema would appear for a plugin
 		// that is not loaded.
 		$this->activator->maybe_run( $sub_plugin );
+
+		// Behind the activation callback, not in front of it. A listener here is host code that will
+		// reach into the sub-plugin it was just told about, and on the first-ever load the tables and
+		// options that code expects are the activation callback's work -- so announcing first would
+		// hand a host a plugin that is loaded but not yet set up. It also keeps a throwing listener
+		// off the callback: from here the throw is caught a frame up with the require and the
+		// activation already done, where from in front of it the throw would skip the callback
+		// entirely and leave it to be retried, silently, on every request for ever.
+		do_action( Config::get_hook_name( 'loaded' ), $sub_plugin );
+	}
+
+	/**
+	 * Say that a gate turned this sub-plugin away, and which gate it was.
+	 *
+	 * The hook name is built in one place for the reason `Config` gives for owning the prefix at all,
+	 * and the call is guarded by nothing: it runs inside the per-sub-plugin `catch` in `load_all()`,
+	 * which is the same guard the `should_load` filter beside it has always had.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param Sub_Plugin $sub_plugin Sub-plugin that was skipped.
+	 * @param string     $reason     One of this class's `SKIPPED_*` constants.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return void
+	 */
+	private function announce_skip( Sub_Plugin $sub_plugin, string $reason ): void {
+		do_action( Config::get_hook_name( 'skipped' ), $sub_plugin, $reason );
 	}
 }
