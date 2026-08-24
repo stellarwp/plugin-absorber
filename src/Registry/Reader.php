@@ -127,7 +127,7 @@ class Reader {
 	 * while this object is being built, with the registrations still buffered for the read that comes
 	 * after the host has fixed its bindings.
 	 *
-	 * A collision the registrar refuses is reported here and goes no further. Rethrowing it made one
+	 * A collision the registrar refuses is reported here and goes no further. Throwing it on made one
 	 * mistaken registration decide what a whole pass did: the first pass to read caught it and stood
 	 * down — the load pass loading nothing at all on the front end, the conflict pass resolving
 	 * nothing in wp-admin — while the registry it was standing down over was intact and readable the
