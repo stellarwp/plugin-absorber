@@ -430,6 +430,50 @@ class Sub_Plugin {
 	}
 
 	/**
+	 * Shown on multisite when a network-active standalone is left active because the host plugin is
+	 * not itself network-activated -- deactivating it network-wide would strand the sites the host
+	 * never reached. Self-contained, with no config key: the text has no per-host variant worth a
+	 * registration-time value, and the filter below is the seam for rewording or translating it.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return string
+	 */
+	public function get_stranding_notice_message(): string {
+		$message = sprintf(
+			'%1$s was left active. Its bundled copy loads only where the host plugin is active, and '
+			. 'the host plugin is not network-activated, so deactivating %1$s across the network would '
+			. 'leave the sites without the host plugin with no copy of it at all. To finish absorbing '
+			. "it, either network-activate the host plugin, or deactivate %1\$s yourself from the "
+			. "Network Admin's Plugins screen.",
+			$this->get_slug()
+		);
+
+		/**
+		 * Filters the notice shown when a network-active standalone is left active to avoid stranding
+		 * the sites a host that is not network-activated does not reach.
+		 *
+		 * The dynamic portion of the hook name, `$hook_prefix`, is the prefix given to
+		 * Config::set_hook_prefix().
+		 *
+		 * Fires when the message is asked for rather than when the sub-plugin is registered, which is
+		 * what makes this the place to translate the default: the textdomain is loaded by then.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param string     $message    The generic, untranslated default.
+		 * @param Sub_Plugin $sub_plugin The sub-plugin left active.
+		 */
+		$message = apply_filters( Config::get_hook_name( 'stranding_notice_message' ), $message, $this );
+
+		// An empty string renders no notice, which is where a filter returning an array or an
+		// object lands rather than in a fatal cast.
+		return $this->as_string( $message );
+	}
+
+	/**
 	 * @since 1.0.0
 	 *
 	 * @return callable|null

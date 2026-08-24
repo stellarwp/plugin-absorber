@@ -839,6 +839,7 @@ class SubPluginTest extends WPTestCase {
 		yield 'conflict_policy'           => [ 'conflict_policy', 'get_conflict_policy' ];
 		yield 'conflict_notice_message'   => [ 'conflict_notice_message', 'get_conflict_notice_message' ];
 		yield 'dependency_notice_message' => [ 'dependency_notice_message', 'get_dependency_notice_message' ];
+		yield 'stranding_notice_message'  => [ 'stranding_notice_message', 'get_stranding_notice_message' ];
 	}
 
 	public function test_the_conflict_notice_message_defaults_to_empty(): void {
@@ -849,6 +850,34 @@ class SubPluginTest extends WPTestCase {
 		$this->assertSame(
 			'give-recurring could not be loaded because its requirements are not met.',
 			$this->make_sub_plugin()->get_dependency_notice_message()
+		);
+	}
+
+	/**
+	 * The stranding notice takes no config key, so its default is self-contained. It has to name the
+	 * sub-plugin and offer both ways out -- network-activate the host, or remove the standalone from
+	 * the Network Admin -- so a superadmin is never left with the misleading "safely deactivate" of
+	 * the ordinary conflict notice.
+	 */
+	public function test_the_stranding_notice_message_falls_back_to_a_default_with_both_exits(): void {
+		$message = $this->make_sub_plugin()->get_stranding_notice_message();
+
+		$this->assertStringContainsString( 'give-recurring', $message );
+		$this->assertStringContainsString( 'network-activate', $message );
+		$this->assertStringContainsString( 'Network Admin', $message );
+	}
+
+	public function test_the_filter_overrides_the_stranding_notice_message(): void {
+		add_filter(
+			'give/plugin_absorber/stranding_notice_message',
+			static function () {
+				return 'Filtered.';
+			}
+		);
+
+		$this->assertSame(
+			'Filtered.',
+			$this->make_sub_plugin()->get_stranding_notice_message()
 		);
 	}
 

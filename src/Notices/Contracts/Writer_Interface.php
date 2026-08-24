@@ -56,6 +56,23 @@ interface Writer_Interface {
 	public function queue_conflict_notice( Sub_Plugin $sub_plugin ): void;
 
 	/**
+	 * Queue the "we left the standalone active to avoid stranding sites" notice.
+	 *
+	 * Raised in one topology only: on multisite, a network-active standalone whose host plugin is not
+	 * network-activated, where deactivating it network-wide would remove it from the sites the host
+	 * never reached. Its wording must not tell the user to deactivate the standalone.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return void
+	 */
+	public function queue_stranding_notice( Sub_Plugin $sub_plugin ): void;
+
+	/**
 	 * Queue the "requirements not met" notice.
 	 *
 	 * @since 1.0.0

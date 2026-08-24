@@ -59,6 +59,13 @@ class Writer implements Writer_Interface {
 	/**
 	 * @since 1.0.0
 	 *
+	 * @var string
+	 */
+	public const TYPE_STRANDING = 'stranding';
+
+	/**
+	 * @since 1.0.0
+	 *
 	 * @var Store
 	 */
 	private $store;
@@ -117,6 +124,26 @@ class Writer implements Writer_Interface {
 				)
 			)
 		);
+	}
+
+	/**
+	 * The "we left the standalone active to avoid stranding sites" notice.
+	 *
+	 * Its own type and its own default because it must not carry the conflict notice's "you can
+	 * safely deactivate the standalone": on the topology it fires for -- a network-active standalone
+	 * whose host is not network-activated -- a network-wide deactivation is the very thing that would
+	 * strand the sites the host never reached. The wording lives on `Sub_Plugin` with the others.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
+	 *
+	 * @return void
+	 */
+	public function queue_stranding_notice( Sub_Plugin $sub_plugin ): void {
+		$this->queue( $sub_plugin, self::TYPE_STRANDING, $sub_plugin->get_stranding_notice_message() );
 	}
 
 	/**
