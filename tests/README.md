@@ -160,7 +160,8 @@ third-party shim, and the two callers must not be able to disagree about it.
 
 ## Users and capabilities
 
-Two of the library's gates turn on `activate_plugins`, so a test that reaches
+Two of the library's gates turn on the same capability — `manage_network_plugins`
+on multisite and `activate_plugins` everywhere else — so a test that reaches
 either needs a user who has it. `WithUsers` owns both halves:
 
 ```php
@@ -168,10 +169,10 @@ $this->become_plugin_administrator();      // someone who may resolve a conflict
 $this->create_user( 'subscriber' );        // someone who may not
 ```
 
-`become_plugin_administrator()` is not just `create_user( 'administrator' )`. On
-multisite `activate_plugins` maps through `manage_network_plugins`, which a site
-administrator does not have — so it grants super admin there and sets the current
-user either way. A test about *that* difference creates the administrator itself.
+`become_plugin_administrator()` is not just `create_user( 'administrator' )`. Both
+gates name `manage_network_plugins` on multisite, which a site administrator does
+not have — so it grants super admin there and sets the current user either way. A
+test about *that* difference creates the administrator itself.
 
 ## Stubbing functions
 
@@ -386,7 +387,7 @@ None of it means anything unless all four hold, and setUp establishes all four:
   `set_request_method( 'GET' )`. `Conflict\Gatekeeper` turns away anything else,
   so without both of these every policy scenario would pass while resolving
   nothing at all.
-- **A user who can `activate_plugins`** — `become_plugin_administrator()`. The
+- **A user who may manage plugins** — `become_plugin_administrator()`. The
   gatekeeper checks the capability before anything is resolved, and the queue
   checks the same one before it renders, so as nobody the suite would be
   asserting that a no-op is a no-op.

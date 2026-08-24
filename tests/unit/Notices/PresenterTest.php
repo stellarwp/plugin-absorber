@@ -34,6 +34,18 @@ class PresenterTest extends WPTestCase {
 
 	private const OPTION = 'give_plugin_absorber_notices';
 
+	/**
+	 * Whatever the network had under `menu_items` before a test opened the Plugins menu.
+	 *
+	 * @var mixed
+	 */
+	private $menu_items = false;
+
+	/**
+	 * @var bool
+	 */
+	private $menu_items_changed = false;
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -41,13 +53,18 @@ class PresenterTest extends WPTestCase {
 		Config::set_hook_prefix( 'give' );
 		$this->clear_queue();
 
-		// render() consumes the queue, so it is gated on a capability. Most tests care about the
-		// queue rather than the gate, so they run as someone who has it — which on multisite is a
-		// network administrator, see test_a_site_administrator_on_multisite_cannot_consume_the_queue().
+		// render() consumes the queue, so it is gated on a capability — the same one conflict
+		// resolution asks for, which on multisite is the network-scoped one. Most tests care about the
+		// queue rather than the gate, so they run as someone who holds it either way.
 		$this->become_plugin_administrator();
 	}
 
 	public function tearDown(): void {
+		// In tearDown rather than at the end of the test body: a failed assertion would otherwise
+		// leave the network's Plugins menu open for every test that runs after it, and the capability
+		// a site administrator holds is exactly what those tests turn on.
+		$this->close_the_network_plugins_menu();
+
 		$this->clear_queue();
 		Config_State::reset();
 		parent::tearDown();
@@ -313,10 +330,9 @@ class PresenterTest extends WPTestCase {
 	}
 
 	/**
-	 * Surprising but intended: on multisite `activate_plugins` maps through
-	 * `manage_network_plugins`, which only a super admin has unless the network has opened the
-	 * plugins menu to site admins. So the person who installed the plugin on their own site is
-	 * not the person who sees the notice — a network administrator is.
+	 * Surprising but intended: on multisite the queue is one network option, and the notice a merge
+	 * raises is raised exactly once and never re-queued. So the person who sees it is a network
+	 * administrator, not the site administrator who installed the plugin on their own site.
 	 */
 	public function test_a_site_administrator_on_multisite_cannot_consume_the_queue(): void {
 		if ( ! is_multisite() ) {
@@ -332,6 +348,58 @@ class PresenterTest extends WPTestCase {
 
 		$this->assertSame( '', $this->render_to_string( $this->make_presenter() ) );
 		$this->assertTrue( $this->queue_exists(), 'The queue must survive for the network administrator.' );
+	}
+
+	/**
+	 * And the same site administrator still cannot, on a network that opened the Plugins menu.
+	 *
+	 * The case above passes on a mapping rather than on this gate: with the menu off, core folds
+	 * `activate_plugins` into `manage_network_plugins` and a site administrator holds neither. Turn
+	 * the menu on -- a setting the network administrator owns and one plenty of networks use -- and
+	 * the fold stops, so a site administrator holds `activate_plugins` outright while holding no
+	 * network capability at all. Asking for `activate_plugins` here would then admit every
+	 * administrator of every site: one of them opens any admin screen, prints a merge notice raised
+	 * by a super admin's deactivation, and clears it for the whole network, leaving the only person
+	 * who could undo the deactivation never told it happened.
+	 *
+	 * Both halves are asserted, because the clearing is the damage. Nothing was rendered is a notice
+	 * postponed; nothing survived is a notice destroyed.
+	 */
+	public function test_a_site_administrator_cannot_consume_the_queue_when_the_network_opens_the_plugins_menu(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Outside multisite there is no network setting to open.' );
+		}
+
+		$this->open_the_network_plugins_menu();
+
+		$this->queue_notice(
+			'queue_merge_notice',
+			[ 'conflict_notice_message' => static fn() => 'Bundled now.' ]
+		);
+
+		wp_set_current_user( $this->create_user( 'administrator' ) );
+
+		// The capabilities are asserted rather than assumed: without this pair the test would pass on
+		// a network that never opened the menu, which is the case above and not this one.
+		$this->assertTrue(
+			current_user_can( 'activate_plugins' ),
+			'An open Plugins menu has to leave a site administrator holding activate_plugins.'
+		);
+		$this->assertFalse(
+			current_user_can( 'manage_network_plugins' ),
+			'And holding it must not be the same as holding the network capability.'
+		);
+
+		$this->assertSame( '', $this->render_to_string( $this->make_presenter() ) );
+		$this->assertTrue( $this->queue_exists(), 'The queue must survive the site administrator.' );
+
+		// The positive control, on the same open menu and the same queue: a presenter that refused
+		// everybody would satisfy the two assertions above for a reason that has nothing to do with
+		// which capability is asked for.
+		$this->become_plugin_administrator();
+
+		$this->assertStringContainsString( 'Bundled now.', $this->render_to_string( $this->make_presenter() ) );
+		$this->assertFalse( $this->queue_exists(), 'A network administrator still consumes it.' );
 	}
 
 	/**
@@ -389,6 +457,42 @@ class PresenterTest extends WPTestCase {
 
 		// A message that is only whitespace would otherwise print an empty notice box.
 		yield 'a whitespace-only message' => [ [ 'a:merge' => "  \n\t" ], null, [ 'notice' ] ];
+	}
+
+	/**
+	 * Open the per-site Plugins menu the way a network administrator does.
+	 *
+	 * The site option core reads in map_meta_cap(), written directly rather than through the Network
+	 * Settings screen: what decides the capability is the stored value, and going through the screen
+	 * would drag a form submission and a nonce into a test about who may consume a notice.
+	 *
+	 * @return void
+	 */
+	private function open_the_network_plugins_menu(): void {
+		$this->menu_items         = get_site_option( 'menu_items', false );
+		$this->menu_items_changed = true;
+
+		update_site_option( 'menu_items', [ 'plugins' => 1 ] );
+	}
+
+	/**
+	 * Put the network's menu settings back exactly as they were found.
+	 *
+	 * @return void
+	 */
+	private function close_the_network_plugins_menu(): void {
+		if ( ! $this->menu_items_changed ) {
+			return;
+		}
+
+		if ( $this->menu_items === false ) {
+			delete_site_option( 'menu_items' );
+		} else {
+			update_site_option( 'menu_items', $this->menu_items );
+		}
+
+		$this->menu_items         = false;
+		$this->menu_items_changed = false;
 	}
 
 	/**

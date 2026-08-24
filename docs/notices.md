@@ -12,16 +12,21 @@ that is raised exactly once and never re-queued.
 
 ## Who sees them
 
-Rendering prints the queue and then clears it, gated on the `activate_plugins` capability. Since
-rendering consumes the queue, a user who cannot act on a notice must not be shown one — a
-subscriber loading their profile page would otherwise silently swallow the only warning an
-administrator was ever going to get.
+Rendering prints the queue and then clears it, gated on the capability
+[conflict resolution](conflict-handling.md#when-resolution-runs) asks for: `manage_network_plugins`
+on multisite and `activate_plugins` otherwise. Since rendering consumes the queue, a user who cannot
+act on a notice must not be shown one — a subscriber loading their profile page would otherwise
+silently swallow the only warning an administrator was ever going to get.
 
-On multisite that is usually a network administrator rather than the site administrator who
-installed the plugin: core maps `activate_plugins` through `manage_network_plugins` unless the
-network has enabled the plugins menu for individual sites. Conflict resolution does not rely on that
-mapping and asks for `manage_network_plugins` by name — see
-[conflict handling](conflict-handling.md#when-resolution-runs).
+On multisite that means a network administrator rather than the site administrator who installed the
+plugin, and the network capability is asked for by name rather than left to core's mapping of
+`activate_plugins`, which only widens into it while the network keeps the Plugins menu off for
+individual sites. On a network that has turned that menu on, every site administrator holds
+`activate_plugins` outright: any one of them opening any admin screen would otherwise print a notice
+raised for the network and clear it network-wide, and the queue is one option shared by every site,
+so it would be gone for everyone else. That covers the dependency notice too — a site administrator
+no longer consumes one, which is no loss, since a queue shared by the whole network was never theirs
+alone to consume.
 
 ## One message, two places
 
@@ -56,8 +61,8 @@ use Nexcess\PluginAbsorber\Absorber;
 add_action( 'admin_init', function () {
     // Gates the read, not just the delete: `admin_init` fires for every logged-in user, and
     // draining the queue for one who cannot act on it destroys the only warning an
-    // administrator was going to get.
-    if ( ! current_user_can( 'activate_plugins' ) ) {
+    // administrator was going to get. The same capability the built-in rendering asks for.
+    if ( ! current_user_can( is_multisite() ? 'manage_network_plugins' : 'activate_plugins' ) ) {
         return;
     }
 

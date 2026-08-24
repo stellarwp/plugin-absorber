@@ -144,9 +144,9 @@ abstract class Bootstrap_Test_Case extends WPTestCase {
 		set_current_screen( 'plugins' );
 		$this->set_request_method( 'GET' );
 
-		// Two capabilities, and one user who holds both: Conflict\Gatekeeper asks for
-		// manage_network_plugins on multisite and activate_plugins everywhere else, while
-		// Notices\Presenter asks for activate_plugins wherever it runs.
+		// One capability, asked twice: Conflict\Gatekeeper before a standalone is deactivated and
+		// Notices\Presenter before the queue reporting it is printed and cleared, both of them
+		// manage_network_plugins on multisite and activate_plugins everywhere else.
 		$this->become_plugin_administrator();
 
 		// Where a resolved conflict sends the user is read off the current request rather than off the
