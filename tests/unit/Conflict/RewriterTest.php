@@ -211,6 +211,55 @@ class RewriterTest extends WPTestCase {
 	}
 
 	/**
+	 * The resume lookup is the only one that has to try every registered standalone in turn, because
+	 * the resume redirect carries no `plugin` argument to narrow it with — and every miss fires
+	 * core's `wp_verify_nonce_failed`, which security plugins hook to count and rate-limit failed
+	 * nonces. So it may only run on the request core dispatches the resume wording on. Here the
+	 * request is an ordinary activation error for somebody else's plugin, which is the shape a site
+	 * produces whenever any plugin fatals on activation: the rewrite declines, and it declines
+	 * without asking a single question about our standalone's nonce.
+	 */
+	public function test_it_does_not_hunt_for_a_resume_nonce_outside_a_resume_error(): void {
+		$asked = [];
+
+		add_action(
+			'wp_verify_nonce_failed',
+			static function ( $nonce, $action ) use ( &$asked ) {
+				$asked[] = $action;
+			},
+			10,
+			2
+		);
+
+		// Somebody else's plugin fatalled on activation: error=true, their basename, their nonce.
+		$_GET['error']        = 'true';
+		$_GET['plugin']       = 'akismet/akismet.php';
+		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-activation-error_akismet/akismet.php' );
+
+		$markup   = $this->activation_error_notice();
+		$rewriter = $this->make_rewriter( $this->standalone_owner() );
+
+		$this->assertSame( $markup, $rewriter->rewrite( $markup ) );
+		$this->assertSame(
+			[],
+			$asked,
+			'A plugins screen about somebody else\'s plugin must not spend a nonce check per'
+				. ' registered standalone, one failed-nonce action each.'
+		);
+
+		// The recorder works: the same rewrite on a real resume request does ask, so the assertion
+		// above is about the gate rather than about a listener that never attached.
+		$this->arrange_resume_error();
+		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-resume-error_akismet/akismet.php' );
+
+		$this->make_rewriter( $this->standalone_owner() )->rewrite( $this->resume_error_notice() );
+
+		$this->assertSame( [ 'plugin-resume-error_' . self::STANDALONE ], $asked );
+
+		remove_all_actions( 'wp_verify_nonce_failed' );
+	}
+
+	/**
 	 * The request names one plugin, and only the sub-plugin that claims that basename may speak for
 	 * it. Reading the first registration instead would put one bundled plugin's explanation on
 	 * another's activation error.

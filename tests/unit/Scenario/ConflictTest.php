@@ -32,12 +32,6 @@ class ConflictTest extends Bootstrap_Test_Case {
 	 */
 	private const CORE_TEXT = 'Plugin could not be activated because it triggered a <strong>fatal error</strong>.';
 
-	/**
-	 * The notice core is about to print, as `wp_admin_notice_markup` hands it over.
-	 *
-	 * @var string
-	 */
-	private const MARKUP = '<div class="notice notice-error is-dismissible"><p>' . self::CORE_TEXT . '</p></div>';
 
 	/**
 	 * A second sub-plugin, for the scenarios that need the conflict to sit behind one.
@@ -532,13 +526,22 @@ class ConflictTest extends Bootstrap_Test_Case {
 			]
 		);
 
-		$this->boot();
-
 		// The request core redirects to once the sandboxed activation has fataled.
 		$_GET['plugin']       = self::STANDALONE;
 		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-activation-error_' . self::STANDALONE );
 
-		$rewritten = apply_filters( 'wp_admin_notice_markup', self::MARKUP, self::CORE_TEXT, [] );
+		// Built before boot(), because wp_get_admin_notice() dispatches wp_admin_notice_markup
+		// itself: assembled afterwards, the fixture would arrive already rewritten and the dispatch
+		// below would be asserting against its own output.
+		$markup = $this->activation_error_notice();
+
+		// The arrangement is only worth asserting on if the fixture is the thing core really hands
+		// over, iframe included -- an approximation of it would leave the removal proven by nothing.
+		$this->assertStringContainsString( 'error_scrape', $markup );
+
+		$this->boot();
+
+		$rewritten = apply_filters( 'wp_admin_notice_markup', $markup, self::CORE_TEXT, [] );
 
 		$this->assertIsString( $rewritten, 'The filter must hand back markup, whatever it did with it.' );
 
@@ -547,8 +550,43 @@ class ConflictTest extends Bootstrap_Test_Case {
 		$this->assertStringContainsString( 'Recurring is already bundled with the host plugin.', $filtered );
 		$this->assertStringNotContainsString( self::CORE_TEXT, $filtered );
 
-		// The notice box stays core's to draw — its classes, its dismiss button, its wrapper. Only
-		// the sentence inside belongs to this library.
-		$this->assertStringStartsWith( '<div class="notice notice-error is-dismissible"><p>', $filtered );
+		// Core's own diagnostic goes with the sentence it explained. Left behind, the iframe
+		// re-includes the standalone in a sandbox and prints the re-declaration fatal underneath
+		// the friendly message that just said there was nothing wrong.
+		$this->assertStringNotContainsString( 'error_scrape', $filtered );
+
+		// The notice box stays core's to draw — its id, its classes, its wrapper. Only the sentence
+		// inside belongs to this library.
+		$this->assertStringStartsWith( '<div id="message" class="notice error"><p>', $filtered );
+	}
+
+	/**
+	 * The activation-error notice as `wp-admin/plugins.php` assembles it: core's sentence, the
+	 * `error_scrape` iframe it appends whenever the request carries a verifying `_error_nonce`, and
+	 * core's own notice box around both.
+	 *
+	 * @return string
+	 */
+	private function activation_error_notice(): string {
+		$plugin = isset( $_GET['plugin'] ) && is_string( $_GET['plugin'] ) ? $_GET['plugin'] : '';
+		$nonce  = isset( $_GET['_error_nonce'] ) && is_string( $_GET['_error_nonce'] ) ? $_GET['_error_nonce'] : '';
+
+		$iframe_url = add_query_arg(
+			[
+				'action'   => 'error_scrape',
+				'plugin'   => urlencode( $plugin ),
+				'_wpnonce' => urlencode( $nonce ),
+			],
+			admin_url( 'plugins.php' )
+		);
+
+		return wp_get_admin_notice(
+			self::CORE_TEXT
+				. '<iframe style="border:0" width="100%" height="70px" src="' . esc_url( $iframe_url ) . '"></iframe>',
+			[
+				'id'                 => 'message',
+				'additional_classes' => [ 'error' ],
+			]
+		);
 	}
 }

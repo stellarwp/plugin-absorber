@@ -215,6 +215,15 @@ class Rewriter {
 	 * was signed for answers. A forged value still matches nothing -- being unable to name the
 	 * plugin does not make the check weaker, only the loop longer.
 	 *
+	 * Behind `error=resuming`, which is not a second guess at the same thing. Without it the loop
+	 * ran on every plugins-screen request carrying an `_error_nonce` the activation lookup missed --
+	 * an ordinary activation failure for somebody else's plugin -- and each miss fires core's
+	 * `wp_verify_nonce_failed`, which security plugins hook to count and rate-limit failed nonces. A
+	 * site with five sub-plugins produced five of them on a screen this library has nothing to do
+	 * with. The gate costs nothing, because it is the request core itself dispatches the resume
+	 * wording on: `resume_plugin()` is only ever handed `plugins.php?error=resuming`, and
+	 * `wp-admin/plugins.php` words the notice off exactly that value.
+	 *
 	 * A sub-plugin with no standalone configured is skipped rather than tested against an action
 	 * that ends in nothing, which is a question about a plugin that does not exist.
 	 *
@@ -225,6 +234,14 @@ class Rewriter {
 	 * @return Sub_Plugin|null
 	 */
 	private function find_by_resume_error( string $nonce ): ?Sub_Plugin {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- which screen this is, not
+		// an act to authorise; the nonce below is what authorises.
+		$error = isset( $_GET['error'] ) ? sanitize_text_field( wp_unslash( $_GET['error'] ) ) : '';
+
+		if ( $error !== 'resuming' ) {
+			return null;
+		}
+
 		foreach ( $this->registry->all() as $sub_plugin ) {
 			if ( ! $sub_plugin->has_standalone_plugin() ) {
 				continue;
@@ -291,8 +308,10 @@ class Rewriter {
 	private function without_the_error_scrape( string $markup ): string {
 		$stripped = preg_replace( '#<iframe\b[^>]*\berror_scrape\b[^>]*>\s*</iframe>#i', '', $markup );
 
-		// Null means the match itself failed -- a backtrack limit, or invalid UTF-8 carried in by
-		// the message just substituted. The reworded sentence is worth keeping on its own.
+		// Null means the match itself failed -- a backtrack or recursion limit on a notice far larger
+		// than the one core writes. The pattern carries no `u` modifier, so PCRE runs on bytes here
+		// and whatever encoding the substituted message arrived in cannot fail it. The reworded
+		// sentence is worth keeping on its own.
 		return is_string( $stripped ) ? $stripped : $markup;
 	}
 }
