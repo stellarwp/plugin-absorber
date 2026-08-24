@@ -28,6 +28,8 @@ use RuntimeException;
  *
  * Requires `lucatume\WPBrowser\Traits\UopzFunctions` on the same test class, for the constant and the
  * function stub.
+ *
+ * @since 1.0.0
  */
 trait WithPluginFunctions {
 	/**
@@ -89,9 +91,20 @@ trait WithPluginFunctions {
 	 *
 	 * @param callable $call The call under test.
 	 *
+	 * @throws RuntimeException When the plugin functions are not in memory, rather than running the
+	 *                          missing-functions state under the present-functions name.
+	 *
 	 * @return string The fixture root, with a trailing slash, as ABSPATH carries.
 	 */
 	protected function with_plugin_functions_present( callable $call ): string {
+		// All this helper does is repoint ABSPATH; what makes the functions present is the caller's
+		// setUp having required the real file. Unchecked, a caller that forgot would get the other
+		// state under this name, and every assertion about the guard standing down would pass for
+		// exactly the reason it is supposed to rule out.
+		if ( ! function_exists( 'deactivate_plugins' ) ) {
+			throw new RuntimeException( 'The plugin functions are not in memory; require wp-admin/includes/plugin.php in setUp.' );
+		}
+
 		$root    = $this->make_wordpress_root();
 		$restore = $this->setConstant( 'ABSPATH', $root );
 
