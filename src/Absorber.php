@@ -17,6 +17,7 @@ use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Nexcess\PluginAbsorber\Traits\Reports_Errors;
 use Throwable;
 
 /**
@@ -34,6 +35,7 @@ use Throwable;
  */
 final class Absorber {
 	use Guards_Hook_Prefix;
+	use Reports_Errors;
 
 	/**
 	 * Whether the hooks have been wired.
@@ -180,10 +182,9 @@ final class Absorber {
 		try {
 			self::collaborator( Presenter::class )->render();
 		} catch ( Throwable $thrown ) {
-			_doing_it_wrong(
+			self::report_error(
 				self::class . '::render_notices',
-				sprintf( 'The notices could not be rendered: %s', $thrown->getMessage() ),
-				'1.0.0'
+				sprintf( 'The notices could not be rendered: %s', $thrown->getMessage() )
 			);
 		}
 	}
@@ -215,10 +216,9 @@ final class Absorber {
 		try {
 			return self::collaborator( Rewriter::class )->rewrite( $markup );
 		} catch ( Throwable $thrown ) {
-			_doing_it_wrong(
+			self::report_error(
 				self::class . '::filter_activation_error_markup',
-				sprintf( 'The activation error notice could not be rewritten: %s', $thrown->getMessage() ),
-				'1.0.0'
+				sprintf( 'The activation error notice could not be rewritten: %s', $thrown->getMessage() )
 			);
 
 			return $markup;

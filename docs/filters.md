@@ -1,6 +1,7 @@
 # Filters
 
-`{prefix}` is the value passed to `Config::set_hook_prefix()`.
+What you override. [Actions](actions.md) are the other direction — what the library tells you as it
+runs. `{prefix}` is the value passed to `Config::set_hook_prefix()`.
 
 | Filter | Arguments | Purpose |
 |---|---|---|

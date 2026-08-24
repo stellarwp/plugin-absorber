@@ -15,6 +15,7 @@ use Nexcess\PluginAbsorber\Plugin\Contracts\Deactivator_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Nexcess\PluginAbsorber\Traits\Reports_Errors;
 use Throwable;
 
 /**
@@ -37,6 +38,7 @@ use Throwable;
  */
 class Resolver implements Resolver_Interface {
 	use Guards_Hook_Prefix;
+	use Reports_Errors;
 
 	/**
 	 * @since 1.0.0
@@ -137,14 +139,18 @@ class Resolver implements Resolver_Interface {
 					$standalone_gone = true;
 				}
 			} catch ( Throwable $thrown ) {
-				_doing_it_wrong(
+				// Announced as well as reported, and with the sub-plugin the conflict belongs to. A
+				// standalone still active after a pass that was supposed to deal with it is the
+				// failure a host is likeliest to hear about as "the site is broken", and on a
+				// production site the developer channel says nothing at all.
+				self::report_error(
 					self::class,
 					sprintf(
 						'The conflict for "%s" threw while being resolved, so it was abandoned: %s',
 						$sub_plugin->get_slug(),
 						$thrown->getMessage()
 					),
-					'1.0.0'
+					$sub_plugin
 				);
 			}
 		}

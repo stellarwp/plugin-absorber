@@ -59,6 +59,7 @@ two sub-plugins, every optional key.
   releases.
 - [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
 - [Filters][filters] — the runtime overrides for policies and notice text.
+- [Actions][actions] — the failures the library announces, and what each one carries.
 - [Notices][notices] — where the queue lives, who may see it, and how to render it yourself.
 - [Extending][extending] — swapping out a piece of the library.
 - [Tests][tests] — running the suite, the fixtures and traits it offers, and every scenario it drives
@@ -73,6 +74,7 @@ source.
 [recipes]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/recipes.md
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
+[actions]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/actions.md
 [notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
 [extending]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/extending.md
 [tests]: https://github.com/stellarwp/plugin-absorber/blob/main/tests/README.md

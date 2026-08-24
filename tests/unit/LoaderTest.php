@@ -64,6 +64,13 @@ class LoaderTest extends WPTestCase {
 	 */
 	private $should_load_calls = [];
 
+	/**
+	 * Every `error` firing, as the message and whatever sub-plugin came with it.
+	 *
+	 * @var array<int,array{message:mixed,sub_plugin:mixed}>
+	 */
+	private $error_calls = [];
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -75,6 +82,7 @@ class LoaderTest extends WPTestCase {
 		$this->clear_activations();
 		$this->reset_bundled_plugin_loads();
 		$this->should_load_calls = [];
+		$this->error_calls       = [];
 	}
 
 	public function tearDown(): void {
@@ -756,6 +764,147 @@ class LoaderTest extends WPTestCase {
 	}
 
 	/**
+	 * The diagnostic channel a production site actually has. `_doing_it_wrong()` prints nothing
+	 * without WP_DEBUG, so until this action existed a host had no way to be told that a bundled
+	 * plugin it ships never made it into memory.
+	 */
+	public function test_it_announces_a_missing_bundled_file_with_the_sub_plugin_it_belongs_to(): void {
+		$this->record_error_action();
+		$this->expect_incorrect_usage();
+
+		$path = $this->missing_bundled_plugin_file();
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => $path,
+				'plugin_loaded_constant' => $this->make_guard_constant(),
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertCount( 1, $this->error_calls );
+		$this->assertStringContainsString(
+			$path,
+			is_string( $this->error_calls[0]['message'] ) ? $this->error_calls[0]['message'] : '',
+			'The error action carries the same sentence the developer channel does.'
+		);
+
+		$announced = $this->error_calls[0]['sub_plugin'];
+
+		$this->assertInstanceOf( Sub_Plugin::class, $announced );
+		$this->assertSame(
+			'give-recurring',
+			$announced->get_slug(),
+			'A failure that belongs to one sub-plugin has to name it, or a listener cannot act on it.'
+		);
+	}
+
+	/**
+	 * A sub-plugin that threw is announced too, with the sub-plugin it threw for — and the
+	 * announcement happens from inside the catch that keeps the request alive.
+	 */
+	public function test_it_announces_a_sub_plugin_that_threw(): void {
+		$this->record_error_action();
+		$this->expect_incorrect_usage();
+
+		$this->register(
+			[
+				'enabled' => static function (): bool {
+					throw new RuntimeException( 'the licence server was unreachable' );
+				},
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertCount( 1, $this->error_calls );
+		$this->assertStringContainsString(
+			'the licence server was unreachable',
+			is_string( $this->error_calls[0]['message'] ) ? $this->error_calls[0]['message'] : ''
+		);
+	}
+
+	/**
+	 * The sharpest case: the `error` action fires from inside handlers whose whole purpose is that
+	 * nothing escapes them. A listener throwing there would defeat the guard by way of the thing
+	 * reporting it, so the announcement catches its own listeners.
+	 */
+	public function test_a_throwing_error_listener_does_not_take_the_request_down(): void {
+		$this->expect_incorrect_usage();
+
+		add_action(
+			'give/plugin_absorber/error',
+			static function (): void {
+				throw new RuntimeException( 'the log server was unreachable' );
+			}
+		);
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => $this->missing_bundled_plugin_file(),
+				'plugin_loaded_constant' => $this->make_guard_constant(),
+			]
+		);
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame(
+			1,
+			$this->bundled_plugin_loads(),
+			'The sub-plugin behind the broken one still has to load.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'A listener on give/plugin_absorber/error threw',
+			'The listener has to be reported down the one channel it cannot break.'
+		);
+	}
+
+	/**
+	 * The hook prefix is what names the error action, so the bootstrap that never set one is the
+	 * single failure the action cannot carry. It still reaches the developer channel, and the
+	 * request still survives.
+	 */
+	public function test_a_missing_hook_prefix_is_reported_but_cannot_be_announced(): void {
+		$this->record_error_action();
+		$this->register();
+
+		$loader    = $this->loader();
+		$container = $this->container();
+
+		// The prefix goes, the container stays: a library that reached the container first would fail
+		// this for the other reason.
+		Config_State::reset();
+		Config::set_container( $container );
+		$this->expect_incorrect_usage();
+
+		$loader->load_all();
+
+		$this->assertSame( [], $this->error_calls );
+		$this->assert_the_library_reported_incorrect_usage();
+
+		// The recorder has to be shown to work, and with the prefix back it is the same listener on
+		// the same hook: without this, a listener that never attached passes the assertion above for
+		// a reason that has nothing to do with the missing prefix.
+		Config::set_hook_prefix( 'give' );
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-fee-recovery',
+				'bundled_plugin_file'    => $this->missing_bundled_plugin_file(),
+				'plugin_loaded_constant' => $this->make_guard_constant(),
+			]
+		);
+
+		$loader->load_all();
+
+		$this->assertCount( 1, $this->error_calls, 'The recorder must catch an error that really happened.' );
+	}
+
+	/**
 	 * @return void
 	 */
 	private function clear_activations(): void {
@@ -780,6 +929,30 @@ class LoaderTest extends WPTestCase {
 	 */
 	private function loader(): Loader {
 		return $this->resolve( Loader::class );
+	}
+
+	/**
+	 * Listen to the `error` action, keeping both of its arguments.
+	 *
+	 * The closure takes a reference to the property and is `static`: uopz is not involved here, but
+	 * the same shape keeps a listener from holding the test object alive on a hook.
+	 *
+	 * @return void
+	 */
+	private function record_error_action(): void {
+		$errors = &$this->error_calls;
+
+		add_action(
+			'give/plugin_absorber/error',
+			static function ( $message, $sub_plugin ) use ( &$errors ): void {
+				$errors[] = [
+					'message'    => $message,
+					'sub_plugin' => $sub_plugin,
+				];
+			},
+			10,
+			2
+		);
 	}
 
 	/**

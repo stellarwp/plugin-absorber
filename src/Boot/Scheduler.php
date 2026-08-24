@@ -12,6 +12,7 @@ use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Traits\Reports_Errors;
 use StellarWP\ContainerContract\ContainerInterface;
 use Throwable;
 use WP_Hook;
@@ -28,6 +29,8 @@ use WP_Hook;
  * @since 1.0.0
  */
 class Scheduler {
+	use Reports_Errors;
+
 	/**
 	 * plugins_loaded priority the load pass runs at.
 	 *
@@ -121,10 +124,14 @@ class Scheduler {
 		// hook mistake there is -- would otherwise mean nothing loads at all, with no warning and
 		// a site that looks entirely healthy.
 		if ( $this->wiring_window_has_closed() ) {
-			_doing_it_wrong(
+			// The one report in this library raised before a hook has fired rather than from inside
+			// one, and the only one a host can still act on in the same request. It reaches the error
+			// action only when the prefix is already set: `boot()` requires a container and not a
+			// prefix, so a host that skipped `set_hook_prefix()` gets the developer channel alone --
+			// the same answer the prefix guard gives on every other path, for the same reason.
+			self::report_error(
 				Absorber::class . '::boot',
-				'Absorber::boot() must run before plugins_loaded priority 5. Resolving and loading inline instead.',
-				'1.0.0'
+				'Absorber::boot() must run before plugins_loaded priority 5. Resolving and loading inline instead.'
 			);
 
 			// In the order the hooks would have run them.
@@ -252,6 +259,15 @@ class Scheduler {
 	/**
 	 * Tell the developer which step was abandoned, and why.
 	 *
+	 * Called from inside both backstop `catch` blocks, which is the sharpest place an announcement
+	 * can sit: a listener throwing here would escape the handler whose entire purpose is that
+	 * nothing escapes it, on `plugins_loaded`, on every request. `report_error()` catches its own
+	 * listeners for exactly this call site.
+	 *
+	 * No sub-plugin is named. What threw is the step — a gate, the probe, a host's resolver, or a
+	 * collaborator the container could not build — and by the time it reaches here there is no
+	 * telling which registration, if any, it was about.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param string    $step        Step that threw, named as the sequence names it.
@@ -261,10 +277,9 @@ class Scheduler {
 	 * @return void
 	 */
 	private static function report_a_step_that_threw( string $step, string $consequence, Throwable $thrown ): void {
-		_doing_it_wrong(
+		self::report_error(
 			self::class,
-			sprintf( 'The %s threw, so %s: %s', $step, $consequence, $thrown->getMessage() ),
-			'1.0.0'
+			sprintf( 'The %s threw, so %s: %s', $step, $consequence, $thrown->getMessage() )
 		);
 	}
 

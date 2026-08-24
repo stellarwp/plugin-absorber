@@ -714,6 +714,42 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
+	 * The late boot is the one report this library makes before a hook of its own has fired, and the
+	 * only one a host can still act on in the same request — so it is worth as much on a production
+	 * site, where `_doing_it_wrong()` prints nothing, as it is under WP_DEBUG.
+	 */
+	public function test_booting_too_late_announces_the_mistake(): void {
+		$this->expect_incorrect_usage();
+
+		$announced = [];
+
+		$this->add_tracked_action(
+			'give/plugin_absorber/error',
+			static function ( $message ) use ( &$announced ): void {
+				$announced[] = $message;
+			}
+		);
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			static function (): void {
+				Absorber::boot();
+			},
+			self::load_priority() + 1
+		);
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertCount( 1, $announced );
+		$this->assertStringContainsString(
+			'must run before plugins_loaded priority 5',
+			is_string( $announced[0] ) ? $announced[0] : '',
+			'The announcement carries the same sentence the developer channel does.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
 	 * @return Generator<string,array{0:int}>
 	 */
 	public static function late_boot_priorities(): Generator {

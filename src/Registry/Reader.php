@@ -10,6 +10,7 @@ namespace Nexcess\PluginAbsorber\Registry;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
+use Nexcess\PluginAbsorber\Traits\Reports_Errors;
 
 /**
  * Every registered sub-plugin, as something a pass can be handed rather than reach for.
@@ -31,6 +32,8 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * @since 1.0.0
  */
 class Reader {
+	use Reports_Errors;
+
 	/**
 	 * Sub-plugins registered but not yet handed to the registrar.
 	 *
@@ -162,14 +165,18 @@ class Reader {
 				// what became of it is now the consequence -- the site runs one of those two files
 				// and silently does not run the other. Every other report in this library says what
 				// the outcome was; this one has to as well.
-				_doing_it_wrong(
+				//
+				// The refused registration is what goes on the action, not the one that stands: a
+				// listener is being told which object was thrown away, and the one already in the
+				// registrar is readable from every other path there is.
+				self::report_error(
 					self::class,
 					sprintf(
 						'%1$s The registration already held was kept; %2$s was discarded.',
 						$exception->getMessage(),
 						$sub_plugin->get_bundled_plugin_file()
 					),
-					'1.0.0'
+					$sub_plugin
 				);
 			}
 		}

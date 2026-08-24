@@ -611,7 +611,9 @@ Branch names are `NN-topic`. Never open PR N+1 before PR N's branch exists. `mai
 after every merge.
 
 - **PR size cap:** ≤10 files, tests and test infrastructure excluded. No logic-bearing PR exceeds 4
-  source files.
+  source files — with one exception: a change that wires one decision through every site that
+  already does the same job may exceed it, where the added files are call-site swaps carrying no
+  argument of their own. Say so in the body, and say which files those are.
 - **Commits: no co-author trailers, ever.**
 - **PR body is exactly three parts, nothing else** — no boilerplate headings, no restating the diff,
   no checklists, and no "Verify" section: the commands are in this file and the coverage is in the

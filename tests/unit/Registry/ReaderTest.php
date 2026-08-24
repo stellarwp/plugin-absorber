@@ -173,6 +173,44 @@ class ReaderTest extends WPTestCase {
 	}
 
 	/**
+	 * A duplicate slug is reported through `_doing_it_wrong()`, which prints nothing on a production
+	 * site, so it is also announced — and the sub-plugin it announces is the registration that was
+	 * refused, not the one that stands. A listener is being told which object was thrown away; the
+	 * one the registrar kept is readable from every other path there is.
+	 */
+	public function test_a_duplicate_slug_announces_the_registration_that_was_refused(): void {
+		$this->set_up_container();
+		$this->register( 'give-recurring' );
+		$this->register( 'give-recurring', '/tmp/give-recurring-again.php' );
+
+		$this->expect_incorrect_usage();
+
+		$announced = [];
+
+		add_action(
+			'give/plugin_absorber/error',
+			static function ( $message, $sub_plugin ) use ( &$announced ): void {
+				$announced[] = $sub_plugin;
+			},
+			10,
+			2
+		);
+
+		$this->reader()->all();
+
+		$this->assertCount( 1, $announced );
+
+		$refused = $announced[0];
+
+		$this->assertInstanceOf( Sub_Plugin::class, $refused );
+		$this->assertSame(
+			'/tmp/give-recurring-again.php',
+			$refused->get_bundled_plugin_file(),
+			'The announcement has to carry the registration that lost, or a listener cannot find it.'
+		);
+	}
+
+	/**
 	 * The buffer is emptied before it is handed over, so a collision that aborted the hand-over would
 	 * take everything registered behind the colliding entry with it: the buffered copies are gone, the
 	 * registrar never saw them, and the read reports only the duplicate. A host left with a sub-plugin

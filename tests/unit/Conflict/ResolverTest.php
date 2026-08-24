@@ -239,6 +239,57 @@ class ResolverTest extends WPTestCase {
 		$this->assert_the_library_reported_incorrect_usage();
 	}
 
+	/**
+	 * `_doing_it_wrong()` prints nothing without WP_DEBUG, and an abandoned conflict is a standalone
+	 * still running beside the bundled copy — the failure a site owner reports as the site being
+	 * broken. So it is announced as well, carrying the sub-plugin it belongs to.
+	 */
+	public function test_a_sub_plugin_that_throws_is_announced_with_the_sub_plugin_it_belongs_to(): void {
+		$this->expect_incorrect_usage();
+		$this->standalone_is( true );
+
+		$announced = [];
+
+		add_action(
+			'give/plugin_absorber/error',
+			static function ( $message, $sub_plugin ) use ( &$announced ): void {
+				$announced[] = [
+					'message'    => $message,
+					'sub_plugin' => $sub_plugin,
+				];
+			},
+			10,
+			2
+		);
+
+		$this->register(
+			[
+				'conflict_policy' => static function (): string {
+					throw new RuntimeException( 'the policy option could not be read' );
+				},
+			]
+		);
+
+		$this->resolve_all();
+
+		$this->assertCount( 1, $announced );
+		$this->assertStringContainsString(
+			'the policy option could not be read',
+			is_string( $announced[0]['message'] ) ? $announced[0]['message'] : '',
+			'The announcement carries the same sentence the developer channel does.'
+		);
+
+		$sub_plugin = $announced[0]['sub_plugin'];
+
+		$this->assertInstanceOf( Sub_Plugin::class, $sub_plugin );
+		$this->assertSame(
+			'give-recurring',
+			$sub_plugin->get_slug(),
+			'A conflict that was abandoned belongs to one sub-plugin, and a listener has to be told which.'
+		);
+		$this->assert_the_library_reported_incorrect_usage();
+	}
+
 	public function test_the_collaborators_come_from_the_container(): void {
 		$detector = new class() extends Detector {
 			/**

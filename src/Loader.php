@@ -12,6 +12,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Nexcess\PluginAbsorber\Traits\Reports_Errors;
 use Throwable;
 
 /**
@@ -25,6 +26,7 @@ use Throwable;
  */
 class Loader {
 	use Guards_Hook_Prefix;
+	use Reports_Errors;
 
 	/**
 	 * @since 1.0.0
@@ -94,17 +96,21 @@ class Loader {
 			//
 			// A re-declaration is the one failure this cannot catch, because PHP does not raise it as
 			// a Throwable -- which is what the guard constant, checked before any of this, is for.
+			//
+			// Reporting the failure cannot add one of its own: report_error() swallows whatever a
+			// listener on the error action throws, so the announcement of a sub-plugin that died
+			// cannot be what kills the request.
 			try {
 				$this->load( $sub_plugin );
 			} catch ( Throwable $thrown ) {
-				_doing_it_wrong(
+				self::report_error(
 					self::class,
 					sprintf(
 						'The sub-plugin "%s" threw while loading, so it was abandoned: %s',
 						$sub_plugin->get_slug(),
 						$thrown->getMessage()
 					),
-					'1.0.0'
+					$sub_plugin
 				);
 			}
 		}
@@ -148,14 +154,17 @@ class Loader {
 		$file = $sub_plugin->get_bundled_plugin_file();
 
 		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
-			_doing_it_wrong(
+			// The sub-plugin travels with the sentence, because this failure belongs to exactly one
+			// registration: a listener told only that a bundled file is missing would have to parse
+			// the path back out to know which of them to act on.
+			self::report_error(
 				self::class,
 				sprintf(
 					'The bundled plugin file for "%s" is missing or unreadable: %s',
 					$sub_plugin->get_slug(),
 					$file
 				),
-				'1.0.0'
+				$sub_plugin
 			);
 
 			return;

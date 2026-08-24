@@ -22,8 +22,15 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * @since 1.0.0
  */
 trait Guards_Hook_Prefix {
+	use Reports_Errors;
+
 	/**
 	 * Whether a hook prefix has been set, reporting to the developer when it has not.
+	 *
+	 * Reported through the shared channel even though this is the one failure the error action can
+	 * never carry — the prefix is what names that action too, so there is nothing to fire it under.
+	 * The alternative, a bare `_doing_it_wrong()` here, would read as an oversight and would be one
+	 * the moment somebody made the prefix optional.
 	 *
 	 * @since 1.0.0
 	 *
@@ -33,7 +40,7 @@ trait Guards_Hook_Prefix {
 		try {
 			Config::get_hook_prefix();
 		} catch ( Config_Exception $exception ) {
-			_doing_it_wrong( self::class, $exception->getMessage(), '1.0.0' );
+			self::report_error( self::class, $exception->getMessage() );
 
 			return false;
 		}
