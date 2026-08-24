@@ -104,6 +104,12 @@ class RedirectorTest extends WPTestCase {
 		yield 'the network admin root'               => [ '/wp-admin/network/', admin_url( 'index.php' ) ];
 		yield 'the user admin root'                  => [ '/wp-admin/user/', admin_url( 'index.php' ) ];
 
+		// A host's own screens are core's files with a `page` argument on them, which is why the
+		// check below is for the file and not for a list of core's screens: a plugin page is a
+		// screen the admin serves, and it comes back whole.
+		yield 'a plugin page under admin.php'   => [ '/wp-admin/admin.php?page=give-settings', admin_url( 'admin.php?page=give-settings' ) ];
+		yield 'a plugin page under a core list' => [ '/wp-admin/edit.php?post_type=give_forms&page=give-reports', admin_url( 'edit.php?post_type=give_forms&page=give-reports' ) ];
+
 		// Nothing that fails to name an admin screen is worth reloading, so it takes the same route
 		// as no request uri at all.
 		yield 'a front-end permalink'                => [ '/2026/08/hello-world/', admin_url( 'plugins.php' ) ];
@@ -111,6 +117,19 @@ class RedirectorTest extends WPTestCase {
 		yield 'a front-end permalink ending in /network/' => [ '/community/network/', admin_url( 'plugins.php' ) ];
 		yield 'a traversal attempt'                  => [ '/wp-admin/../../etc/passwd', admin_url( 'plugins.php' ) ];
 		yield 'garbage'                              => [ 'not a url at all', admin_url( 'plugins.php' ) ];
+
+		// A well-formed name is not a screen. Every one of these would otherwise be rebuilt as an
+		// admin URL for a file that is not in wp-admin, and land the user on the web server's own 404
+		// -- on the request that was supposed to put them back where they were.
+		yield 'a php file outside the admin'     => [ '/wp-content/plugins/give/give.php', admin_url( 'plugins.php' ) ];
+		yield 'the login screen'                 => [ '/wp-login.php', admin_url( 'plugins.php' ) ];
+		yield 'the cron endpoint'                => [ '/wp-cron.php', admin_url( 'plugins.php' ) ];
+		yield 'an admin path naming no screen'   => [ '/wp-admin/not-a-screen.php', admin_url( 'plugins.php' ) ];
+		yield 'an admin screen name with a typo' => [ '/wp-admin/edits.php?post_type=page', admin_url( 'plugins.php' ) ];
+
+		// Asked of the admin this request belongs to, not of the three at once: sites.php is the
+		// network admin's screen and there is no wp-admin/sites.php for a single site to go back to.
+		yield 'a network screen from the site admin' => [ '/wp-admin/sites.php', admin_url( 'plugins.php' ) ];
 
 		// The host is discarded with everything else in front of the screen name: the destination is
 		// assembled from admin_url() and a basename, so a uri naming somewhere else cannot leave the
@@ -131,7 +150,12 @@ class RedirectorTest extends WPTestCase {
 	 * entitled to lean on, and the anchor is what holds if it ever changes — so the parse is stubbed
 	 * to hand the path over verbatim, which is the only way to put the question to the pattern.
 	 *
-	 * The clean path is asserted first, under the same stub. Without it the fallback below would be
+	 * `is_file()` is stubbed for the same reason the parse is. There is no wp-admin file named
+	 * "edit.php\n" either, so the screen check would refuse this one on its own and the anchor could
+	 * be taken out without a test noticing. Answering every file question yes leaves the pattern as
+	 * the only thing that can refuse, which is what this test is asking about.
+	 *
+	 * The clean path is asserted first, under the same stubs. Without it the fallback below would be
 	 * satisfied just as well by a stub that broke every destination, which is the wrong reason to
 	 * pass.
 	 */
@@ -147,18 +171,30 @@ class RedirectorTest extends WPTestCase {
 			true
 		);
 
-		$redirector = new Redirector();
+		$redirector        = new Redirector();
+		$expected_screen   = admin_url( 'edit.php' );
+		$expected_fallback = admin_url( 'plugins.php' );
+
+		// Everything else this test needs is built before is_file() stops telling the truth, and the
+		// stub is undone the moment the calls under test return: it is process-global -- the
+		// autoloader asks it too -- so the window it is wrong in has to be those two calls and
+		// nothing else. The trait's `@after` is the backstop.
+		$restore = $this->setFunctionReturn( 'is_file', true );
+
+		try {
+			$screen   = $redirector->after_deactivation( '/wp-admin/edit.php' );
+			$fallback = $redirector->after_deactivation( "/wp-admin/edit.php\n" );
+		} finally {
+			$restore();
+		}
 
 		$this->assertSame(
-			admin_url( 'edit.php' ),
-			$redirector->after_deactivation( '/wp-admin/edit.php' ),
-			'A path naming a screen still resolves to it, so the parse is not what refuses below.'
+			$expected_screen,
+			$screen,
+			'A path naming a screen still resolves to it, so neither stub is what refuses below.'
 		);
 
-		$this->assertSame(
-			admin_url( 'plugins.php' ),
-			$redirector->after_deactivation( "/wp-admin/edit.php\n" )
-		);
+		$this->assertSame( $expected_fallback, $fallback );
 	}
 
 	/**
@@ -221,6 +257,51 @@ class RedirectorTest extends WPTestCase {
 		$this->assertSame(
 			network_admin_url( 'plugins.php' ),
 			( new Redirector() )->after_deactivation( '/wp-admin/network/update-core.php' )
+		);
+	}
+
+	/**
+	 * The network admin serves only the files core gives it: there is no
+	 * wp-admin/network/options-general.php, so no super admin was ever on that screen and there is
+	 * nothing there to send one back to. The site admin's copy of the same name is not the answer
+	 * either -- the destination is built with network_admin_url(), which would name the file that is
+	 * missing. Asking the current admin's directory is what makes those two the same question.
+	 */
+	public function test_it_refuses_a_screen_the_network_admin_does_not_serve(): void {
+		$this->setFunctionReturn( 'is_network_admin', true );
+
+		$redirector = new Redirector();
+
+		$this->assertSame(
+			network_admin_url( 'sites.php' ),
+			$redirector->after_deactivation( '/wp-admin/network/sites.php' ),
+			'A screen the network admin does have still resolves to itself, so the refusal below is not blanket.'
+		);
+
+		$this->assertSame(
+			network_admin_url( 'plugins.php' ),
+			$redirector->after_deactivation( '/wp-admin/network/options-general.php' )
+		);
+	}
+
+	/**
+	 * The third admin holds fewer screens still, and `edit.php` is one it does not have.
+	 */
+	public function test_it_refuses_a_screen_the_user_admin_does_not_serve(): void {
+		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', true );
+
+		$redirector = new Redirector();
+
+		$this->assertSame(
+			user_admin_url( 'profile.php' ),
+			$redirector->after_deactivation( '/wp-admin/user/profile.php' ),
+			'A screen the user admin does have still resolves to itself, so the refusal below is not blanket.'
+		);
+
+		$this->assertSame(
+			user_admin_url( 'plugins.php' ),
+			$redirector->after_deactivation( '/wp-admin/user/edit.php' )
 		);
 	}
 

@@ -62,8 +62,8 @@ class Redirector {
 		$screen = $this->screen_from_path( is_string( $path ) ? $path : '' );
 
 		// Nothing that names an admin screen, so there is nothing to re-render: a front-end
-		// permalink, a directory that is not an admin root, a traversal attempt. Those take the same
-		// route as no request URI at all.
+		// permalink, a directory that is not an admin root, a php file this admin does not serve, a
+		// traversal attempt. Those take the same route as no request URI at all.
 		if ( $screen === '' ) {
 			return $this->admin_url_for( 'plugins.php' );
 		}
@@ -78,12 +78,13 @@ class Redirector {
 	/**
 	 * The admin screen a request path names, or an empty string if it names none.
 	 *
-	 * Read from the path's basename rather than from the URI, and returned only once it looks like
-	 * an admin screen. The request URI is a path on a site that may live in a subdirectory, may be
-	 * behind a TLS-terminating proxy whose scheme disagrees with admin_url(), and on multisite may
-	 * sit under the network or user admin -- so nothing built from admin_url() would recognise it.
-	 * Taking the basename is also what keeps a crafted URI out of the destination: only a validated
-	 * screen name leaves here, and admin_url_for() supplies everything in front of it.
+	 * Read from the path's basename rather than from the URI, and returned only once it is a screen:
+	 * the name has to be well formed, and this admin has to have a file of that name to serve. The
+	 * request URI is a path on a site that may live in a subdirectory, may be behind a
+	 * TLS-terminating proxy whose scheme disagrees with admin_url(), and on multisite may sit under
+	 * the network or user admin -- so nothing built from admin_url() would recognise it. Taking the
+	 * basename is also what keeps a crafted URI out of the destination: only a validated screen name
+	 * leaves here, and admin_url_for() supplies everything in front of it.
 	 *
 	 * @since 1.0.0
 	 *
@@ -94,10 +95,11 @@ class Redirector {
 	private function screen_from_path( string $path ): string {
 		$screen = basename( $path );
 
-		// Anchored with \z rather than $, which in PCRE also matches immediately before a trailing
-		// newline -- so "edit.php\n" would satisfy $ and a line break would leave here inside the
-		// one value this class promises is validated.
-		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php\z/', $screen ) ) {
+		// Two questions, and both have to be yes. Anchored with \z rather than $, which in PCRE also
+		// matches immediately before a trailing newline -- so "edit.php\n" would satisfy $ and a line
+		// break would leave here inside the one value this class promises is validated. The pattern
+		// runs first because it is also what makes the name safe to put after a directory below.
+		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php\z/', $screen ) && $this->is_admin_screen( $screen ) ) {
 			return $screen;
 		}
 
@@ -117,6 +119,48 @@ class Redirector {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Whether the admin this request belongs to has a screen of that name to be sent back to.
+	 *
+	 * Well formed is not the same as naming a screen. `wp-login.php`, `wp-cron.php` and a plugin's
+	 * own bootstrap file all satisfy the pattern above, and each of them would be rebuilt as an admin
+	 * URL for a file that is not there -- the web server's own 404, in place of the plugins list this
+	 * class documents for a request that names no admin screen.
+	 *
+	 * Asked of the filesystem rather than of a list of core's screens, because a list would be wrong
+	 * the first time a plugin registered a top-level page: a host's screens are `admin.php`,
+	 * `edit.php`, `options-general.php` or `tools.php` with a `page` argument on them, so the file is
+	 * core's however many screens are hung off it and every one of them still comes back intact. What
+	 * `is_file()` cannot tell apart is a screen from one of the admin's own includes -- but a browser
+	 * is only ever on the first kind, and both are inside wp-admin either way.
+	 *
+	 * The three branches are admin_url_for()'s, in the same order and for the same reason: the answer
+	 * has to be about the directory the destination will be built in. The network and user admins
+	 * serve only the files core gives them -- there is no `wp-admin/network/options-general.php` --
+	 * and a request under one of them cannot have been on a screen it does not hold.
+	 *
+	 * The name reaching here has already matched the pattern above, so it is [A-Za-z0-9_-] and a
+	 * '.php' and nothing else: there is no way for it to climb out of the directory being asked
+	 * about, and no readability question either, since the web server is what serves the file, not us.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $screen A screen name that has passed the pattern in screen_from_path().
+	 *
+	 * @return bool
+	 */
+	private function is_admin_screen( string $screen ): bool {
+		if ( is_network_admin() ) {
+			return is_file( ABSPATH . 'wp-admin/network/' . $screen );
+		}
+
+		if ( is_user_admin() ) {
+			return is_file( ABSPATH . 'wp-admin/user/' . $screen );
+		}
+
+		return is_file( ABSPATH . 'wp-admin/' . $screen );
 	}
 
 	/**
