@@ -284,7 +284,7 @@ class Loader {
 		// reach into the sub-plugin it was just told about, and on the first-ever load the tables and
 		// options that code expects are the activation callback's work -- so announcing first would
 		// hand a host a plugin that is loaded but not yet set up. It also keeps a throwing listener
-		// off the callback: from here the throw is caught a frame up with the require and the
+		// off the callback: from here announce() catches the throw with the require and the
 		// activation already done, where from in front of it the throw would skip the callback
 		// entirely and leave it to be retried, silently, on every request for ever.
 		$this->announce( Config::get_hook_name( 'loaded' ), [ $sub_plugin ], $sub_plugin );

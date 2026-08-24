@@ -205,7 +205,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Absorber.php` | Static facade: registration, `boot()`, the accessors, and the two notice trampolines. Holds no collaborator's state. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
-| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
+| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback, and the `loaded`/`skipped` announcements. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
 | `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active in either scope, and whether it is network-active — `is_plugin_active_for_network()`, which is `false` off a network so no caller needs an `is_multisite()` guard), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
@@ -420,6 +420,8 @@ runnable inline as well as wirable.
   `{$hook_prefix}/plugin_absorber/conflict_notice_message`,
   `{$hook_prefix}/plugin_absorber/dependency_notice_message` and
   `{$hook_prefix}/plugin_absorber/stranding_notice_message` (all four `Sub_Plugin`)
+- Actions: `{$hook_prefix}/plugin_absorber/loaded` and `{$hook_prefix}/plugin_absorber/skipped`
+  (`Loader`, one per sub-plugin the load pass finished with)
 - Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
   `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 
@@ -554,8 +556,12 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
   `Conflict\Resolver::resolve_all()` catch *per sub-plugin* as well, because one sub-plugin's throw
   must not take the ones behind it in the registration order with it. Everything past those catches is
   somebody else's code — `enabled`, `dependency_check`, `activation_callback`, `conflict_policy`, the
-  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, and the
-  standalone's own deactivation hook. The one failure none of this can catch is a re-declaration
+  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, the
+  standalone's own deactivation hook, and every listener on the actions this library fires.
+  `Loader::announce()` is the one that catches its own rather than falling to the enclosing catch,
+  because by then the require has happened and the activation callback has run — left to the
+  per-sub-plugin catch, a listener's bug would be reported as the sub-plugin having been abandoned,
+  on the channel a host built its log line on. The one failure none of this can catch is a re-declaration
   fatal, which PHP does not raise as a `Throwable`; the guard constant, checked before the require, is
   what prevents that one.
 - **The guard constant and the standalone basename are two separate keys.** No constant does double
