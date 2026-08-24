@@ -23,7 +23,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * every host that binds its own resolver, and give the resolver two reasons to change: how a
  * conflict is found, and what to do about one.
  *
- * Both methods leave the request exactly as they found it. Nothing here resolves a user,
+ * Nothing here leaves a mark on the request. Nothing resolves a user,
  * deactivates a plugin or queues a notice — an answer is all a caller gets, and the acting is the
  * resolver's.
  *
@@ -65,7 +65,7 @@ class Detector {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no container has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool
 	 */
