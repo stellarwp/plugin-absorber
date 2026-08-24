@@ -429,7 +429,20 @@ jargon for mu-plugin autoloading — Packagist's top results for it are all that
 **Floors:** PHP `>=7.4`, WordPress 6.4 (for the `wp_admin_notice_markup` filter). WordPress is not a
 Composer dependency, so its floor lives in the README only.
 
-**Production dependencies:** `stellarwp/container-contract` only. `lucatume/di52` is dev-only.
+**Production dependencies:** `stellarwp/container-contract` at `^1.1`, and nothing else. `lucatume/di52`
+is dev-only.
+
+The floor is `^1.1` because `^1.0` claims two things that are not true of this library. Below 1.0.2
+the interface is `StellarWP\Container\ContainerInterface`, so the class `Config::set_container()`
+type-hints does not exist. Below 1.1.0 it exists but `get()` carries no `@template`, so every
+container resolution in `src/` is `mixed` and level 9 can type none of them. Raise it, never lower
+it.
+
+It is accurate rather than load-bearing, and does not earn a CI leg that resolves it. `uplink`,
+`telemetry` and `schema` all require `^1.0`, which admits 1.1.2 — so Composer hands a real host tree
+the top of the range whatever we declare, and reaching the floor takes a stale lock or an explicit
+pin. A job installing the lower bound would guard a line nobody has a reason to edit, at the price
+of going red whenever a dev dependency moved the contract.
 
 **Class naming is `Snake_Case`** (`Sub_Plugin`, `Conflict_Policy`, `Config_Exception`). Method names
 are fully spelled out; config keys are descriptive and WordPress-centric.

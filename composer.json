@@ -23,7 +23,7 @@
     },
     "require": {
         "php": ">=7.4",
-        "stellarwp/container-contract": "^1.0"
+        "stellarwp/container-contract": "^1.1"
     },
     "require-dev": {
         "codeception/module-asserts": "^1.0",
