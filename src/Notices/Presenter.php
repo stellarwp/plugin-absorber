@@ -8,6 +8,7 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Notices;
 
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
+use Nexcess\PluginAbsorber\Traits\Guards_Plugin_Capability;
 
 /**
  * Who may consume the queue, and what happens when they do.
@@ -18,7 +19,9 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  *
  * The capability check lives here rather than in `Renderer` because it guards the clearing as much as
  * the drawing: the two have to be decided together, or a user who may not see the queue could still
- * destroy it.
+ * destroy it. Which capability is `Traits\Guards_Plugin_Capability`'s answer, shared with the gate
+ * that decides who may have a conflict resolved at all — the notices report what that gate let
+ * happen, so consuming one is the same authority as causing it.
  *
  * The queue is single-consumer. Rendering consumes it for everybody, so the first eligible
  * administrator to load any admin screen is the only person who ever sees a given notice —
@@ -32,18 +35,7 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
  * @since 1.0.0
  */
 class Presenter {
-	/**
-	 * Capability required to see, and thereby consume, the queue.
-	 *
-	 * Rendering clears the queue, so a user who cannot act on a notice must not be shown one:
-	 * a subscriber loading their profile page would otherwise silently swallow the only warning
-	 * an administrator was ever going to get.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @var string
-	 */
-	private const CAPABILITY = 'activate_plugins';
+	use Guards_Plugin_Capability;
 
 	/**
 	 * @since 1.0.0
@@ -84,7 +76,11 @@ class Presenter {
 	 * @return void
 	 */
 	public function render(): void {
-		if ( ! current_user_can( self::CAPABILITY ) ) {
+		// Rendering clears the queue, so a user who cannot act on a notice must not be shown one: a
+		// subscriber loading their profile page would otherwise silently swallow the only warning an
+		// administrator was ever going to get, and on multisite the queue they swallowed it out of is
+		// shared by every site on the network.
+		if ( ! self::user_may_manage_plugins() ) {
 			return;
 		}
 

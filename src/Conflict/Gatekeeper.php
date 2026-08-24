@@ -8,6 +8,7 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Conflict;
 
 use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
+use Nexcess\PluginAbsorber\Traits\Guards_Plugin_Capability;
 
 /**
  * Whether this request may have a conflict resolved at all.
@@ -31,6 +32,7 @@ use Nexcess\PluginAbsorber\Traits\Guards_Hook_Prefix;
  */
 class Gatekeeper {
 	use Guards_Hook_Prefix;
+	use Guards_Plugin_Capability;
 
 	/**
 	 * Admin scripts that exist only to perform work.
@@ -103,22 +105,18 @@ class Gatekeeper {
 	 * unauthenticated GET of any admin URL gets this far. Without this check a stranger could turn
 	 * the standalone off site-wide by requesting a page they are about to be bounced off.
 	 *
-	 * The capability asked for matches what resolution can do, which is why the two differ. The
-	 * deactivation is network-wide: Deactivator leaves deactivate_plugins()'s $network_wide
-	 * at its default, and core reads that as both scopes, so the standalone comes out of the
-	 * network's active plugins whichever site the request arrived on. That is authority a single
-	 * site's administrator does not hold, and asking for activate_plugins would not establish it --
-	 * core only widens that capability into the network one while a network setting says to, so on a
-	 * network that has said otherwise every subsite administrator would pass. Where a network exists,
-	 * the network-scoped capability is the one whose reach matches the action's.
+	 * Which capability that is belongs to Traits\Guards_Plugin_Capability, because the notice
+	 * presenter has to ask the identical question: rendering the queue clears it for everybody, so a
+	 * user who may not have a conflict resolved may not consume the report of one either. Spelling
+	 * the capability here as well is what let the two answers drift apart.
 	 *
 	 * Here rather than inside the default resolver, because it is the one thing about conflict
 	 * resolution that must survive a host binding its own: whoever cannot activate a plugin must not
 	 * be able to deactivate one, and a replacement that forgot to re-check would reopen exactly that.
 	 *
 	 * It gates every policy, not only the destructive one, and that costs nothing. The other
-	 * policies queue a notice, and Notices\Presenter::render() will not render -- or clear -- for a user
-	 * with no plugin capability at all. Queuing on a request that cannot act only parks the notice
+	 * policies queue a notice, and Notices\Presenter::render() will not render -- or clear -- for a
+	 * user this same guard turns away. Queuing on a request that cannot act only parks the notice
 	 * until an administrator who can act arrives, which is the request this gate lets resolution run
 	 * on anyway. Nothing is consumed or suppressed by waiting: the standalone is still there to
 	 * detect.
@@ -128,7 +126,7 @@ class Gatekeeper {
 	 * @return bool
 	 */
 	public function user_may_resolve(): bool {
-		return current_user_can( is_multisite() ? 'manage_network_plugins' : 'activate_plugins' );
+		return self::user_may_manage_plugins();
 	}
 
 	/**

@@ -56,8 +56,9 @@ multisite and `activate_plugins` otherwise, since deactivating a standalone is n
 a network exists. The check matters because `plugins_loaded` fires well before `auth_redirect()`, so
 an unauthenticated GET of an admin URL reaches this code on its way to the login screen.
 
-These gates apply whatever the policy is — the non-destructive policies only queue a notice, and a
-notice is neither shown nor cleared for a user without the same capability.
+These gates apply whatever the policy is — the non-destructive policies only queue a notice, and the
+[notice queue](notices.md#who-sees-them) asks for that same capability by name before it shows a
+notice or clears one, so nothing a policy queued is consumed by someone the gate would have refused.
 
 The deactivation itself is silent, and covers both scopes on multisite. Silent because the
 standalone's own deactivation hook would otherwise run this early: a routine `flush_rewrite_rules()`
