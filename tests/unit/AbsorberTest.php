@@ -19,6 +19,7 @@ use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Writer;
 use Nexcess\PluginAbsorber\Provider;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Registry\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
@@ -286,6 +287,77 @@ class AbsorberTest extends WPTestCase {
 	public static function container_binding_methods(): Generator {
 		yield 'singleton' => [ 'singleton' ];
 		yield 'bind'      => [ 'bind' ];
+	}
+
+	/**
+	 * The two public reads of the registry have to answer alike. Registration is buffered until
+	 * something reads it, so a registrar handed over undrained holds nothing at all until the first
+	 * pass reads at plugins_loaded priority 5 — while its own contract promises every registered
+	 * sub-plugin, in registration order, and `Absorber::all()` hands back exactly that. A host
+	 * asking either question during its bootstrap, which is every host, would get two answers.
+	 */
+	public function test_the_registrar_accessor_holds_what_all_reports(): void {
+		$this->set_up_container();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		// Asked before Absorber::all(), which is the whole of the test: a read through the reader
+		// first would drain the buffer and leave nothing for the two to disagree about.
+		$registrar = Absorber::registrar();
+
+		$this->assertSame( [ 'give-recurring' ], array_keys( $registrar->all() ) );
+		$this->assertSame( array_keys( Absorber::all() ), array_keys( $registrar->all() ) );
+	}
+
+	/**
+	 * Into the registrar the accessor is about to hand back, and once. The buffer is emptied as it
+	 * drains, so asking again must not hand the registrar a slug it already holds and trip the
+	 * duplicate guard on a registration the host only made once.
+	 */
+	public function test_the_registrar_accessor_drains_into_the_registrar_it_returns(): void {
+		$bound = $this->bind_registrar();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$this->assertSame( $bound, Absorber::registrar() );
+		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
+		$this->assertSame( 1, $bound->register_calls );
+
+		Absorber::registrar();
+		Absorber::all();
+
+		$this->assertSame( 1, $bound->register_calls, 'Neither read may register what the registrar holds.' );
+	}
+
+	/**
+	 * The drain happens after the binding has been resolved and checked, and this is the ordering
+	 * that buys. `Registry\Reader` takes a registrar as a constructor argument, so a registrar bound
+	 * to the wrong class is a reader that cannot be built either — and a drain that ran first would
+	 * send the host after a collaborator it never bound, instead of naming the one binding it did
+	 * get wrong.
+	 */
+	public function test_a_registrar_of_the_wrong_type_is_reported_before_the_accessor_drains(): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function (): object {
+				return new stdClass();
+			}
+		);
+		$this->set_up_container( $container );
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+			$this->assertStringContainsString( 'does not implement', $exception->getMessage() );
+			$this->assertStringNotContainsString(
+				Reader::class,
+				$exception->getMessage(),
+				'The reader is this library\'s own collaborator; naming it sends the host to the wrong file.'
+			);
+		}
 	}
 
 	public function test_register_builds_a_sub_plugin_and_stores_it(): void {

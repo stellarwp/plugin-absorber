@@ -226,7 +226,9 @@ container cannot build at all is reported the same way and not raised at you raw
 is caught and wrapped in a `Config_Exception` that names the id, keeping the original as
 `getPrevious()`. `Absorber::boot()` is the one that does not wrap — a container that cannot build the
 provider or the scheduler throws its own exception out of your `boot()` call. Past the check,
-`Absorber::all()` also drops anything a rebound registrar returns that is not a `Sub_Plugin`.
+`Absorber::all()` also drops anything a rebound registrar returns that is not a `Sub_Plugin`, and
+`Absorber::registrar()` hands back a registrar with every registration made so far already in it, so
+the two answer alike whenever you ask.
 
 `Absorber::resolver()` hands you the resolver, not the gates in front of it: `resolve_all()` re-checks
 neither the request gate nor the capability gate, because the conflict step has already asked both by

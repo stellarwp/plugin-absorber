@@ -43,6 +43,19 @@ final class Absorber {
 	private static $booted = false;
 
 	/**
+	 * The registrar, holding every registration made so far.
+	 *
+	 * Drained on the way past, like `all()` and for the same reason: registration is buffered until
+	 * something reads it, so a registrar handed over as it is holds nothing at all until the first
+	 * pass reads at plugins_loaded priority 5 — which is after every point a host bootstrap gets to
+	 * ask. The two public reads of the registry would then disagree, one of them against the
+	 * contract `Registrar_Interface::all()` states, and neither would say so.
+	 *
+	 * Drained *after* the binding has been resolved and checked, not before. `Registry\Reader` takes
+	 * a registrar as a constructor argument, so a registrar bound to the wrong class is a reader
+	 * that cannot be built either — and a drain in front would report the reader, a collaborator the
+	 * host never bound, in place of the one binding it did get wrong.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @throws Config_Exception When no container has been set, or its binding is unusable.
@@ -50,7 +63,14 @@ final class Absorber {
 	 * @return Registrar_Interface
 	 */
 	public static function registrar(): Registrar_Interface {
-		return self::collaborator( Registrar_Interface::class );
+		$registrar = self::collaborator( Registrar_Interface::class );
+
+		// Read for the drain rather than for the list: handing the pending registrations over is
+		// what `Registry\Reader::all()` does on its way to the registrar, and the list it comes back
+		// with is what `all()` exists to give a host.
+		self::collaborator( Reader::class )->all();
+
+		return $registrar;
 	}
 
 	/**
