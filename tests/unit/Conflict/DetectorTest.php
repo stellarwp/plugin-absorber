@@ -425,6 +425,52 @@ class DetectorTest extends WPTestCase {
 	}
 
 	/**
+	 * The multisite stranding predicate: deactivating a network-active standalone is only unsafe when
+	 * the host that ships its bundled replacement is not itself network-active -- then a network-wide
+	 * deactivation pulls the standalone from the sites the host never loads on, with nothing to
+	 * replace it. Opt-in: false whenever no host basename is configured. is_multisite() is never
+	 * asked and never stubbed -- is_network_active() is false off a network, so the predicate is
+	 * false on single site of its own accord.
+	 *
+	 * @dataProvider stranding_topologies
+	 *
+	 * @param string   $host_basename  Host basename to configure, or '' for none.
+	 * @param string[] $network_active Basenames the checker reports network-active.
+	 * @param bool     $expected       Whether deactivation would strand sites.
+	 */
+	public function test_it_reports_whether_deactivation_would_strand_sites(
+		string $host_basename,
+		array $network_active,
+		bool $expected
+	): void {
+		Config::set_host_plugin_basename( $host_basename );
+		$this->install_checker( $this->checker_network_active_for( $network_active ) );
+
+		$sub_plugin = $this->make_sub_plugin(
+			[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+		);
+
+		$this->assertSame(
+			$expected,
+			$this->detector()->deactivation_would_strand_sites( $sub_plugin )
+		);
+	}
+
+	/**
+	 * @return Generator<string,array{0:string,1:string[],2:bool}>
+	 */
+	public static function stranding_topologies(): Generator {
+		$standalone = 'give-recurring/give-recurring.php';
+		$host       = 'give/give.php';
+
+		yield 'network standalone, non-network host'   => [ $host, [ $standalone ], true ];
+		yield 'network standalone, network host'       => [ $host, [ $standalone, $host ], false ];
+		yield 'site-only standalone, non-network host' => [ $host, [], false ];
+		yield 'site-only standalone, network host'     => [ $host, [ $host ], false ];
+		yield 'no host basename configured'            => [ '', [ $standalone ], false ];
+	}
+
+	/**
 	 * The detector the container builds, which is the one the conflict step reaches.
 	 *
 	 * @return Detector
@@ -548,6 +594,50 @@ class DetectorTest extends WPTestCase {
 			 */
 			public function is_network_active( string $basename ): bool {
 				return false;
+			}
+		};
+	}
+
+	/**
+	 * A checker that reports the named basenames network-active, for the stranding predicate.
+	 *
+	 * is_active() is not the axis these tests turn on -- the predicate never calls it -- so it
+	 * answers a constant true.
+	 *
+	 * @param string[] $network_active Basenames reported network-active.
+	 *
+	 * @return Checker_Interface
+	 */
+	private function checker_network_active_for( array $network_active ): Checker_Interface {
+		return new class( $network_active ) implements Checker_Interface {
+			/**
+			 * @var string[]
+			 */
+			private $network_active;
+
+			/**
+			 * @param string[] $network_active Basenames reported network-active.
+			 */
+			public function __construct( array $network_active ) {
+				$this->network_active = $network_active;
+			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_active( string $basename ): bool {
+				return true;
+			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_network_active( string $basename ): bool {
+				return in_array( $basename, $this->network_active, true );
 			}
 		};
 	}
