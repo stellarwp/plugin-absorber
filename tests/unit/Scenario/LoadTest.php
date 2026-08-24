@@ -196,17 +196,18 @@ class LoadTest extends Bootstrap_Test_Case {
 	}
 
 	/**
-	 * Two registrations under one slug. The collision is the registrar's exception and it is raised
-	 * long after both `Absorber::register()` calls returned — the buffer only reaches the registrar
-	 * when something reads it, which is inside `plugins_loaded`, the hook this library exists to keep a
-	 * site off the floor on. So the read is guarded at both passes: the conflict pass at priority 5
-	 * reads first and reports the mistake, and the load pass behind it finds the buffer already drained
-	 * and gets on with the load.
+	 * Two registrations under one slug. The collision is the registrar's refusal and it is found long
+	 * after both `Absorber::register()` calls returned — the buffer only reaches the registrar when
+	 * something reads it, which is inside `plugins_loaded`, the hook this library exists to keep a site
+	 * off the floor on. So it is reported where it is found and nothing is raised out of the read: the
+	 * conflict pass at priority 5 reads first and reports the mistake, and the load pass behind it
+	 * loads the registry that read left standing.
 	 *
 	 * What the sub-plugin registered *after* the collision does is the part worth pinning. The whole
-	 * batch is registered and the collision raised afterwards, so a host with a duplicate two entries
-	 * up keeps everything it registered behind it — where a throw out of the middle of the flush would
-	 * have left those in no registrar and in no buffer, silently, for the rest of the process.
+	 * batch is offered to the registrar and only the colliding entry is refused, so a host with a
+	 * duplicate two entries up keeps everything it registered behind it — where a throw out of the
+	 * middle of the flush would have left those in no registrar and in no buffer, silently, for the
+	 * rest of the process.
 	 */
 	public function test_a_duplicate_slug_is_reported_and_the_registration_behind_it_still_loads(): void {
 		$this->expect_incorrect_usage();

@@ -11,7 +11,6 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Conflict\Contracts\Resolver_Interface;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Loader;
 use StellarWP\ContainerContract\ContainerInterface;
 use Throwable;
@@ -219,19 +218,6 @@ class Scheduler {
 			// its own cannot drop one by omission -- and asking them first means a resolver is built
 			// only on the request that goes on to use it.
 			$container->get( Resolver_Interface::class )->resolve_all();
-		} catch ( Config_Exception $exception ) {
-			// Reading the registry is where a duplicate slug surfaces, and this step reads it a
-			// priority ahead of the load pass that has always guarded the same read. Named separately
-			// from the catch below because it is the one failure here a developer can act on directly,
-			// and the message says which.
-			_doing_it_wrong(
-				self::class,
-				sprintf(
-					'The registered sub-plugins could not be read, so no conflict was resolved: %s',
-					$exception->getMessage()
-				),
-				'1.0.0'
-			);
 		} catch ( Throwable $thrown ) {
 			// The backstop, and the promise the whole library rests on: plugins_loaded fires on every
 			// request a site serves, so a throw out of a step is a white screen on all of them. What

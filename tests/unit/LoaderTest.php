@@ -682,34 +682,39 @@ class LoaderTest extends WPTestCase {
 	}
 
 	/**
-	 * The same guarantee for the read itself. Reading flushes the registration buffer, and the
-	 * registrar refuses a slug it already holds — a throw that arrives inside plugins_loaded, where it
-	 * would take down the front end and wp-admin together and lock the developer out of the screen
-	 * where the duplicate registration could be undone.
+	 * The read itself, and the failure this pass can least afford. Reading flushes the registration
+	 * buffer, and the registrar refuses a slug it already holds — which the read used to raise as an
+	 * exception, standing the whole pass down.
+	 *
+	 * The load pass is the first thing to read on every request that is not an interactive admin GET,
+	 * because the conflict pass's gate turns those away before they reach it. So one duplicated
+	 * registration meant the front end loaded none of the site's bundled plugins, on every request,
+	 * for as long as the duplicate existed — while wp-admin, where the load pass reads second and
+	 * found the buffer already drained, went on looking perfectly healthy.
+	 *
+	 * The refusal is reported and the pass gets on with the registry it has.
 	 */
-	public function test_a_duplicate_slug_is_reported_rather_than_fataling_the_request(): void {
+	public function test_a_duplicate_slug_is_reported_and_the_sub_plugins_around_it_still_load(): void {
 		// Two registrations of the default slug, each with a bundled fixture of its own — one file
 		// behind both would load once for the second registration and hide the skip under a dedupe.
-		$this->register();
-		$this->register();
+		$first     = $this->register();
+		$duplicate = $this->register();
+		$behind    = $this->register( [ 'slug' => 'give-fee-recovery' ] );
 
 		$this->expect_incorrect_usage();
 
 		$this->loader()->load_all();
 
-		// Reaching this line at all is half of what is under test: load_all() has to return.
-		$this->assertSame(
-			0,
-			$this->bundled_plugin_loads(),
-			'A read that failed has no list to load from, so nothing may load.'
+		$this->assertTrue( defined( $first ), 'The registration that stands is the one that loads.' );
+		$this->assertFalse( defined( $duplicate ), 'The refused registration is not loaded in its place.' );
+		$this->assertTrue(
+			defined( $behind ),
+			'A sub-plugin registered behind the collision has nothing to do with it and still has to load.'
 		);
+		$this->assertSame( 2, $this->bundled_plugin_loads() );
 		$this->assert_the_library_reported_incorrect_usage_saying(
-			'The registered sub-plugins could not be read, so none were loaded',
-			'The read is what failed, and the report has to say so rather than name some other gate.'
-		);
-		$this->assert_the_library_reported_incorrect_usage_saying(
-			'give-recurring',
-			'The report has to name the slug, or it could have been raised for any other reason.'
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The collision is what failed, and the report has to say so rather than name some other gate.'
 		);
 	}
 

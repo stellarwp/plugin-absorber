@@ -271,7 +271,7 @@ class ConflictTest extends Bootstrap_Test_Case {
 	/**
 	 * The failure mode a merge notice queued on every request would produce: a redirect loop, or an
 	 * admin screen that reports the same deactivation for ever. Nothing is re-registered between the
-	 * two requests — a duplicate slug throws — because this is the next page view, not a second
+	 * two requests — a duplicate slug is refused — because this is the next page view, not a second
 	 * bootstrap.
 	 */
 	public function test_the_request_after_a_deactivation_does_not_loop(): void {

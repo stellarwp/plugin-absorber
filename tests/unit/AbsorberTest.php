@@ -445,10 +445,13 @@ class AbsorberTest extends WPTestCase {
 
 	/**
 	 * Deferring registration moves the duplicate-slug report from the second register() call to the
-	 * first read. It still names both bundled files, which is what the host needs to find them.
+	 * first read, where it is reported rather than raised: what a host asks for here is the list of
+	 * sub-plugins, and the second registration under a slug is no reason to hand back none of them.
+	 * The report still names both bundled files, which is what the host needs to find them.
 	 */
 	public function test_a_duplicate_slug_is_refused_at_the_first_read(): void {
 		$this->set_up_container();
+		$this->expect_incorrect_usage();
 
 		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
 		Absorber::register(
@@ -459,13 +462,22 @@ class AbsorberTest extends WPTestCase {
 			]
 		);
 
-		try {
-			Absorber::all();
-			$this->fail( 'Expected a Config_Exception.' );
-		} catch ( Config_Exception $exception ) {
-			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
-			$this->assertStringContainsString( '/tmp/other/other.php', $exception->getMessage() );
-		}
+		$all = Absorber::all();
+
+		$this->assertSame( [ 'give-recurring' ], array_keys( $all ) );
+		$this->assertSame(
+			'/tmp/give-recurring/give-recurring.php',
+			$all['give-recurring']->get_bundled_plugin_file(),
+			'The registration that arrived first under a slug is the one that stands.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The collision is what failed, and the report has to say so rather than name some other gate.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'/tmp/other/other.php',
+			'The report has to name the registration that lost, or the host cannot find it.'
+		);
 	}
 
 	public function test_all_is_empty_before_anything_is_registered(): void {

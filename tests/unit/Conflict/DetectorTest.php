@@ -14,7 +14,6 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
@@ -22,6 +21,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
@@ -49,6 +49,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 class DetectorTest extends WPTestCase {
 	use UopzFunctions;
 	use WithContainer;
+	use WithIncorrectUsage;
 	use WithNoticeQueue;
 	use WithSubPlugins;
 
@@ -120,6 +121,7 @@ class DetectorTest extends WPTestCase {
 		// Before Config_State::reset(), which takes away the prefix the hook name is built from.
 		$this->remove_the_load_gate();
 
+		$this->stop_expecting_incorrect_usage();
 		$this->clear_notices();
 		Absorber_State::reset();
 		Config_State::reset();
@@ -342,18 +344,27 @@ class DetectorTest extends WPTestCase {
 
 	/**
 	 * The probe reads the registry and nothing else, which is what keeps it cheap enough to ask of
-	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still raise,
-	 * because it is only found when the buffer reaches the registrar. The conflict step catches this
-	 * exception type around the probe for exactly this case, so it has to arrive as this type.
+	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still meet,
+	 * because it is only found when the buffer reaches the registrar. It is refused and reported as it
+	 * drains, and the probe answers over the registry that is left: this step runs a priority ahead of
+	 * the load pass, so a mistake that stood it down would leave an active standalone in place with
+	 * nothing left in the request to deactivate it.
 	 */
-	public function test_a_duplicate_slug_surfaces_from_the_probe(): void {
+	public function test_a_duplicate_slug_does_not_stop_the_probe_answering(): void {
 		$this->standalone_is( true );
 		$this->register();
 		$this->register();
 
-		$this->expectException( Config_Exception::class );
+		$this->expect_incorrect_usage();
 
-		$this->detector()->has_conflict();
+		$this->assertTrue(
+			$this->detector()->has_conflict(),
+			'The sub-plugin that did register is still in conflict, whatever the second registration did.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The refusal has to reach the developer, or a sub-plugin goes missing with nothing said.'
+		);
 	}
 
 	/**
