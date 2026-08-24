@@ -345,10 +345,11 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
-	 * The redirector is handed the current request, unslashed — not the referrer. What the user is
-	 * looking at is what has to be re-rendered without the standalone's code in memory, and core slashes
-	 * $_SERVER on the way in, so a query string with an apostrophe in it would otherwise gain a
-	 * backslash every time a conflict was resolved.
+	 * The redirector is handed the current request — not the referrer — exactly as the SAPI left it.
+	 * What the user is looking at is what has to be re-rendered without the standalone's code in
+	 * memory, and core adds its slashes in `wp_magic_quotes()`, which wp-settings.php calls after
+	 * `do_action( 'plugins_loaded' )`: at priority 5 there are none to take off, so unslashing here
+	 * would delete a backslash the user typed rather than one core added.
 	 */
 	public function test_it_asks_the_redirector_where_to_send_the_current_request(): void {
 		$redirector = new class() extends Redirector {
@@ -385,12 +386,29 @@ class ResolverTest extends WPTestCase {
 
 		$this->standalone_is( true );
 		$this->register();
-		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=O\\\'Brien';
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=C:\\projects';
 
 		$location = $this->capture_resolution();
 
-		$this->assertSame( [ '/wp-admin/edit.php?s=O\'Brien' ], $redirector->asked );
+		$this->assertSame( [ '/wp-admin/edit.php?s=C:\\projects' ], $redirector->asked );
 		$this->assertSame( admin_url( 'tools.php' ), $location );
+	}
+
+	/**
+	 * The same claim through the real redirector, because handing the URI over intact is only half of
+	 * it: an admin searching for a Windows path who trips a conflict has to be sent back to the search
+	 * they ran, not to a search for `C:projects`. The backslash leaves re-encoded, which is
+	 * `Conflict\Redirector`'s doing and its own tests' subject; that it is still there to encode is
+	 * this one's.
+	 */
+	public function test_a_backslash_in_the_query_survives_into_the_destination(): void {
+		$this->standalone_is( true );
+		$this->register();
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=C:\\projects';
+
+		$location = $this->capture_resolution();
+
+		$this->assertStringContainsString( 's=C%3A%5Cprojects', $location );
 	}
 
 	/**

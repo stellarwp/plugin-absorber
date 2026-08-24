@@ -299,6 +299,15 @@ class GatekeeperTest extends WPTestCase {
 		// most confident it refuses.
 		yield 'an action named outside the Latin alphabet' => [ 'action', 'экспорт' ];
 		yield 'an action named in punctuation'             => [ 'action', '+' ];
+
+		// Core adds its slashes in wp_magic_quotes(), which wp-settings.php calls after
+		// do_action( 'plugins_loaded' ) — so at priority 5 these arrive exactly as the URL bar sent
+		// them and there is nothing to unslash. Doing it anyway is a stripslashes() over user input,
+		// and these are the two values it empties into the answers the gate reads as "no action
+		// asked for": a request the gate then admits, and core goes on to dispatch
+		// admin_action_\ for.
+		yield 'an action a stripslashes would empty'           => [ 'action', '\\' ];
+		yield 'an action a stripslashes would turn into no-op' => [ 'action2', '-\\1' ];
 	}
 
 	/**

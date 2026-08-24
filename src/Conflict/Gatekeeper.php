@@ -206,9 +206,17 @@ class Gatekeeper {
 			// admin_action_{$action} on the raw value, so an action named outside a-z0-9_- -- a
 			// non-Latin script, a bare '+' -- is work a plugin can be hooked to, and sanitizing
 			// first would empty it and admit the very request this gate exists to refuse.
-			$action = wp_unslash( $raw );
-
-			if ( is_string( $action ) && $action !== '' && $action !== self::NO_ACTION ) {
+			//
+			// Not through wp_unslash() either, for the reason Conflict\Resolver reads the request URI
+			// raw: core adds its slashes in wp_magic_quotes(), which wp-settings.php calls *after*
+			// do_action( 'plugins_loaded' ), so there are none on this value yet and unslashing is a
+			// plain stripslashes() over the query string. '\' would strip to '' and '-\1' to '-1' --
+			// both of them values this gate reads as asking for nothing -- and the request would be
+			// admitted and resolved out from under work core is still going to dispatch. Should this
+			// ever be reached after the slashing, from the inline fallback a too-late boot reports,
+			// a slashed value only ever reads as more of an action than it is, which is the
+			// direction a gate may safely be wrong in.
+			if ( $raw !== '' && $raw !== self::NO_ACTION ) {
 				return true;
 			}
 		}
@@ -245,9 +253,10 @@ class Gatekeeper {
 				continue;
 			}
 
-			$path = wp_unslash( $candidate );
-
-			return strtolower( basename( is_string( $path ) ? $path : '' ) );
+			// Read as the SAPI left it. wp_magic_quotes() slashes $_SERVER, and wp-settings.php
+			// calls it after do_action( 'plugins_loaded' ), so nothing here has been slashed yet and
+			// wp_unslash() would only delete backslashes that arrived in the path itself.
+			return strtolower( basename( $candidate ) );
 		}
 
 		return '';
