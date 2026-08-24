@@ -200,7 +200,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
 | `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
-| `src/Traits/` | `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing). Cross-cutting only: a trait used by one folder lives in that folder. |
+| `src/Traits/` | `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing), `Reports_Errors` (the one way a failure is announced: `_doing_it_wrong()` and the `error` action, and it swallows what a listener throws). Cross-cutting only: a trait used by one folder lives in that folder. |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type` — `merge`, `conflict`, `stranding`, `dependency`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it, `notice-error` for `dependency` and `notice-warning` for the rest), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Activator_Interface`, `Config_Exception`. |
 
@@ -403,11 +403,14 @@ runnable inline as well as wirable.
   `{$hook_prefix}/plugin_absorber/conflict_notice_message`,
   `{$hook_prefix}/plugin_absorber/dependency_notice_message` and
   `{$hook_prefix}/plugin_absorber/stranding_notice_message` (all four `Sub_Plugin`)
+- Actions: `{$hook_prefix}/plugin_absorber/error` (`Traits\Reports_Errors`, from every reporting site
+  in the library)
 - Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
   `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 
-Both are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
-the segment between the host's prefix and the key's own name. The two differ in one respect:
+The hooks are built in `Config` — `get_hook_name()` and `get_option_name()` — so nothing else assembles
+the segment between the host's prefix and the key's own name. Hook names and option names differ in
+one respect:
 `{$option_prefix}` is the hook prefix lowercased with hyphens folded to underscores, because the
 prefix validator admits `A-Z` and `-` and a hook-naming value should not reach a storage key
 verbatim. Hook names keep the host's casing exactly as it passed it.
@@ -524,8 +527,11 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
   `Conflict\Resolver::resolve_all()` catch *per sub-plugin* as well, because one sub-plugin's throw
   must not take the ones behind it in the registration order with it. Everything past those catches is
   somebody else's code — `enabled`, `dependency_check`, `activation_callback`, `conflict_policy`, the
-  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, and the
-  standalone's own deactivation hook. The one failure none of this can catch is a re-declaration
+  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, the
+  standalone's own deactivation hook, and every listener on the actions this library fires.
+  `Traits\Reports_Errors` is the exception that catches its own: reporting a failure may not raise a
+  second one, so a throw from an `error` listener is swallowed there rather than handed back up to
+  the step that was already failing. The one failure none of this can catch is a re-declaration
   fatal, which PHP does not raise as a `Throwable`; the guard constant, checked before the require, is
   what prevents that one.
 - **The guard constant and the standalone basename are two separate keys.** No constant does double
@@ -761,8 +767,8 @@ under a `Nexcess\SubPluginLoader\` namespace, with a `Config::set_version()` tha
 `ob_start()` approach the `wp_admin_notice_markup` filter replaced.
 
 Human-facing docs are `README.md` plus `docs/installing.md`, `docs/configuration.md`,
-`docs/recipes.md`, `docs/conflict-handling.md`, `docs/filters.md`, `docs/notices.md` and
-`docs/extending.md`. Keep them short and keep rationale here or in code comments — do not grow the
+`docs/recipes.md`, `docs/conflict-handling.md`, `docs/filters.md`, `docs/actions.md`,
+`docs/notices.md` and `docs/extending.md`. Keep them short and keep rationale here or in code comments — do not grow the
 README back. They are written for a host developer integrating the library, not for a maintainer:
 `docs/extending.md` is the only one that names internal classes, and every other file describes
 behaviour instead. `docs/` is `export-ignore`d and

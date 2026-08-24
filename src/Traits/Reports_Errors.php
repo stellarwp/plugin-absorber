@@ -25,9 +25,9 @@ use Throwable;
  * library is likeliest to add next is a new gate, and a new gate that reports through only one of
  * the two channels is invisible in exactly the way this exists to fix.
  *
- * Cross-cutting rather than folder-scoped — the load pass, the boot sequence, the facade, the
- * registry read and the hook-prefix guard all report — so it lives here beside the other trait every
- * one of those uses.
+ * Cross-cutting rather than folder-scoped — the load pass, the conflict pass, the boot sequence, the
+ * facade, the registry read and the hook-prefix guard all report — so it lives here beside the other
+ * trait every one of those uses.
  *
  * @since 1.0.0
  */

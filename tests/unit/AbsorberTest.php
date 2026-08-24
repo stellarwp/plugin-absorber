@@ -57,6 +57,13 @@ class AbsorberTest extends WPTestCase {
 	 */
 	private $plugins_loaded_count = null;
 
+	/**
+	 * Whether a test attached a listener to the error action, so tearDown knows to take it off.
+	 *
+	 * @var bool
+	 */
+	private $error_listener_attached = false;
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -67,6 +74,12 @@ class AbsorberTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
+		if ( $this->error_listener_attached ) {
+			remove_all_actions( 'give/plugin_absorber/error' );
+
+			$this->error_listener_attached = false;
+		}
+
 		// The counter is process-global, so a test that left it rewound would tell the next one it is
 		// still early enough to wire a plugins_loaded callback.
 		if ( $this->plugins_loaded_count !== null ) {
@@ -592,8 +605,21 @@ class AbsorberTest extends WPTestCase {
 			}
 		);
 
+		// The channel that is on in production, asserted here because this is one of the two report
+		// sites that fire off an admin hook rather than off plugins_loaded: a trampoline wired to
+		// catch but not to announce would leave a white screen it prevented invisible on any site
+		// without WP_DEBUG, which is every site this matters on.
+		$announced = [];
+
+		$this->announce_errors_into( $announced );
+
 		Absorber::render_notices();
 
+		$this->assertCount( 1, $announced );
+		$this->assertStringContainsString(
+			'the notice option held something unreadable',
+			is_string( $announced[0] ) ? $announced[0] : ''
+		);
 		$this->assert_the_library_reported_incorrect_usage();
 	}
 
@@ -668,8 +694,38 @@ class AbsorberTest extends WPTestCase {
 		$rewriter          = $this->bind_rewriter();
 		$rewriter->failure = new RuntimeException( 'two sub-plugins were registered under one slug' );
 
+		$announced = [];
+
+		$this->announce_errors_into( $announced );
+
 		$this->assertSame( '<p>Core.</p>', Absorber::filter_activation_error_markup( '<p>Core.</p>' ) );
+		$this->assertCount( 1, $announced );
+		$this->assertStringContainsString(
+			'two sub-plugins were registered under one slug',
+			is_string( $announced[0] ) ? $announced[0] : ''
+		);
 		$this->assert_the_library_reported_incorrect_usage();
+	}
+
+	/**
+	 * Collect what the `error` action carries into a list the caller can assert on.
+	 *
+	 * Removed in tearDown by `remove_all_actions()` rather than by identity, because a listener left
+	 * attached would keep filling an array belonging to a test that has already finished.
+	 *
+	 * @param array<int,mixed> $announced Filled with each message announced, in order.
+	 *
+	 * @return void
+	 */
+	private function announce_errors_into( array &$announced ): void {
+		add_action(
+			'give/plugin_absorber/error',
+			static function ( $message ) use ( &$announced ): void {
+				$announced[] = $message;
+			}
+		);
+
+		$this->error_listener_attached = true;
 	}
 
 	/**
