@@ -26,9 +26,10 @@ use Throwable;
  * `Provider`, when they run to `Boot\Scheduler`, and the load pass itself to `Loader` — so
  * the only reason to open this file is to change what a host may say to the library.
  *
- * `final` because it cannot usefully be extended: every member is private static and every internal
- * call is `self::`, so a subclass would inherit the API, be unable to override any of it, and change
- * nothing — which is the silent no-op this class reports on everywhere else.
+ * `final` because it cannot usefully be extended: every member is static, the one property and the
+ * one helper behind the API are private, and every internal call is `self::`, so a subclass would
+ * inherit the API, be unable to change what any of it does, and change nothing — which is the silent
+ * no-op this class reports on everywhere else.
  *
  * @since 1.0.0
  */
