@@ -106,6 +106,15 @@ class HostTest extends Bootstrap_Test_Case {
 
 				return in_array( $basename, $this->active, true );
 			}
+
+			/**
+			 * @param string $basename Plugin basename.
+			 *
+			 * @return bool
+			 */
+			public function is_network_active( string $basename ): bool {
+				return false;
+			}
 		};
 
 		$deactivator = new class() implements Deactivator_Interface {

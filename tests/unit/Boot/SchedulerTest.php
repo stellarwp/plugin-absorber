@@ -1298,6 +1298,15 @@ class SchedulerTest extends WPTestCase {
 					public function is_active( string $basename ): bool {
 						return true;
 					}
+
+					/**
+					 * @param string $basename Plugin basename.
+					 *
+					 * @return bool
+					 */
+					public function is_network_active( string $basename ): bool {
+						return false;
+					}
 				};
 			}
 		);
