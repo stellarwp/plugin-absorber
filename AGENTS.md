@@ -49,7 +49,7 @@ slic run unit --env multisite     # multisite
 slic run unit tests/unit/ConfigTest.php
 slic run unit "tests/unit/ConfigTest.php:test_it_rejects_invalid_hook_prefixes"
 
-composer test:unit                # wraps `slic run unit`
+composer test:unit                # both legs: `slic run unit` under singlesite, then multisite
 composer test:analysis            # PHPStan level 9 — must stay green on every PR
 ```
 

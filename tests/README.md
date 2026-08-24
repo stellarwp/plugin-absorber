@@ -11,6 +11,8 @@ slic cc build
 
 slic run unit                     # singlesite
 slic run unit --env multisite     # multisite
+
+composer test:unit                # both legs, singlesite then multisite
 ```
 
 CI runs both envs on PHP 7.4 and 8.5 — the ends of the supported range — against WordPress
