@@ -29,10 +29,10 @@ class RedirectorTest extends WPTestCase {
 	/**
 	 * @dataProvider request_uris
 	 *
-	 * @param string|null $request_uri Current request URI, as $_SERVER would carry it.
-	 * @param string      $expected    Destination that request URI must produce.
+	 * @param string $request_uri Current request URI, as $_SERVER would carry it.
+	 * @param string $expected    Destination that request URI must produce.
 	 */
-	public function test_it_decides_where_to_send_the_user( $request_uri, string $expected ): void {
+	public function test_it_decides_where_to_send_the_user( string $request_uri, string $expected ): void {
 		$this->setFunctionReturn( 'is_network_admin', false );
 		$this->setFunctionReturn( 'is_user_admin', false );
 
@@ -44,11 +44,12 @@ class RedirectorTest extends WPTestCase {
 	 * really arrives in: a bare path, a path under a subdirectory install, and -- from a proxy that
 	 * rewrites it -- an absolute URL.
 	 *
-	 * @return Generator<string,array{0:string|null,1:string}>
+	 * @return Generator<string,array{0:string,1:string}>
 	 */
 	public static function request_uris(): Generator {
-		yield 'no request uri at all' => [ null, admin_url( 'plugins.php' ) ];
-		yield 'an empty request uri'  => [ '', admin_url( 'plugins.php' ) ];
+		// What Resolver passes when $_SERVER carries no REQUEST_URI, or carries one it will not
+		// vouch for as a string. Everything the documented type forbids is below, in its own test.
+		yield 'an empty request uri' => [ '', admin_url( 'plugins.php' ) ];
 
 		// Reloading either re-runs the update it is in the middle of.
 		yield 'a plugin update screen' => [ '/wp-admin/update.php?action=upgrade-plugin&plugin=give', admin_url( 'plugins.php' ) ];
@@ -161,17 +162,39 @@ class RedirectorTest extends WPTestCase {
 	}
 
 	/**
-	 * $_SERVER carries whatever the SAPI put there, and a host may filter it besides, so the guard
-	 * is a runtime one rather than a promise the signature can keep.
+	 * The parameter is documented `string` and declared as nothing, so every one of these is a
+	 * static error at the call site and none of them is a fatal at runtime. That is the whole of the
+	 * arrangement: $_SERVER carries whatever the SAPI put there and any plugin may have filtered it
+	 * on the way, so a declared type would answer a host's broken $_SERVER with a TypeError raised
+	 * from inside plugins_loaded -- on the request that was supposed to hand the admin a working
+	 * screen back. The type tells callers what to pass; the guard survives them not doing it.
+	 *
+	 * @dataProvider request_uris_the_type_forbids
+	 *
+	 * @param mixed $request_uri A value the documented type does not admit.
 	 */
-	public function test_it_falls_back_when_the_request_uri_is_not_a_string(): void {
+	public function test_it_falls_back_when_the_request_uri_is_not_a_string( $request_uri ): void {
 		$this->setFunctionReturn( 'is_network_admin', false );
 		$this->setFunctionReturn( 'is_user_admin', false );
 
 		/** @phpstan-ignore-next-line argument.type (the point of the test is the value the type forbids). */
-		$destination = ( new Redirector() )->after_deactivation( [ '/wp-admin/edit.php' ] );
+		$destination = ( new Redirector() )->after_deactivation( $request_uri );
 
 		$this->assertSame( admin_url( 'plugins.php' ), $destination );
+	}
+
+	/**
+	 * `null` leads, because it is the shape a reader expects to be allowed and is not: Resolver
+	 * turns a missing REQUEST_URI into an empty string before it calls, so nothing in this library
+	 * ever passes null, and the documented type says exactly that.
+	 *
+	 * @return Generator<string,array{0:mixed}>
+	 */
+	public static function request_uris_the_type_forbids(): Generator {
+		yield 'null'       => [ null ];
+		yield 'an array'   => [ [ '/wp-admin/edit.php' ] ];
+		yield 'an integer' => [ 0 ];
+		yield 'a boolean'  => [ false ];
 	}
 
 	public function test_it_keeps_a_network_admin_request_in_the_network_admin(): void {

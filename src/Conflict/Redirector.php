@@ -36,13 +36,23 @@ class Redirector {
 	 *
 	 * The update screens are the exception, because reloading either of them re-runs an update.
 	 *
+	 * The parameter is documented `string` and declared as nothing, and the two say different things
+	 * on purpose. `string` is the contract: Resolver reads $_SERVER['REQUEST_URI'] and makes a string
+	 * of whatever it finds there, so a caller that hands over anything else has a bug static analysis
+	 * should name. Declaring it would turn that same bug into a TypeError raised under strict_types
+	 * from inside plugins_loaded -- on the one path whose job is to get an admin back to a working
+	 * screen -- for a value the SAPI supplies and any plugin may have filtered on the way. So the
+	 * type is a promise to callers, and the guard below is what happens when the promise is broken.
+	 *
 	 * @since 1.0.0
 	 *
-	 * @param string|null $request_uri The current request URI, i.e. $_SERVER['REQUEST_URI'].
+	 * @param string $request_uri The current request URI, i.e. $_SERVER['REQUEST_URI'].
 	 *
 	 * @return string Absolute admin URL to send the user to.
 	 */
 	public function after_deactivation( $request_uri ): string {
+		// Both halves earn their place: the type check is the only refusal a non-string ever meets,
+		// and an empty string names no screen to go back to.
 		if ( ! is_string( $request_uri ) || $request_uri === '' ) {
 			return $this->admin_url_for( 'plugins.php' );
 		}
