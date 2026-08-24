@@ -2,8 +2,10 @@
 
 ## Policies
 
-A policy is only reached for a sub-plugin that is enabled, names a `standalone_plugin_basename`, and
-whose standalone is active right now. Everything else is skipped before any policy is read.
+A policy is only reached for a sub-plugin that is enabled, names a `standalone_plugin_basename`,
+whose standalone is active right now, and that the [`should_load` filter](filters.md#the-load-gate)
+has not vetoed — a bundled copy nothing is going to load is worth no standalone's deactivation.
+Everything else is skipped before any policy is read.
 
 | Policy | Behavior |
 |---|---|

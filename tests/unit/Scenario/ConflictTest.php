@@ -11,6 +11,7 @@ namespace Nexcess\PluginAbsorber\Tests\Unit\Scenario;
 
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict_Policy;
+use Nexcess\PluginAbsorber\Sub_Plugin;
 
 /**
  * Every policy branch, driven end to end against a real WordPress.
@@ -188,6 +189,58 @@ class ConflictTest extends Bootstrap_Test_Case {
 		);
 		$this->assertArrayHasKey( self::SLUG . ':merge', $this->queued_notices() );
 		$this->assertSame( admin_url( 'plugins.php' ), $location );
+	}
+
+	/**
+	 * The combination that costs a site its feature outright if the two passes disagree: a standalone
+	 * still active, the default policy, and a host vetoing the bundled copy through `should_load`.
+	 * Deactivating here would take away the only copy of that code the request is going to have —
+	 * priority 6 is not going to require anything — and the merge notice would tell the owner the
+	 * opposite, that the bundled copy is now loaded automatically.
+	 *
+	 * The second half is what makes the first mean anything: lift the veto and the same site, on the
+	 * next page view, deactivates and merges. So the veto is what stood the conflict pass down, not a
+	 * gate somewhere else that would have refused this request anyway.
+	 */
+	public function test_a_vetoed_sub_plugin_leaves_its_standalone_alone(): void {
+		update_option( 'active_plugins', [ self::STANDALONE ] );
+
+		$constant = $this->register(
+			[
+				'standalone_plugin_basename' => self::STANDALONE,
+				'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+			]
+		);
+
+		$veto = static function ( $should_load, $sub_plugin ) {
+			return $sub_plugin instanceof Sub_Plugin && $sub_plugin->get_slug() === self::SLUG
+				? false
+				: $should_load;
+		};
+
+		$this->add_tracked_filter( Config::get_hook_name( 'should_load' ), $veto, 10, 2 );
+
+		$this->boot();
+
+		// run_request() fails the test if anything redirects, which is the third of the three things
+		// a resolution would have done.
+		$this->run_request();
+
+		$this->assertContains(
+			self::STANDALONE,
+			$this->active_plugins(),
+			'Nothing may deactivate the standalone while the bundled copy is vetoed.'
+		);
+		$this->assertSame( [], $this->queued_notices(), 'And nothing may claim a merge that did not happen.' );
+		$this->assertSame( 0, $this->bundled_plugin_loads() );
+		$this->assertFalse( defined( $constant ) );
+
+		remove_filter( Config::get_hook_name( 'should_load' ), $veto, 10 );
+
+		$this->run_halted_request();
+
+		$this->assertNotContains( self::STANDALONE, $this->active_plugins() );
+		$this->assertArrayHasKey( self::SLUG . ':merge', $this->queued_notices() );
 	}
 
 	/**
