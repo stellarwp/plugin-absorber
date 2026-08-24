@@ -125,6 +125,39 @@ A fixture helper cannot be called `make()`, `makeEmpty()`, `construct()`, or
 `WPTestCase` extends, and redeclaring one with narrower visibility is a fatal at
 class-compile time. The suite does not fail, it fails to start.
 
+## Plugin-function fixtures
+
+`Plugin\Checker` and `Plugin\Deactivator` both guard the require of
+`wp-admin/includes/plugin.php` on `deactivate_plugins()` existing, and neither
+guard can be exercised by a test that has already required the real file —
+which every test that stubs a plugin function has to, because uopz cannot stub a
+function that does not exist yet, and a `require_once` cannot be undone for the
+rest of the process. `WithPluginFunctions` builds the two states instead:
+
+```php
+$asked = $this->with_plugin_functions_missing(
+	static function () use ( $checker ): void {
+		$checker->is_active( 'give-recurring/give-recurring.php' );
+	}
+);
+
+$this->assertSame( 'deactivate_plugins', $asked[0] ?? '' );
+$this->assertSame( 1, $this->plugin_functions_loads() );
+```
+
+ABSPATH points at a throwaway root whose `wp-admin/includes/plugin.php` only
+increments a counter, and `function_exists()` answers about `deactivate_plugins`
+the way it does on a front-end request. Both are process-global, so the trait
+restores them the moment the call returns rather than in tearDown.
+`with_plugin_functions_present()` is the other state, and returns the root so a
+test can include the fixture itself and show the counter really counts. Call
+`forget_plugin_functions_loads()` from setUp and `tear_down_plugin_functions()`
+from tearDown.
+
+The guard's function name is spelled in the trait, not passed in: it has to stay
+`deactivate_plugins()` rather than `is_plugin_active()`, which is a common
+third-party shim, and the two callers must not be able to disagree about it.
+
 ## Users and capabilities
 
 Two of the library's gates turn on `activate_plugins`, so a test that reaches
