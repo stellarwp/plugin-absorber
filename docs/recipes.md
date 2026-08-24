@@ -65,9 +65,10 @@ foreach ( $sub_plugins as $slug => $constant ) {
 ```
 
 An entry the library cannot use throws `Config_Exception` out of the `Absorber::register()` call it
-is in, so a typo names itself in a stack trace pointing at your loop. A duplicate `slug` surfaces
-later: registrations are buffered, and the collision is raised at the first read on
-`plugins_loaded`.
+is in, so a typo names itself in a stack trace pointing at your loop. A duplicate `slug` is found
+later, because registrations are buffered until the first read on `plugins_loaded`. It is refused
+there and reported through `_doing_it_wrong()` — the first registration under the slug stands, the
+second is discarded, and every other sub-plugin loads as normal.
 
 ## Choose a policy, and know what the site owner sees
 
