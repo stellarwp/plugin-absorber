@@ -35,10 +35,18 @@ trait Reports_Errors {
 	/**
 	 * Tell the developer, and tell anyone listening.
 	 *
-	 * Never throws, whatever a listener does, because every caller is either inside a `catch` whose
-	 * whole purpose is that nothing escapes it or on a path where nothing was catching in the first
-	 * place. An error action that could take the request down would turn the library's diagnostics
-	 * into its worst failure mode.
+	 * Never throws, whatever a listener on the error action does, because every caller is either
+	 * inside a `catch` whose whole purpose is that nothing escapes it or on a path where nothing was
+	 * catching in the first place. An error action that could take the request down would turn the
+	 * library's diagnostics into its worst failure mode.
+	 *
+	 * `_doing_it_wrong()` is deliberately not wrapped in the same way, and the promise above is
+	 * worded to say so. It fires core's `doing_it_wrong_run`, which is core's hook rather than this
+	 * library's: a listener throwing there is already breaking WordPress from every one of the dozens
+	 * of places core calls it, so swallowing it here would hide a site-wide fault at one call site
+	 * out of hundreds. It is also the hook the test framework raises its own failures through, and a
+	 * `catch` around it would turn every assertion about a report this library makes into a silent
+	 * pass.
 	 *
 	 * @since 1.0.0
 	 *
