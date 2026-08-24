@@ -189,13 +189,44 @@ class ConfigTest extends WPTestCase {
 		$this->assertSame( $container, Config::get_container() );
 	}
 
+	/**
+	 * The host plugin basename is optional -- unset means the multisite stranding guard stays off --
+	 * so its getter answers an empty string rather than throwing the way the prefix and container do.
+	 */
+	public function test_it_reports_no_host_plugin_basename_by_default(): void {
+		$this->assertSame( '', Config::get_host_plugin_basename() );
+	}
+
+	public function test_it_stores_and_returns_a_host_plugin_basename(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+
+		$this->assertSame( 'give/give.php', Config::get_host_plugin_basename() );
+	}
+
+	/**
+	 * A basename is a path -- slashes, a dot, and whatever case the directory was installed under --
+	 * not a hook-naming value, so it is stored exactly as given. The hook-prefix validator would
+	 * reject every one of these characters, which is why this key does not share it.
+	 */
+	public function test_it_keeps_a_host_plugin_basename_verbatim(): void {
+		Config::set_host_plugin_basename( 'My-Plugin/My_Plugin.php' );
+
+		$this->assertSame( 'My-Plugin/My_Plugin.php', Config::get_host_plugin_basename() );
+	}
+
 	public function test_the_state_helper_clears_every_value(): void {
 		Config::set_hook_prefix( 'give' );
 		Config::set_container( new Test_Container() );
+		Config::set_host_plugin_basename( 'give/give.php' );
 
 		Config_State::reset();
 
 		$this->assertFalse( Config::has_container() );
+		$this->assertSame(
+			'',
+			Config::get_host_plugin_basename(),
+			'The state helper has to clear the host plugin basename too.'
+		);
 
 		foreach ( [ 'get_container', 'get_hook_prefix' ] as $accessor ) {
 			try {
