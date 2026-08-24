@@ -136,15 +136,27 @@ example of this behavior.
 The guard cannot help on the request that *activates* the standalone: WordPress includes the plugin
 being activated **after** the bundled copy has already loaded, so that re-declaration is a real
 fatal. Core catches it in its activation sandbox and prints *"Plugin could not be activated because
-it triggered a fatal error."* — true, and useless to whoever pressed the button.
+it triggered a fatal error."* — true, and useless to whoever pressed the button. Directly under that
+sentence it embeds an iframe that runs the activation a second time with errors on display, so the
+raw `Cannot redeclare …` prints inside the same notice box, contradicting whatever explanation sits
+above it.
 
-So the library filters `wp_admin_notice_markup` and swaps that sentence for the sub-plugin's
-`conflict_notice_message`, falling back to a generic one naming the slug. This is what puts the
-WordPress floor at 6.4: the filter does not exist before it.
+So the library filters `wp_admin_notice_markup`, swaps that sentence for the sub-plugin's
+`conflict_notice_message` — falling back to a generic one naming the slug — and takes the sandbox
+iframe out with it. This is what puts the WordPress floor at 6.4: the filter does not exist before
+it.
 
-It touches nothing else. The markup comes back untouched unless every one of these holds — the
-screen is `plugins`, or `plugins-network` in the network admin; the `plugin` query arg names a
-standalone this library has registered; and `_error_nonce` verifies.
+**The same conflict has a second screen.** A fatal in the activation sandbox leaves the standalone
+*paused*, so it returns to the plugins list with a **Resume** link, and pressing that fails
+identically — worded *"Plugin could not be resumed because it triggered a fatal error."* Both
+sentences are rewritten.
+
+It touches nothing else. The markup comes back exactly as it arrived unless every one of these holds
+— the screen is `plugins`, or `plugins-network` in the network admin; `_error_nonce` verifies for a
+standalone this library has registered, named by the `plugin` query arg on the activation screen and
+by the nonce alone on the resume one, which carries no plugin name; and one of core's two sentences
+is still there to replace. A notice failing any of them keeps its iframe as well: where this library
+has nothing to say, core's diagnostic is the only thing that does.
 
 The replacement runs through `wp_kses_post()`, so a knowledge-base link survives, and a message that
 filters down to nothing leaves core's wording in place rather than blanking the notice. A host that
