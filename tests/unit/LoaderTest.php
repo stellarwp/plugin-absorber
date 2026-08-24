@@ -472,6 +472,95 @@ class LoaderTest extends WPTestCase {
 	}
 
 	/**
+	 * The guard constant carries the whole re-declaration guarantee, and a require is the only thing
+	 * that can deliver one. A typo in `plugin_loaded_constant`, or a bundled plugin that defines its
+	 * constant from its own `plugins_loaded` callback rather than at file scope, leaves the code in
+	 * memory with nothing standing a standalone copy down — and the fatal this library exists to
+	 * prevent is then one activation away, with nothing anywhere having said so.
+	 */
+	public function test_a_require_that_defined_no_guard_constant_is_reported(): void {
+		$this->expect_incorrect_usage();
+
+		$expected = $this->register_with_a_guard_nothing_defines();
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'The require happened and cannot be undone.' );
+		$this->assertFalse( defined( $expected ) );
+
+		// The guard's own sentence, naming the constant that never arrived: every other gate reports
+		// too, and a looser assertion would go on passing after this check stopped running at all.
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"give-recurring" was required and left %s undefined', $expected ),
+			'The report has to name the sub-plugin and the constant nothing defined.'
+		);
+	}
+
+	/**
+	 * A report, not a skip. The require happened, so the file's code is in memory whatever the guard
+	 * says: the setup that stands in for `register_activation_hook()` still has to run, and a host
+	 * listening on `loaded` still has to be told, or the one channel that answers "is this sub-plugin
+	 * here?" would answer no about code that is running.
+	 */
+	public function test_a_sub_plugin_whose_guard_never_arrived_still_counts_as_loaded(): void {
+		$this->expect_incorrect_usage();
+		$this->record_lifecycle_actions();
+
+		$activated = [];
+
+		$this->register_with_a_guard_nothing_defines(
+			[
+				'activation_callback' => static function ( Sub_Plugin $sub_plugin ) use ( &$activated ): void {
+					$activated[] = $sub_plugin->get_slug();
+				},
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ 'give-recurring' ], $activated, 'The code is in memory, so its setup still runs.' );
+		$this->assertSame( [ 'give-recurring' => true ], $this->activation_record() );
+		$this->assertCount( 1, $this->loaded_calls );
+		$this->assertSame( [], $this->skipped_calls, 'A load that happened is not a skip, whatever it left undefined.' );
+	}
+
+	/**
+	 * And the ordinary load says nothing at all. The check is one `defined()` on the far side of the
+	 * require, so a guard that arrived has to leave a developer's log exactly as quiet as it was
+	 * before.
+	 */
+	public function test_a_require_that_defined_its_guard_constant_reports_nothing(): void {
+		// On before the load that must stay quiet, not after it: the listener records every report the
+		// library makes, so a guard check that fired here would be caught rather than missed.
+		$this->expect_incorrect_usage();
+
+		$this->register();
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+		$this->assertSame( [], $this->incorrect_usage_messages, 'A guard that arrived is the ordinary success case.' );
+
+		// The recorder has to be shown to work. A listener that never attached leaves the same empty
+		// list, for a reason that has nothing to do with the guard being where it belongs.
+		Absorber::register(
+			[
+				'slug'                   => 'give-fee-recovery',
+				'bundled_plugin_file'    => $this->missing_bundled_plugin_file(),
+				'plugin_loaded_constant' => $this->make_guard_constant(),
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertCount(
+			1,
+			$this->incorrect_usage_messages,
+			'The recorder must catch a report that really happened.'
+		);
+	}
+
+	/**
 	 * The activation callback stands in for the register_activation_hook() a bundled plugin never
 	 * gets, so it has to run with the plugin's own code already in memory: a migration that calls a
 	 * function the bundled file declares would otherwise fatal.
@@ -661,8 +750,15 @@ class LoaderTest extends WPTestCase {
 	/**
 	 * require_once dedupes by resolved path, so one file behind two registrations executes once even
 	 * when the second one's guard constant never gets defined.
+	 *
+	 * Neither guard gets defined here, in fact — the shared file defines a constant of its own and
+	 * each registration names another — so both loads are reported for a guard that never arrived.
+	 * That is the check doing its job on the very shape it exists for: two registrations sharing one
+	 * file is two sub-plugins with no working load guard between them.
 	 */
 	public function test_one_bundled_file_behind_two_registrations_loads_once(): void {
+		$this->expect_incorrect_usage();
+
 		$path = $this->make_bundled_plugin_file( $this->make_guard_constant() );
 
 		foreach ( [ 'give-recurring', 'give-fee-recovery' ] as $slug ) {
@@ -932,7 +1028,7 @@ class LoaderTest extends WPTestCase {
 	 * inside `plugins_loaded`. A listener that throws costs its own sub-plugin and nothing behind it.
 	 *
 	 * And it costs its own sub-plugin nothing either, which is the half worth pinning: by the time
-	 * `loaded` fires the require has happened, the guard constant is defined and the activation
+	 * `loaded` fires the require has happened, the guard constant has been checked and the activation
 	 * callback has run. Left to the per-sub-plugin catch in `load_all()`, the throw would be reported
 	 * as "threw while loading, so it was abandoned" — a sentence that is false in both halves, on the
 	 * one channel a host is expected to build a log line on. It is reported as what it is instead:
@@ -1125,6 +1221,35 @@ class LoaderTest extends WPTestCase {
 		$this->setConstant( $constant, '1.0.0' );
 
 		return $constant;
+	}
+
+	/**
+	 * Register a sub-plugin whose bundled file defines some constant other than the configured one.
+	 *
+	 * The state a mistyped `plugin_loaded_constant` leaves behind, and the state a bundled plugin that
+	 * defines its guard from its own `plugins_loaded` callback leaves behind at the moment the require
+	 * returns. A fixture that defines nothing at all would be the same test with a file no bundled
+	 * plugin resembles.
+	 *
+	 * @param array<string,mixed> $overrides Config overrides.
+	 *
+	 * @return string The guard constant the config names, which nothing defines.
+	 */
+	private function register_with_a_guard_nothing_defines( array $overrides = [] ): string {
+		$expected = $this->make_guard_constant();
+
+		Absorber::register(
+			array_merge(
+				[
+					'slug'                   => 'give-recurring',
+					'bundled_plugin_file'    => $this->make_bundled_plugin_file( $this->make_guard_constant() ),
+					'plugin_loaded_constant' => $expected,
+				],
+				$overrides
+			)
+		);
+
+		return $expected;
 	}
 
 	/**
