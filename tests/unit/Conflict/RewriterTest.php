@@ -211,6 +211,36 @@ class RewriterTest extends WPTestCase {
 	}
 
 	/**
+	 * The canary for the two constants above. Both are transcriptions of sentences that live in
+	 * somebody else's source file, and the rewrite is a `str_replace()` against them — so the day
+	 * core rewords either one, the replacement silently stops happening and every other test in this
+	 * class goes on passing, because they all match our transcription against our transcription.
+	 *
+	 * Read out of `wp-admin/plugins.php` rather than through `__()`, which would hand back whatever
+	 * string was passed in and assert nothing at all. The failure this catches is benign on a site —
+	 * no match means core's own wording stands — but it is invisible without this, and the whole
+	 * class exists to replace that wording.
+	 */
+	public function test_core_still_words_the_fatal_the_way_this_class_expects(): void {
+		$plugins_screen = ABSPATH . 'wp-admin/plugins.php';
+
+		$this->assertFileExists( $plugins_screen );
+
+		$source = (string) file_get_contents( $plugins_screen );
+
+		$this->assertStringContainsString(
+			self::ACTIVATION_TEXT,
+			$source,
+			'WordPress reworded the activation fatal. The rewrite no longer matches, and it fails silently.'
+		);
+		$this->assertStringContainsString(
+			self::RESUME_TEXT,
+			$source,
+			'WordPress reworded the resume fatal. The rewrite no longer matches, and it fails silently.'
+		);
+	}
+
+	/**
 	 * The resume lookup is the only one that has to try every registered standalone in turn, because
 	 * the resume redirect carries no `plugin` argument to narrow it with — and every miss fires
 	 * core's `wp_verify_nonce_failed`, which security plugins hook to count and rate-limit failed
