@@ -228,6 +228,12 @@ is caught and wrapped in a `Config_Exception` that names the id, keeping the ori
 provider or the scheduler throws its own exception out of your `boot()` call. Past the check,
 `Absorber::all()` also drops anything a rebound registrar returns that is not a `Sub_Plugin`.
 
+`Absorber::resolver()` hands you the resolver, not the gates in front of it: `resolve_all()` re-checks
+neither the request gate nor the capability gate, because the conflict step has already asked both by
+the time it runs. Calling it yourself can therefore deactivate a plugin and `exit` on a POST, a cron
+run, or a request from someone who may not deactivate anything. Leave it to the hook unless you have
+made both checks first.
+
 Nothing is built at boot beyond the two objects that do the booting: each hook resolves its
 collaborator when it fires, so a request that reaches none of them builds none of them, and you may
 rebind right up until the hook runs.
