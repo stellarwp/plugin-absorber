@@ -84,6 +84,15 @@ class RedirectorTest extends WPTestCase {
 		yield 'a query value carrying a line break' => [ '/wp-admin/edit.php?s=a%0D%0Ab', admin_url( 'edit.php?s=ab' ) ];
 		yield 'a query value carrying a null byte'  => [ '/wp-admin/edit.php?s=a%00b', admin_url( 'edit.php?s=ab' ) ];
 
+		// A query value is not always a scalar: `s[]=` is the shape a list of checked boxes comes
+		// back in, and wp_parse_str() hands it over as a nested array. The strip has to walk into
+		// one, because a pass that only looked at strings would step over the array whole and put
+		// the line break in the Location header inside a parameter of its own.
+		yield 'a line break inside an array query value' => [
+			'/wp-admin/edit.php?s[]=a%0D%0Ab&s[]=c',
+			admin_url( 'edit.php?s%5B0%5D=ab&s%5B1%5D=c' ),
+		];
+
 		// An admin root names the dashboard by leaving it out, exactly as core's own /wp-admin/ link
 		// does. Sending an admin who asked for the dashboard to the plugins list instead is the
 		// failure this whole class is about, in its most common form.
@@ -106,6 +115,49 @@ class RedirectorTest extends WPTestCase {
 		// assembled from admin_url() and a basename, so a uri naming somewhere else cannot leave the
 		// admin it was resolved on.
 		yield 'a uri naming another host' => [ '//evil.test/wp-admin/plugins.php', admin_url( 'plugins.php' ) ];
+	}
+
+	/**
+	 * The screen-name pattern is anchored with `\z` and not with `$`, and the whole of the
+	 * difference is a trailing newline: in PCRE `$` also matches immediately before one, so
+	 * "edit.php\n" would satisfy it and a line break would leave this class inside the one value it
+	 * promises is validated — on its way into a Location header.
+	 *
+	 * No case in the provider above can pin that, and not for want of trying: PHP's own parse_url()
+	 * rewrites every non-printable byte of a path to an underscore, so a request URI carrying a real
+	 * line break reaches the pattern as "edit.php_" and is refused for a different reason entirely.
+	 * That rewrite is an implementation detail of the parser rather than a promise this class is
+	 * entitled to lean on, and the anchor is what holds if it ever changes — so the parse is stubbed
+	 * to hand the path over verbatim, which is the only way to put the question to the pattern.
+	 *
+	 * The clean path is asserted first, under the same stub. Without it the fallback below would be
+	 * satisfied just as well by a stub that broke every destination, which is the wrong reason to
+	 * pass.
+	 */
+	public function test_it_refuses_a_screen_name_with_a_line_break_after_it(): void {
+		$this->setFunctionReturn( 'is_network_admin', false );
+		$this->setFunctionReturn( 'is_user_admin', false );
+
+		$this->setFunctionReturn(
+			'wp_parse_url',
+			static function ( $url, $component = -1 ) {
+				return $component === PHP_URL_QUERY ? null : $url;
+			},
+			true
+		);
+
+		$redirector = new Redirector();
+
+		$this->assertSame(
+			admin_url( 'edit.php' ),
+			$redirector->after_deactivation( '/wp-admin/edit.php' ),
+			'A path naming a screen still resolves to it, so the parse is not what refuses below.'
+		);
+
+		$this->assertSame(
+			admin_url( 'plugins.php' ),
+			$redirector->after_deactivation( "/wp-admin/edit.php\n" )
+		);
 	}
 
 	/**
