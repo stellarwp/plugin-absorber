@@ -126,6 +126,31 @@ if the policy comes from a callable reading a value you can move without shippin
 An unrecognised value is treated as `NOTICE_ONLY`, never as consent to deactivate, so a stale or
 misspelt option cannot turn a plugin off.
 
+The control that writes that option asks `Conflict_Policy::all()` for its choices rather than
+listing the constants by hand, so a policy added in a later release reaches your screen without you
+editing it. It returns the policy strings and nothing else: what a site owner reads is your wording,
+in your textdomain, and a label shipped from here would be neither.
+
+```php
+$labels = [
+    Conflict_Policy::DEFER       => __( 'Bundled, dormant on sites running the add-on', 'give' ),
+    Conflict_Policy::NOTICE_ONLY => __( 'Ask those sites to deactivate it', 'give' ),
+    Conflict_Policy::DEACTIVATE  => __( 'Merge them in', 'give' ),
+];
+
+$stage = get_option( 'give_absorption_stage', Conflict_Policy::DEFER );
+
+foreach ( Conflict_Policy::all() as $policy ) {
+    printf(
+        '<option value="%s"%s>%s</option>',
+        esc_attr( $policy ),
+        selected( $policy, $stage, false ),
+        // A policy you have not written a label for yet still appears, under its own name.
+        esc_html( $labels[ $policy ] ?? $policy )
+    );
+}
+```
+
 ## Defer to a standalone that is a new codebase
 
 This is an edge case, but one that has occurred before: a later version of a standalone that shares

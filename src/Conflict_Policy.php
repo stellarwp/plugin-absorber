@@ -42,6 +42,29 @@ final class Conflict_Policy {
 	public const NOTICE_ONLY = 'notice_only';
 
 	/**
+	 * Every policy this library understands, in declaration order.
+	 *
+	 * A host staging an absorption puts the policy behind a setting, and the control that writes
+	 * it has to list the policies from somewhere: this, rather than three constants written out
+	 * by hand, so a policy added later reaches that control without the host editing it.
+	 *
+	 * Bare strings, and no labels beside them. What a site owner should be told a policy does is
+	 * the host's wording in the host's textdomain, and a label produced here would be neither —
+	 * which is also why the order is only stable, not meaningful: a screen orders its own options.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return string[]
+	 */
+	public static function all(): array {
+		return [
+			self::DEACTIVATE,
+			self::DEFER,
+			self::NOTICE_ONLY,
+		];
+	}
+
+	/**
 	 * The policy that applies when a sub-plugin configures none.
 	 *
 	 * Deactivating is the default because two copies of the same plugin are the failure this
@@ -76,20 +99,5 @@ final class Conflict_Policy {
 	 */
 	public static function is_valid( string $policy ): bool {
 		return in_array( $policy, self::all(), true );
-	}
-
-	/**
-	 * Every policy this library understands.
-	 *
-	 * @since 1.0.0
-	 *
-	 * @return string[]
-	 */
-	private static function all(): array {
-		return [
-			self::DEACTIVATE,
-			self::DEFER,
-			self::NOTICE_ONLY,
-		];
 	}
 }

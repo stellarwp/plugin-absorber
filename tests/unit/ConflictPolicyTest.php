@@ -39,6 +39,31 @@ class ConflictPolicyTest extends WPTestCase {
 		);
 	}
 
+	/**
+	 * The list a host builds its own settings control from. Order is pinned because a control
+	 * rendering the list as it is handed would otherwise shuffle its options between releases.
+	 */
+	public function test_it_lists_every_policy(): void {
+		$this->assertSame(
+			[
+				Conflict_Policy::DEACTIVATE,
+				Conflict_Policy::DEFER,
+				Conflict_Policy::NOTICE_ONLY,
+			],
+			Conflict_Policy::all()
+		);
+	}
+
+	/**
+	 * Cross-checked against the constants, so a fourth policy declared without being added to
+	 * the list fails here rather than going silently missing from every control built on it.
+	 */
+	public function test_the_list_holds_every_policy_constant(): void {
+		$constants = ( new ReflectionClass( Conflict_Policy::class ) )->getConstants();
+
+		$this->assertSame( array_values( $constants ), Conflict_Policy::all() );
+	}
+
 	public function test_the_default_is_to_deactivate(): void {
 		$this->assertSame( Conflict_Policy::DEACTIVATE, Conflict_Policy::default() );
 	}

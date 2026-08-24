@@ -167,6 +167,11 @@ and all plausible values, so wherever a string *is* accepted it is the value its
 'conflict_policy' => static fn( Sub_Plugin $sub_plugin ) => give_conflict_policy_for( $sub_plugin ),
 ```
 
+`Conflict_Policy::all()` is every policy string, in a stable order, for a settings control that has
+to offer them — see
+[ship the absorption over several releases](recipes.md#ship-the-absorption-over-several-releases).
+It carries no labels: how each policy is described to a site owner is yours to word.
+
 `standalone_plugin_basename` takes a string only: it names a file already on disk.
 `dependency_check` and `activation_callback` have nothing a string could collide with, so they
 accept every callable form, a plain function name included.
