@@ -109,6 +109,11 @@ guard](#the-load-guard) stands the bundled copy down network-wide as under `DEFE
 notice](notices.md) tells a network administrator why and how to finish, by network-activating the
 host or removing the standalone from the Network Admin. It recurs until one of those is done.
 
+Pass `plugin_basename( __FILE__ )`, not `__FILE__`. A basename no installed plugin answers to reads
+as a host that is never network-active, so the guard would decline for ever and the notice would
+recur with nothing to act on — the library reports that one to the developer instead, through
+`_doing_it_wrong()`, and leaves the standalone where it is.
+
 The guard is **opt-in and single-site-safe**: with no host basename set it never fires, and off a
 network it never fires, so in every other topology — both network-active, both per-site, or a
 per-site standalone — deactivation behaves exactly as it always has.
