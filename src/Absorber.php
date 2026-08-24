@@ -111,8 +111,7 @@ final class Absorber {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no container has been set, or two sub-plugins were registered
-	 *                          under one slug.
+	 * @throws Config_Exception When no container has been set.
 	 *
 	 * @return array<string,Sub_Plugin>
 	 */

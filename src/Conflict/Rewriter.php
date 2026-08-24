@@ -61,8 +61,7 @@ class Rewriter {
 	 *
 	 * @param string $markup Notice markup WordPress is about to print.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or two sub-plugins were registered
-	 *                          under one slug.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return string
 	 */
@@ -155,8 +154,6 @@ class Rewriter {
 	 * @since 1.0.0
 	 *
 	 * @param string $basename Standalone plugin basename named by the request.
-	 *
-	 * @throws Config_Exception When two sub-plugins were registered under one slug.
 	 *
 	 * @return Sub_Plugin|null
 	 */
