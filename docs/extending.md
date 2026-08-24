@@ -36,7 +36,7 @@ want. See [the recipe](recipes.md#do-per-site-work-on-multisite).
 
 The table names the job; these are the methods, and every one of them is required — PHP refuses to
 load a class that leaves one out, at class-declaration time rather than when the library first calls
-it. Two of this library's types appear in the signatures:
+it. Two of this library's types appear below:
 
 ```php
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
@@ -73,7 +73,7 @@ public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void;
 public function option_name(): string;
 ```
 
-- `queue_merge_notice()` — the standalone has just been deactivated. Raised exactly once and never
+- `queue_merge_notice()` — a deactivation has just been performed. Raised exactly once and never
   re-queued, and the resolver redirects immediately afterwards, so it has to be kept somewhere that
   outlives the request that wrote it. Word it from
   `$sub_plugin->get_conflict_notice_message( $your_default )`, which applies the config key and its
