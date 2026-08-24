@@ -127,7 +127,8 @@ class Reader {
 	 * while this object is being built, with the registrations still buffered for the read that comes
 	 * after the host has fixed its bindings.
 	 *
-	 * A collision the registrar refuses is reported here and goes no further. Throwing it on made one
+	 * A collision the registrar refuses is reported here, with the discarded registration named, and goes
+ * no further. Throwing it on made one
 	 * mistaken registration decide what a whole pass did: the first pass to read caught it and stood
 	 * down — the load pass loading nothing at all on the front end, the conflict pass resolving
 	 * nothing in wp-admin — while the registry it was standing down over was intact and readable the
@@ -163,9 +164,20 @@ class Reader {
 				$this->registrar->register( $sub_plugin );
 			} catch ( Config_Exception $exception ) {
 				// The registrar's own sentence, unwrapped: it names the slug and both bundled files,
-				// which is the whole of what the host has to go and correct. Nothing is lost to the
-				// refusal for a clause here to have to explain.
-				_doing_it_wrong( self::class, $exception->getMessage(), '1.0.0' );
+				// which is the whole of what the host has to go and correct. One clause is added,
+				// because the registrar refuses a registration without saying what became of it, and
+				// what became of it is now the consequence -- the site runs one of those two files
+				// and silently does not run the other. Every other report in this library says what
+				// the outcome was; this one has to as well.
+				_doing_it_wrong(
+					self::class,
+					sprintf(
+						'%1$s The registration already held was kept; %2$s was discarded.',
+						$exception->getMessage(),
+						$sub_plugin->get_bundled_plugin_file()
+					),
+					'1.0.0'
+				);
 			}
 		}
 	}

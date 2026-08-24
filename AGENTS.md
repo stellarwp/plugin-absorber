@@ -242,12 +242,14 @@ whenever the host's bootstrap happens to run it. This is also why `Absorber::reg
 resolves nothing — registration at plugin-file scope is a shape a host is entitled to use, and it
 would otherwise register into the throwaway.
 
-**A duplicate slug is `Registry\Registrar::register()`'s exception, not `Absorber::register()`'s.** What
+**A duplicate slug is `Registry\Registrar::register()`'s refusal, not `Absorber::register()`'s.** What
 `Absorber::register()` throws is config validation, from the `Sub_Plugin` constructor, in the call
-the host can see in its own stack trace. The buffer reaches the registrar at the first read —
-`plugins_loaded` priority 5 on a request that passes the gatekeeper, priority 6 otherwise — so the
-collision surfaces from inside a core action. Both are `Config_Exception`; only one of them can name
-the line the host wrote.
+the host can see in its own stack trace. A collision cannot be found there: the buffer reaches the
+registrar at the first read — `plugins_loaded` priority 5 on a request that passes the gatekeeper,
+priority 6 otherwise — long after both `register()` calls returned. So the registrar throws, and
+`Registry\Reader::flush()` catches it per entry and reports it through `_doing_it_wrong()` naming the
+registration that was discarded. The first registration under the slug stands, the second is dropped,
+and everything registered behind it still reaches the registrar.
 
 **The too-late barrier measures against the first step in the sequence, not the last.**
 `Boot\Scheduler` compares the priority `plugins_loaded` is already dispatching against the lowest
@@ -296,12 +298,15 @@ constructed with rather than through the registrar they could resolve for themse
 drains the pending registrations before it reads and a registrar asked directly would miss anything
 registered since the last flush.
 
-**Both passes also catch `Config_Exception` around that read.** A duplicate slug is only found when
-the buffer reaches the registrar, which is a read — long after both `register()` calls returned — and
-it arrives inside `plugins_loaded`, the hook that exists to prevent a fatal, so this is the last place
-allowed to cause one. The conflict pass needs the guard more than the load pass, not less: its request
-gate means the only requests reaching it are admin page views, so an escaping throw lands on exactly
-the screens the mistaken registration would have to be corrected from.
+**Neither pass guards that read, because the read no longer raises.** The one exception it used to
+carry was the duplicate slug, and that is now refused and reported inside `Registry\Reader::flush()`,
+where it is found. A guard at the read was the wrong altitude for it: the first pass to read caught
+it and stood down whole — the load pass loading nothing at all on the front end, the conflict pass
+resolving nothing in wp-admin — over a registry that was intact and readable the entire time. One
+mistaken registration is one sub-plugin's problem and the sub-plugins around it still have to load.
+What remains are the backstops that were always the right altitude for an unexpected throw: the
+`Throwable` catch on each `plugins_loaded` step in `Boot\Scheduler`, and the per-sub-plugin catch
+inside `Loader::load_all()` and `Conflict\Resolver::resolve_all()`.
 
 The container is no longer the other half of that. A pass is handed a reader that already holds its
 registrar, so a container that cannot supply one fails while the *pass* is being built — where an

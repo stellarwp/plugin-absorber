@@ -139,7 +139,7 @@ final class Absorber {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no container has been set.
+	 * @throws Config_Exception When no container has been set, or its binding is unusable.
 	 *
 	 * @return array<string,Sub_Plugin>
 	 */
