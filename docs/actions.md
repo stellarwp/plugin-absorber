@@ -52,10 +52,17 @@ add_action( 'give/plugin_absorber/skipped', function ( $sub_plugin, $reason ) {
 The values are fixed API and will not change. New reasons may be added, so treat one you do not
 recognise as a plain skip rather than as an error.
 
+`loaded` and `skipped` do not add up to everything registered, so do not count on them to. A
+sub-plugin whose `enabled`, `dependency_check` or `should_load` callable throws, or whose bundled
+file throws as it is required, announces neither; and a `DEACTIVATE` conflict redirects before the
+load pass runs at all, so on that request no sub-plugin announces anything.
+
 ## Your listener cannot take the site down
 
-These fire from inside `plugins_loaded`, and from inside the handler that keeps a failing sub-plugin
-from white-screening the site, so a listener that throws is caught rather than allowed out. It costs
-that sub-plugin the rest of its load pass and nothing behind it, and the throw is reported through
-`_doing_it_wrong()` as a listener's, not as a load that failed. That is a backstop, not a licence —
-a listener here runs on every request the site serves, so keep it cheap and keep it quiet.
+These fire from inside `plugins_loaded`, so a listener that throws is caught rather than allowed
+out. It costs nothing: by the time `loaded` fires the require has happened, the guard constant is
+defined and the activation callback has run, and a `skipped` announcement is the last thing that
+happens to that sub-plugin either way. The throw is reported through `_doing_it_wrong()` as what it
+is — a listener, named by the hook it is on — rather than as the sub-plugin having failed, so a host
+reading its log does not mistake its own bug for a load that broke. That is a backstop, not a
+licence — a listener here runs on every request the site serves, so keep it cheap and keep it quiet.

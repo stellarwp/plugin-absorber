@@ -788,6 +788,11 @@ class LoaderTest extends WPTestCase {
 
 		$this->assertInstanceOf( Sub_Plugin::class, $loaded );
 		$this->assertSame( 'give-recurring', $loaded->get_slug() );
+
+		// The other half, and the reason both listeners go on together: a load that also announced a
+		// skip is a gate chain that ran on past its own `return`, which asserting on one list alone
+		// would never see.
+		$this->assertSame( [], $this->skipped_calls );
 	}
 
 	/**
@@ -870,6 +875,7 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( [ [ 'give-recurring', $reason ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 	}
 
 	/**
@@ -886,6 +892,7 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_ALREADY_LOADED ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 	}
 
 	/**
@@ -901,15 +908,23 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_FILTERED ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 	}
 
 	/**
 	 * `do_action()` runs host code, so the lifecycle actions are a new way for a request to die
-	 * inside `plugins_loaded`. The `loaded` action fires from inside the per-sub-plugin try that has
-	 * always guarded the `should_load` filter and the bundled file itself, so a listener that throws
-	 * costs its own sub-plugin and nothing behind it.
+	 * inside `plugins_loaded`. A listener that throws costs its own sub-plugin and nothing behind it.
+	 *
+	 * And it costs its own sub-plugin nothing either, which is the half worth pinning: by the time
+	 * `loaded` fires the require has happened, the guard constant is defined and the activation
+	 * callback has run. Left to the per-sub-plugin catch in `load_all()`, the throw would be reported
+	 * as "threw while loading, so it was abandoned" — a sentence that is false in both halves, on the
+	 * one channel a host is expected to build a log line and a health check on. It is announced as
+	 * what it is instead: somebody's listener, named by the hook it is on.
 	 */
 	public function test_a_throwing_load_listener_does_not_take_the_request_down(): void {
+		$this->record_error_action();
+		$this->record_lifecycle_actions();
 		$this->expect_incorrect_usage();
 
 		add_action(
@@ -928,9 +943,26 @@ class LoaderTest extends WPTestCase {
 		// still has to load. Without the guard neither number is ever read, because the throw ends the
 		// request.
 		$this->assertSame( 2, $this->bundled_plugin_loads() );
+
+		$this->assertCount( 2, $this->error_calls );
+
+		foreach ( $this->error_calls as $error ) {
+			$message = is_string( $error['message'] ) ? $error['message'] : '';
+
+			$this->assertStringContainsString( 'A listener on give/plugin_absorber/loaded threw', $message );
+			$this->assertStringContainsString( 'the telemetry endpoint was unreachable', $message );
+			$this->assertStringNotContainsString(
+				'threw while loading',
+				$message,
+				'The sub-plugin loaded. Reporting it as abandoned would have a health check watching'
+					. ' this channel call a healthy load a failed one.'
+			);
+		}
+
 		$this->assert_the_library_reported_incorrect_usage_saying(
-			'threw while loading',
-			'A listener that threw is the sub-plugin it was announcing being abandoned, and has to say so.'
+			'A listener on give/plugin_absorber/loaded threw',
+			'The developer channel carries the same sentence the action does, and names the hook so'
+				. ' the host knows whose listener to go and look at.'
 		);
 	}
 
@@ -955,6 +987,7 @@ class LoaderTest extends WPTestCase {
 		$this->loader()->load_all();
 
 		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_FILE_UNREADABLE ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 		$this->assert_the_library_reported_incorrect_usage_saying(
 			$path,
 			'The developer channel names the file, because the path is what the host has to correct.'

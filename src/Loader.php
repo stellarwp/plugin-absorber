@@ -173,9 +173,11 @@ class Loader {
 			// A re-declaration is the one failure this cannot catch, because PHP does not raise it as
 			// a Throwable -- which is what the guard constant, checked before any of this, is for.
 			//
-			// The loaded and skipped actions run host code inside this same try, exactly as the
-			// should_load filter already does, so a listener that throws costs its own sub-plugin and
-			// nothing behind it.
+			// The loaded and skipped actions run host code too, but they catch their own throws
+			// rather than falling to this one: by the time `loaded` fires the require has happened,
+			// the guard constant is defined and the activation callback has run, so a listener's
+			// throw arriving here would report a sub-plugin that is loaded and healthy as one that
+			// was abandoned -- on the channel a host built its log line on.
 			try {
 				$this->load( $sub_plugin );
 			} catch ( Throwable $thrown ) {
@@ -285,15 +287,13 @@ class Loader {
 		// off the callback: from here the throw is caught a frame up with the require and the
 		// activation already done, where from in front of it the throw would skip the callback
 		// entirely and leave it to be retried, silently, on every request for ever.
-		do_action( Config::get_hook_name( 'loaded' ), $sub_plugin );
+		$this->announce( Config::get_hook_name( 'loaded' ), [ $sub_plugin ], $sub_plugin );
 	}
 
 	/**
 	 * Say that a gate turned this sub-plugin away, and which gate it was.
 	 *
-	 * The hook name is built in one place for the reason `Config` gives for owning the prefix at all,
-	 * and the call is guarded by nothing: it runs inside the per-sub-plugin `catch` in `load_all()`,
-	 * which is the same guard the `should_load` filter beside it has always had.
+	 * The hook name is built in one place for the reason `Config` gives for owning the prefix at all.
 	 *
 	 * @since 1.0.0
 	 *
@@ -305,6 +305,48 @@ class Loader {
 	 * @return void
 	 */
 	private function announce_skip( Sub_Plugin $sub_plugin, string $reason ): void {
-		do_action( Config::get_hook_name( 'skipped' ), $sub_plugin, $reason );
+		$this->announce( Config::get_hook_name( 'skipped' ), [ $sub_plugin, $reason ], $sub_plugin );
+	}
+
+	/**
+	 * Fire one lifecycle action, and keep what a listener throws out of the load pass's own report.
+	 *
+	 * The throw is caught here rather than a frame up, because `load_all()`'s per-sub-plugin catch
+	 * has exactly one sentence and it is "threw while loading, so it was abandoned". For a listener
+	 * on `loaded` that sentence is false in both halves: the require happened, the guard constant is
+	 * defined and the activation callback has already run, so the sub-plugin is loaded and nothing
+	 * about it was abandoned. A host listening to both channels would get `loaded` and `error` for
+	 * the same sub-plugin in the same pass, and the log line, health check and support tool that
+	 * `error` exists for would each read a successful load as a failed one. The same is true of a
+	 * listener on `skipped`, which reports a skip that really did happen.
+	 *
+	 * So the failure is announced as what it is -- somebody's listener, named by the hook it is on --
+	 * in the sentence `Traits\Reports_Errors` already uses for a listener on the error action. It
+	 * still costs nothing behind it: the sub-plugin is finished with either way, and the loop moves
+	 * on to the next.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string           $hook       Fully qualified hook name.
+	 * @param array<int,mixed> $arguments  Arguments to pass to the listeners.
+	 * @param Sub_Plugin       $sub_plugin Sub-plugin the announcement is about.
+	 *
+	 * @return void
+	 */
+	private function announce( string $hook, array $arguments, Sub_Plugin $sub_plugin ): void {
+		try {
+			do_action_ref_array( $hook, $arguments );
+		} catch ( Throwable $thrown ) {
+			_doing_it_wrong(
+				self::class . '::announce',
+				sprintf(
+					'A listener on %s threw for "%s", and was abandoned: %s',
+					$hook,
+					$sub_plugin->get_slug(),
+					$thrown->getMessage()
+				),
+				'1.0.0'
+			);
+		}
 	}
 }
