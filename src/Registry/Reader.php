@@ -121,13 +121,12 @@ class Reader {
 	 * while this object is being built, with the registrations still buffered for the read that comes
 	 * after the host has fixed its bindings.
 	 *
-	 * A collision the registrar refuses is reported here, with the discarded registration named, and goes
- * no further. Throwing it on made one
-	 * mistaken registration decide what a whole pass did: the first pass to read caught it and stood
-	 * down — the load pass loading nothing at all on the front end, the conflict pass resolving
-	 * nothing in wp-admin — while the registry it was standing down over was intact and readable the
-	 * entire time. A slug registered twice is one sub-plugin's problem, and the sub-plugins around it
-	 * still have to load.
+	 * A collision the registrar refuses is reported here, with the discarded registration named, and
+	 * goes no further. Throwing it on made one mistaken registration decide what a whole pass did: the
+	 * first pass to read caught it and stood down — the load pass loading nothing at all on the front
+	 * end, the conflict pass resolving nothing in wp-admin — while the registry it was standing down
+	 * over was intact and readable the entire time. A slug registered twice is one sub-plugin's
+	 * problem, and the sub-plugins around it still have to load.
 	 *
 	 * Reported as it is discovered, which is once per process and therefore once per request, since
 	 * registration runs at plugin-file scope on every one: the host sees it in the log for as long as
