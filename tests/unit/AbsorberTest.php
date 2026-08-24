@@ -625,6 +625,94 @@ class AbsorberTest extends WPTestCase {
 		);
 	}
 
+	/**
+	 * Set the container first, and do not replace it: what happens otherwise is documented on
+	 * `boot()` and until now was only documented. `Boot\Scheduler` closes over the container boot()
+	 * handed it, so the steps on the hooks keep resolving from that one however many containers
+	 * arrive afterwards.
+	 *
+	 * Asserted by loading a sub-plugin rather than by counting resolutions: the promise is that the
+	 * request the host is in the middle of still works, and it does — against bindings the host
+	 * believes it has replaced.
+	 */
+	public function test_a_container_set_after_boot_does_not_reach_the_wired_steps(): void {
+		$wired = $this->boot_with_a_watched_registrar();
+
+		$this->register_bundled_sub_plugin();
+
+		$late = $this->bind_registrar();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'The load pass runs, whichever container it runs from.' );
+		$this->assertArrayHasKey(
+			'give-recurring',
+			$wired->sub_plugins,
+			'The registry the steps read is the one the container at boot time built.'
+		);
+		$this->assertSame( 0, $late->register_calls, 'Nothing the replacement container built is on a hook.' );
+
+		// The recorder has to be shown to work: a spy no hook ever reached and a spy that cannot
+		// record look exactly alike from the assertion above.
+		Absorber::register( $this->sub_plugin_config( 'give-fee-recovery' ) );
+		Absorber::all();
+
+		$this->assertSame( 1, $late->register_calls, 'The replacement registrar really does record what reaches it.' );
+	}
+
+	/**
+	 * The other half of the same split, and the half a host sees: the accessors resolve from
+	 * whatever `Config` holds when they are called, so after a second `set_container()` they answer
+	 * for the replacement while the hooks answer for the original. `Absorber::all()` reports nothing
+	 * registered, on a request that has already loaded the sub-plugin — two live registries, no
+	 * report, and a host debugging the empty one.
+	 */
+	public function test_a_container_set_after_boot_splits_the_accessors_from_the_hooks(): void {
+		$this->boot_with_a_watched_registrar();
+
+		$this->register_bundled_sub_plugin();
+
+		$late = $this->bind_registrar();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( $late, Absorber::registrar(), 'The accessors read whatever Config holds now.' );
+		$this->assertSame( [], Absorber::all(), 'So the registry a host can reach is the empty one …' );
+		$this->assertSame( 1, $this->bundled_plugin_loads(), '… while the sub-plugin really did load.' );
+	}
+
+	/**
+	 * And booting again is no way out of it. `boot()` is idempotent by the flag it sets last, so the
+	 * second call returns before the provider runs: the container that arrived after boot never gets
+	 * the library's bindings, and the accessors that resolve from it fail on every one.
+	 */
+	public function test_a_second_boot_binds_nothing_into_a_container_set_afterwards(): void {
+		$this->rewind_plugins_loaded();
+		$this->set_up_container();
+
+		Absorber::boot();
+
+		$replacement = $this->bare_container();
+
+		Config::set_container( $replacement );
+
+		Absorber::boot();
+
+		// An interface id, for the reason the provider test gives: a container answers for any class
+		// that exists whether or not anything bound it, so only an interface says what ran.
+		$this->assertFalse(
+			$replacement->has( Registrar_Interface::class ),
+			'The second boot() returns early, so no provider runs over the container that replaced the first.'
+		);
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+		}
+	}
+
 	public function test_render_notices_delegates_to_the_bound_presenter(): void {
 		$presenter = $this->bind_presenter();
 
@@ -884,6 +972,25 @@ class AbsorberTest extends WPTestCase {
 		$this->plugins_loaded_count = did_action( 'plugins_loaded' );
 
 		unset( $GLOBALS['wp_actions']['plugins_loaded'] );
+	}
+
+	/**
+	 * Boot against a container whose registrar this test can watch.
+	 *
+	 * The hook counter is rewound first, or the scheduler rightly reports that it is too late to
+	 * wire and runs the sequence inline — which is the one shape these tests are not about, since
+	 * nothing inline is left holding a container when the next one arrives.
+	 *
+	 * @return Spy_Registrar
+	 */
+	private function boot_with_a_watched_registrar(): Spy_Registrar {
+		$this->rewind_plugins_loaded();
+
+		$bound = $this->bind_registrar();
+
+		Absorber::boot();
+
+		return $bound;
 	}
 
 	/**
