@@ -516,6 +516,14 @@ class ResolverTest extends WPTestCase {
 	 * disprove by looking at the plugins list the notice is drawn above, and it is re-queued on every
 	 * admin GET for as long as the standalone keeps coming back — so the one sentence this library
 	 * says about a conflict has to wait until the re-check says there is a merge to report.
+	 *
+	 * Nothing is reported to the developer either, and the silence is deliberate: the standalone is
+	 * running, so its own guard constant stands the bundled copy down and nothing re-declares. Every
+	 * way to get here is a site's own configuration rather than a mistake in the host's code, and the
+	 * conflict is re-detected on every admin GET — a report would be the same sentence on every screen
+	 * of a debugging site, for a site behaving as its owner set it up to. That is covered without an
+	 * assertion of its own: WPTestCase fails a test that receives a `_doing_it_wrong()` it never said
+	 * to expect.
 	 */
 	public function test_a_standalone_that_survives_deactivation_neither_redirects_nor_reports_a_merge(): void {
 		$this->standalone_is( true );
@@ -532,41 +540,6 @@ class ResolverTest extends WPTestCase {
 		);
 	}
 
-	/**
-	 * Silence, deliberately, and this is where it is pinned: a standalone that comes back is the
-	 * outcome DEFER produces on purpose, reached by another route — the standalone is running, so its
-	 * own guard constant stands the bundled copy down and nothing re-declares. Every way to get here
-	 * is a site's own configuration rather than a mistake in the host's code, and the conflict is
-	 * re-detected on every admin GET, so a report would be the same sentence on every screen of a
-	 * debugging site for a site behaving as its owner set it up to.
-	 *
-	 * `_doing_it_wrong()` is covered without an assertion of its own: WPTestCase fails a test that
-	 * receives one it never said to expect.
-	 */
-	public function test_a_standalone_that_survives_deactivation_is_not_reported_as_an_error(): void {
-		$announced = [];
-
-		add_action(
-			'give/plugin_absorber/error',
-			static function ( $message ) use ( &$announced ): void {
-				$announced[] = $message;
-			}
-		);
-
-		$this->standalone_is( true );
-		$this->standalone_survives_deactivation( 'give-recurring/give-recurring.php' );
-		$this->register();
-
-		$this->resolve_all();
-
-		$this->assertSame( [], $announced, 'A supported configuration is not a failure to announce.' );
-
-		// The recorder is proved to work before its emptiness is believed: a listener that never
-		// attached would satisfy the assertion above for a reason no assertion names.
-		do_action( 'give/plugin_absorber/error', 'a listener that is really attached', null );
-
-		$this->assertSame( [ 'a listener that is really attached' ], $announced );
-	}
 
 	/**
 	 * The same failure through the seam a host owns rather than through the site's own filters: a

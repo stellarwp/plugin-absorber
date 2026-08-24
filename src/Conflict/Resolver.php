@@ -99,7 +99,7 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return void
 	 */
@@ -168,7 +168,7 @@ class Resolver implements Resolver_Interface {
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool Whether the standalone is gone -- not whether deactivating it was attempted.
 	 */
@@ -224,7 +224,7 @@ class Resolver implements Resolver_Interface {
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool Whether the standalone is gone -- not whether deactivating it was attempted.
 	 */
