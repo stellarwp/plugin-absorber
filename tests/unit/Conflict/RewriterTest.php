@@ -231,7 +231,7 @@ class RewriterTest extends WPTestCase {
 			2
 		);
 
-		// Somebody else's plugin fatalled on activation: error=true, their basename, their nonce.
+		// Somebody else's plugin fataled on activation: error=true, their basename, their nonce.
 		$_GET['error']        = 'true';
 		$_GET['plugin']       = 'akismet/akismet.php';
 		$_GET['_error_nonce'] = wp_create_nonce( 'plugin-activation-error_akismet/akismet.php' );
