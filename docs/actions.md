@@ -8,8 +8,9 @@ you override. `{prefix}` is the value passed to `Config::set_hook_prefix()`.
 | `{prefix}/plugin_absorber/loaded` | `Sub_Plugin $sub_plugin` | A bundled file was required, and its activation callback has already run. |
 | `{prefix}/plugin_absorber/skipped` | `Sub_Plugin $sub_plugin`, `string $reason` | A gate turned a sub-plugin away. |
 
-Between them they say what happened to every sub-plugin you registered: one or the other fires
-once per registration, every load pass.
+Between them they cover what the load pass does with a sub-plugin it reached: one that loaded, and
+one a gate turned away. They are not a census of what you registered — see below for what neither
+of them announces.
 
 ## Loading
 
@@ -33,17 +34,17 @@ The second argument is one of five values. Compare against the constant, not the
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `Loader::SKIPPED_DISABLED` | `disabled` | The `enabled` key, or the callable behind it, said no. |
-| `Loader::SKIPPED_ALREADY_LOADED` | `already_loaded` | The guard constant was already defined — usually a standalone copy that loaded first. |
-| `Loader::SKIPPED_DEPENDENCIES_UNMET` | `dependencies_unmet` | `dependency_check` said the requirements are not met. The one skip that also queues a [notice](notices.md). |
-| `Loader::SKIPPED_FILE_UNREADABLE` | `file_unreadable` | `bundled_plugin_file` does not name a readable file. |
-| `Loader::SKIPPED_FILTERED` | `filtered` | The [`should_load` filter](filters.md#the-load-gate) returned something falsy. |
+| `Skip_Reason::DISABLED` | `disabled` | The `enabled` key, or the callable behind it, said no. |
+| `Skip_Reason::ALREADY_LOADED` | `already_loaded` | The guard constant was already defined — usually a standalone copy that loaded first. |
+| `Skip_Reason::DEPENDENCIES_UNMET` | `dependencies_unmet` | `dependency_check` said the requirements are not met. The one skip that also queues a [notice](notices.md). |
+| `Skip_Reason::FILE_UNREADABLE` | `file_unreadable` | `bundled_plugin_file` does not name a readable file. |
+| `Skip_Reason::FILTERED` | `filtered` | The [`should_load` filter](filters.md#the-load-gate) returned something falsy. |
 
 ```php
-use Nexcess\PluginAbsorber\Loader;
+use Nexcess\PluginAbsorber\Skip_Reason;
 
 add_action( 'give/plugin_absorber/skipped', function ( $sub_plugin, $reason ) {
-    if ( $reason === Loader::SKIPPED_ALREADY_LOADED ) {
+    if ( $reason === Skip_Reason::ALREADY_LOADED ) {
         my_log( sprintf( '%s deferred to a standalone copy.', $sub_plugin->get_slug() ) );
     }
 }, 10, 2 );

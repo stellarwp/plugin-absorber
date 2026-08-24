@@ -16,6 +16,7 @@ use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Skip_Reason;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -851,11 +852,11 @@ class LoaderTest extends WPTestCase {
 	 * @return Generator<string,array{0:array<string,mixed>,1:string}>
 	 */
 	public function skipping_gates(): Generator {
-		yield 'disabled' => [ [ 'enabled' => false ], Loader::SKIPPED_DISABLED ];
+		yield 'disabled' => [ [ 'enabled' => false ], Skip_Reason::DISABLED ];
 
 		yield 'dependencies unmet' => [
 			[ 'dependency_check' => static fn() => false ],
-			Loader::SKIPPED_DEPENDENCIES_UNMET,
+			Skip_Reason::DEPENDENCIES_UNMET,
 		];
 	}
 
@@ -891,7 +892,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->loader()->load_all();
 
-		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_ALREADY_LOADED ] ], $this->skipped_calls );
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::ALREADY_LOADED ] ], $this->skipped_calls );
 		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 	}
 
@@ -907,7 +908,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->loader()->load_all();
 
-		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_FILTERED ] ], $this->skipped_calls );
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::FILTERED ] ], $this->skipped_calls );
 		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 	}
 
@@ -919,11 +920,10 @@ class LoaderTest extends WPTestCase {
 	 * `loaded` fires the require has happened, the guard constant is defined and the activation
 	 * callback has run. Left to the per-sub-plugin catch in `load_all()`, the throw would be reported
 	 * as "threw while loading, so it was abandoned" — a sentence that is false in both halves, on the
-	 * one channel a host is expected to build a log line and a health check on. It is announced as
-	 * what it is instead: somebody's listener, named by the hook it is on.
+	 * one channel a host is expected to build a log line on. It is reported as what it is instead:
+	 * somebody's listener, named by the hook it is on.
 	 */
 	public function test_a_throwing_load_listener_does_not_take_the_request_down(): void {
-		$this->record_error_action();
 		$this->record_lifecycle_actions();
 		$this->expect_incorrect_usage();
 
@@ -944,25 +944,25 @@ class LoaderTest extends WPTestCase {
 		// request.
 		$this->assertSame( 2, $this->bundled_plugin_loads() );
 
-		$this->assertCount( 2, $this->error_calls );
-
-		foreach ( $this->error_calls as $error ) {
-			$message = is_string( $error['message'] ) ? $error['message'] : '';
-
-			$this->assertStringContainsString( 'A listener on give/plugin_absorber/loaded threw', $message );
-			$this->assertStringContainsString( 'the telemetry endpoint was unreachable', $message );
-			$this->assertStringNotContainsString(
-				'threw while loading',
-				$message,
-				'The sub-plugin loaded. Reporting it as abandoned would have a health check watching'
-					. ' this channel call a healthy load a failed one.'
-			);
-		}
-
 		$this->assert_the_library_reported_incorrect_usage_saying(
 			'A listener on give/plugin_absorber/loaded threw',
-			'The developer channel carries the same sentence the action does, and names the hook so'
-				. ' the host knows whose listener to go and look at.'
+			'The report names the hook, so the host knows whose listener to go and look at.'
+		);
+
+		$reported = implode( PHP_EOL, $this->incorrect_usage_messages );
+
+		// One per sub-plugin: the listener throws after each require, and each throw is its own
+		// listener's, not its sub-plugin's.
+		$this->assertSame(
+			2,
+			substr_count( $reported, 'A listener on give/plugin_absorber/loaded threw' )
+		);
+		$this->assertStringContainsString( 'the telemetry endpoint was unreachable', $reported );
+		$this->assertStringNotContainsString(
+			'threw while loading',
+			$reported,
+			'Both sub-plugins loaded. Reporting either as abandoned would have a host reading its own'
+				. ' listener bug as a load that broke.'
 		);
 	}
 
@@ -986,7 +986,7 @@ class LoaderTest extends WPTestCase {
 
 		$this->loader()->load_all();
 
-		$this->assertSame( [ [ 'give-recurring', Loader::SKIPPED_FILE_UNREADABLE ] ], $this->skipped_calls );
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::FILE_UNREADABLE ] ], $this->skipped_calls );
 		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
 		$this->assert_the_library_reported_incorrect_usage_saying(
 			$path,
