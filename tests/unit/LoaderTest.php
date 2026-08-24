@@ -372,6 +372,16 @@ class LoaderTest extends WPTestCase {
 
 		$this->assertSame( 0, $checked );
 		$this->assertSame( [], $this->queued_notices(), 'No notice for a plugin that is already running.' );
+
+		// The recorder has to be shown to work, and shown through the path the load pass skipped: a
+		// mistyped config key, a fixture that dropped the override, a Sub_Plugin that stopped reading
+		// `dependency_check` at all — each leaves this counter at zero for a reason that has nothing
+		// to do with the gate order, and this is the only test pinning the order that carries the
+		// whole re-declaration guarantee. Calling a local closure would prove none of them, since it
+		// is the registered object's copy that the gate order is about.
+		$this->assertFalse( Absorber::all()['give-recurring']->are_dependencies_met() );
+
+		$this->assertSame( 1, $checked, 'The recorder must catch a call that really happened.' );
 	}
 
 	public function test_the_should_load_filter_can_veto_the_load(): void {
