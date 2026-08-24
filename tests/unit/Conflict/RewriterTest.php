@@ -285,8 +285,6 @@ class RewriterTest extends WPTestCase {
 		$this->make_rewriter( $this->standalone_owner() )->rewrite( $this->resume_error_notice() );
 
 		$this->assertSame( [ 'plugin-resume-error_' . self::STANDALONE ], $asked );
-
-		remove_all_actions( 'wp_verify_nonce_failed' );
 	}
 
 	/**

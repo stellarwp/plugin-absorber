@@ -32,7 +32,6 @@ class ConflictTest extends Bootstrap_Test_Case {
 	 */
 	private const CORE_TEXT = 'Plugin could not be activated because it triggered a <strong>fatal error</strong>.';
 
-
 	/**
 	 * A second sub-plugin, for the scenarios that need the conflict to sit behind one.
 	 *
