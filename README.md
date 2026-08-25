@@ -73,6 +73,7 @@ point at the repository rather than at paths that would be missing beside the in
 [recipes]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/recipes.md
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
+[actions]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/actions.md
 [notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
 [extending]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/extending.md
 [tests]: https://github.com/stellarwp/plugin-absorber/blob/main/tests/README.md
