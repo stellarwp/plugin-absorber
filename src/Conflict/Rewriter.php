@@ -14,28 +14,11 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
 /**
  * Rewrites the fatal-error screen an absorbed standalone earns when someone activates it.
  *
- * This is the one conflict the load guard cannot prevent. WordPress includes the plugin being
- * activated *after* the bundled copy is in memory, so the re-declaration is a real fatal; core
- * catches it in its activation sandbox and reports "the plugin triggered a fatal error" — true, and
- * useless to whoever pressed the button. All this library gets to do about it is reword that one
- * sentence, and the wording is the sub-plugin's own `conflict_notice_message`.
- *
- * Rewording is not the whole of that screen, though. Core appends an `error_scrape` iframe to the
- * sentence, and the iframe re-runs the activation sandbox with `display_errors` forced on — so the
- * raw `Cannot redeclare …` fatal prints directly beneath the friendly explanation unless the iframe
- * comes out with the sentence.
- *
- * Its own class rather than a method on the notice writer, though the message is shared with the
- * merge notice. Nothing here is stored, drawn or queued: it reads the request, checks the screen,
- * verifies a nonce and edits markup core wrote. The writer would have needed a registry to find out
- * which sub-plugin the screen is even about — a collaborator only that one method used — and every
- * host binding its own `Notices\Contracts\Writer_Interface` would have had to implement an error
- * screen to get its notices worded.
- *
- * In `Conflict\` rather than `Notices\` for the same reason: what it is about is the standalone
- * conflict, and it changes when that story does, alongside `Detector`, `Resolver` and `Redirector`.
- *
- * Not `final`: it is bound by class name, which is the seam a host rebinds and a test subclasses.
+ * The one conflict the load guard cannot prevent: core includes the plugin being activated *after*
+ * the bundled copy, so the re-declaration really does fatal and all this can do is reword core's
+ * sentence, with the sub-plugin's own `conflict_notice_message`. Core's `error_scrape` iframe comes
+ * out with it, since it re-runs the same fatal with errors on display. Not `final`: bound by class
+ * name.
  *
  * @since 1.0.0
  */
@@ -59,16 +42,15 @@ class Rewriter {
 	/**
 	 * The markup to print in place of the one WordPress was about to.
 	 *
-	 * Handed back untouched unless the request really is a nonce-verified activation or resume
-	 * error, on a plugins screen, for a standalone this library has registered — and unless one of
-	 * the two sentences core reports a plugin fatal with is still there to swap out.
+	 * Handed back untouched unless the request is a nonce-verified activation or resume error, on a
+	 * plugins screen, for a standalone this library has registered — and unless one of the two
+	 * sentences core reports a plugin fatal with is still there to swap out.
 	 *
 	 * @since 1.0.0
 	 *
 	 * @param string $markup Notice markup WordPress is about to print.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or two sub-plugins were registered
-	 *                          under one slug.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return string
 	 */
@@ -79,11 +61,9 @@ class Rewriter {
 
 		$screen = get_current_screen();
 
-		// Both plugin lists, because wp-admin/network/plugins.php is a one-line require of
-		// wp-admin/plugins.php and draws the identical activation error -- but WP_Screen appends
-		// `-network` to the id there. On a default multisite the subsite has no plugins UI at all,
-		// so the network screen is the *only* place a super admin can reactivate the standalone,
-		// and matching 'plugins' alone would decline on the one screen that matters most.
+		// Both plugin lists: wp-admin/network/plugins.php is a one-line require of the other, but
+		// WP_Screen appends `-network` to the id there -- and on a default multisite it is the only
+		// screen an absorbed standalone can be reactivated from.
 		if ( $screen === null || ! in_array( $screen->id, [ 'plugins', 'plugins-network' ], true ) ) {
 			return $markup;
 		}
@@ -111,11 +91,8 @@ class Rewriter {
 			)
 		);
 
-		// Sanitised before the emptiness check rather than after. wp_kses_post( '<script></script>' )
-		// is the empty string, and swapping WordPress's wording for nothing leaves a blank notice
-		// box where the explanation should be. wp_kses_post() and not esc_html(), for the reason
-		// the renderer uses it: these messages come from the host's own config, and a link to a
-		// knowledge-base article has to survive.
+		// Sanitised before the emptiness check rather than after: wp_kses_post( '<script></script>' )
+		// is the empty string, and swapping core's wording for nothing leaves a blank notice box.
 		$message = trim( wp_kses_post( $message ) );
 
 		if ( $message === '' ) {
@@ -130,24 +107,22 @@ class Rewriter {
 			return $this->without_the_error_scrape( str_replace( $sentence, $message, $markup ) );
 		}
 
-		// Neither sentence is in there, so this notice was authored by something other than the
-		// screen this class knows how to improve. The iframe stays with it: a notice nobody
-		// explained is bad, and a notice nobody explained with its one diagnostic quietly deleted
-		// is worse.
+		// Neither sentence is in there, so something other than the screen this class knows how to
+		// improve wrote this notice. Its iframe stays: where there is no explanation to put in front
+		// of it, core's diagnostic is the only thing saying anything.
 		return $markup;
 	}
 
 	/**
 	 * The two sentences core reports a sandboxed plugin fatal with, exactly as it prints them.
 	 *
-	 * Read back through `__()` against core's own text domain rather than written out as literals,
-	 * so the swap still happens on a site running WordPress in another language: `wp_admin_notice()`
-	 * receives the translated sentence, and an English needle would match nothing there.
+	 * Read back through `__()` against core's own text domain rather than written out as literals:
+	 * `wp_admin_notice()` receives the translated sentence, and an English needle would match nothing
+	 * on a site running WordPress in another language.
 	 *
-	 * The resume wording belongs beside the activation one because the conflict outlives the
-	 * activation screen. Core's fatal-error handler pauses the plugin its sandbox died in, so the
-	 * standalone comes back on the plugins list with a Resume link, and pressing that re-runs the
-	 * same sandbox into the same re-declaration — reported just as uselessly, in a different verb.
+	 * Resume sits beside activation because the conflict outlives the activation screen. Core's
+	 * fatal-error handler pauses the plugin its sandbox died in, so the standalone comes back on the
+	 * plugins list with a Resume link that re-runs the same sandbox into the same re-declaration.
 	 *
 	 * @since 1.0.0
 	 *
@@ -165,21 +140,15 @@ class Rewriter {
 	/**
 	 * The registered sub-plugin an activation-error request names, if the nonce agrees.
 	 *
-	 * The `plugin` argument is unslashed and no further. Core mints the activation-error nonce from
-	 * `wp_unslash( $_REQUEST['plugin'] )` verbatim (wp-admin/plugins.php), so sanitizing here would
-	 * verify an action core never signed: a plugin whose folder name holds a '%xx' sequence, a '<'
-	 * or a leading space comes back changed from sanitize_text_field(), and both the nonce check and
-	 * the registry lookup would then miss -- silently, and on the one screen this class exists to
-	 * improve. Nothing sanitizing would remove is needed here either: the value is compared against
-	 * a basename the host configured and hashed into a nonce action, and never reaches the page.
-	 * What does reach it is the sub-plugin's message.
+	 * The `plugin` argument is unslashed and no further: core mints the nonce from the unslashed
+	 * value verbatim, so sanitizing a folder name holding a '%xx' sequence would make both the nonce
+	 * check and the registry lookup miss, silently. Nothing sanitizing would remove is needed either
+	 * -- the value is compared against a basename the host configured, and never reaches the page.
+	 * is_string() because '?plugin[]=x' arrives as an array, and an array reaching wp_verify_nonce()
+	 * is a string conversion rather than a refusal.
 	 *
-	 * is_string() because sanitize_text_field() was doing that job: '?plugin[]=x' arrives as an
-	 * array, and an array reaching wp_verify_nonce() is a string conversion, not a refusal.
-	 *
-	 * The registry is read before the nonce is verified, deliberately: there is no nonce work to do
-	 * for a plugin this library does not own, and the nonce is still verified before any markup is
-	 * touched.
+	 * The registry is read before the nonce is verified: there is no nonce work to do for a plugin
+	 * this library does not own, and nothing is acted on until the verification passes.
 	 *
 	 * @since 1.0.0
 	 *
@@ -208,24 +177,14 @@ class Rewriter {
 	/**
 	 * The registered sub-plugin a resume-error request is about, if the nonce agrees.
 	 *
-	 * Identified from the nonce alone, because core's resume redirect carries no `plugin` argument
-	 * to read: `resume_plugin()` appends `_error_nonce` and nothing else, minted from
-	 * `plugin-resume-error_` and the basename. The nonce is therefore the only thing on the request
-	 * that names a plugin, so every registered standalone is offered to it in turn and the one it
-	 * was signed for answers. A forged value still matches nothing -- being unable to name the
-	 * plugin does not make the check weaker, only the loop longer.
+	 * Identified from the nonce alone: `resume_plugin()` appends `_error_nonce` and nothing else, so
+	 * the nonce is the only thing on the request that names a plugin. Every registered standalone is
+	 * offered to it in turn and the one it was signed for answers -- a forged value matches nothing,
+	 * which makes the loop longer rather than the check weaker.
 	 *
-	 * Behind `error=resuming`, which is not a second guess at the same thing. Without it the loop
-	 * ran on every plugins-screen request carrying an `_error_nonce` the activation lookup missed --
-	 * an ordinary activation failure for somebody else's plugin -- and each miss fires core's
-	 * `wp_verify_nonce_failed`, which security plugins hook to count and rate-limit failed nonces. A
-	 * site with five sub-plugins produced five of them on a screen this library has nothing to do
-	 * with. The gate costs nothing, because it is the request core itself dispatches the resume
-	 * wording on: `resume_plugin()` is only ever handed `plugins.php?error=resuming`, and
-	 * `wp-admin/plugins.php` words the notice off exactly that value.
-	 *
-	 * A sub-plugin with no standalone configured is skipped rather than tested against an action
-	 * that ends in nothing, which is a question about a plugin that does not exist.
+	 * Behind `error=resuming`, the request core dispatches the resume wording on. Without that gate
+	 * the loop ran on every plugins-screen `_error_nonce` the activation lookup missed, and each miss
+	 * fires `wp_verify_nonce_failed`, which security plugins hook to rate-limit failed nonces.
 	 *
 	 * @since 1.0.0
 	 *
@@ -260,16 +219,12 @@ class Rewriter {
 	/**
 	 * The registered sub-plugin a standalone basename belongs to, if any.
 	 *
-	 * Read through the reader this class was handed rather than a registrar of its own, for the
-	 * reason the conflict and load passes do: the reader drains the registrations still buffered
-	 * before it reads, and a registrar asked directly would miss anything registered since the last
-	 * read.
+	 * Read through the reader rather than a registrar of its own: it drains the buffered
+	 * registrations first.
 	 *
 	 * @since 1.0.0
 	 *
 	 * @param string $basename Standalone plugin basename named by the request.
-	 *
-	 * @throws Config_Exception When two sub-plugins were registered under one slug.
 	 *
 	 * @return Sub_Plugin|null
 	 */
@@ -286,18 +241,15 @@ class Rewriter {
 	/**
 	 * The same notice with core's activation-sandbox iframe taken out of it.
 	 *
-	 * Core appends `<iframe … src="…plugins.php?action=error_scrape&…">` to the sentence just
-	 * replaced (wp-admin/plugins.php). That request runs `plugin_sandbox_scrape()` again with
-	 * `display_errors` forced on, so the raw `Cannot redeclare …` fatal prints inside the notice,
-	 * directly under the explanation — and rewording alone leaves the owner reading both, the second
-	 * one contradicting the first.
+	 * Core appends an `action=error_scrape` iframe to the sentence just replaced, and that request
+	 * runs `plugin_sandbox_scrape()` again with `display_errors` forced on -- so the raw `Cannot
+	 * redeclare …` prints inside the notice, contradicting the explanation directly above it.
 	 *
-	 * Matched on `error_scrape` within the opening tag rather than on the whole element core built.
-	 * Rebuilding that string would mean reproducing `add_query_arg()`, `urlencode()` and `esc_url()`
-	 * over a URL assembled from `admin_url()`, and a filter on any of them makes the removal miss
-	 * without saying so. `[^>]*` cannot run past the end of the tag, and `action=error_scrape` is
-	 * the one request in wp-admin that re-runs the fatal — so an iframe some other plugin appended,
-	 * and every other thing core put in this notice, is out of the pattern's reach.
+	 * Matched on `error_scrape` within the opening tag rather than on the whole element core built:
+	 * rebuilding that string means reproducing `add_query_arg()`, `urlencode()` and `esc_url()` over
+	 * a URL a filter may have changed, and a miss would say nothing. `[^>]*` cannot run past the end
+	 * of the tag, and no other request in wp-admin re-runs the fatal, so an iframe another plugin
+	 * appended is out of the pattern's reach.
 	 *
 	 * @since 1.0.0
 	 *
@@ -308,10 +260,9 @@ class Rewriter {
 	private function without_the_error_scrape( string $markup ): string {
 		$stripped = preg_replace( '#<iframe\b[^>]*\berror_scrape\b[^>]*>\s*</iframe>#i', '', $markup );
 
-		// Null means the match itself failed -- a backtrack or recursion limit on a notice far larger
-		// than the one core writes. The pattern carries no `u` modifier, so PCRE runs on bytes here
-		// and whatever encoding the substituted message arrived in cannot fail it. The reworded
-		// sentence is worth keeping on its own.
+		// Null means the match itself failed -- a backtrack limit on a notice far larger than the one
+		// core writes. No `u` modifier, so PCRE runs on bytes and the substituted message's encoding
+		// cannot fail it either way. The reworded sentence is worth keeping on its own.
 		return is_string( $stripped ) ? $stripped : $markup;
 	}
 }

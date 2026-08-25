@@ -13,20 +13,9 @@ use Nexcess\PluginAbsorber\Traits\Guards_Plugin_Capability;
 /**
  * Whether this request may have a conflict resolved at all.
  *
- * Separate from the resolver, and resolved ahead of it, because the two answer different questions:
- * a resolver decides what a conflict means and what to do about it, while this decides who is
- * allowed to have one resolved. That split is what makes the guarantee survive rebinding — the
- * conflict step asks the gatekeeper first and only then builds a `Resolver_Interface`, so a host
- * that binds its own resolver cannot drop a gate by omission, and equally is never asked to resolve
- * on a request that fails one.
- *
- * The two gates are asked at different moments, which is why they are two methods rather than one.
- * The request gate is cheap and reads nothing but the request, so it runs first and keeps a resolver
- * from being built at all. The user gate is asked last, once a conflict is known to exist, because
- * `current_user_can()` resolves the current user and caches it: called from plugins_loaded priority
- * 5 it would settle who is signed in before an SSO or JWT plugin that hooks `determine_current_user`
- * from its own plugins_loaded callback has been given the chance to, and that plugin's users would
- * then be treated as logged out for the rest of the request. A site with no conflict never pays it.
+ * Separate from the resolver, and asked ahead of it, so a host binding its own `Resolver_Interface`
+ * cannot drop a gate by omission. Two methods because the cheap request gate runs first, while the
+ * user gate waits: `current_user_can()` pins the current user ahead of an SSO or JWT plugin.
  *
  * @since 1.0.0
  */
@@ -37,8 +26,8 @@ class Gatekeeper {
 	/**
 	 * Admin scripts that exist only to perform work.
 	 *
-	 * Every one of them does its job and then redirects or prints a result, so there is no page here
-	 * to resolve a conflict on — only work to interrupt.
+	 * Each redirects or prints a result, so there is no page here to resolve on — only work to
+	 * interrupt.
 	 *
 	 * @since 1.0.0
 	 *
@@ -54,8 +43,8 @@ class Gatekeeper {
 	/**
 	 * Query args that name an action for the current screen to perform.
 	 *
-	 * Both, because core's list tables put a bulk selector above the table and a second one below it,
-	 * and the lower one submits as `action2` with `action` left at its empty value.
+	 * Both, because core's list tables carry a second bulk selector that submits as `action2`,
+	 * leaving `action` at its empty value.
 	 *
 	 * @since 1.0.0
 	 *
@@ -67,7 +56,7 @@ class Gatekeeper {
 	 * The value core gives an action arg when no bulk action is selected.
 	 *
 	 * A list table submits its selector whether or not anything was chosen, so this arrives on
-	 * ordinary paging and search requests and means nothing is being asked for.
+	 * ordinary paging and search requests.
 	 *
 	 * @since 1.0.0
 	 *
@@ -78,14 +67,9 @@ class Gatekeeper {
 	/**
 	 * Whether this request is the kind conflict resolution may run on.
 	 *
-	 * Reads nothing about who is making it: the capability lives in user_may_resolve(), so that
-	 * asking this question does not decide the current user before the plugins that have an opinion
-	 * about it have loaded.
-	 *
-	 * The hook prefix is checked last. It is the only one of these that reports to the developer, and
-	 * resolution runs from plugins_loaded, so checking it first would put a _doing_it_wrong() in the
-	 * log of every front-end request rather than of the admin request that was about to resolve
-	 * something.
+	 * The hook prefix is checked last because it is the only one of these that reports to the
+	 * developer: checked first, it would log a _doing_it_wrong() from every front-end request rather
+	 * than from the admin request that was about to resolve something.
 	 *
 	 * @since 1.0.0
 	 *
@@ -100,26 +84,9 @@ class Gatekeeper {
 	/**
 	 * Whether the current user may have a conflict resolved on their request.
 	 *
-	 * Reaching conflict resolution does not mean anyone is signed in. wp-admin/admin.php loads
-	 * wp-load.php -- which dispatches plugins_loaded -- well before it calls auth_redirect(), so an
-	 * unauthenticated GET of any admin URL gets this far. Without this check a stranger could turn
-	 * the standalone off site-wide by requesting a page they are about to be bounced off.
-	 *
-	 * Which capability that is belongs to Traits\Guards_Plugin_Capability, because the notice
-	 * presenter has to ask the identical question: rendering the queue clears it for everybody, so a
-	 * user who may not have a conflict resolved may not consume the report of one either. Spelling
-	 * the capability here as well is what let the two answers drift apart.
-	 *
-	 * Here rather than inside the default resolver, because it is the one thing about conflict
-	 * resolution that must survive a host binding its own: whoever cannot activate a plugin must not
-	 * be able to deactivate one, and a replacement that forgot to re-check would reopen exactly that.
-	 *
-	 * It gates every policy, not only the destructive one, and that costs nothing. The other
-	 * policies queue a notice, and Notices\Presenter::render() will not render -- or clear -- for a
-	 * user this same guard turns away. Queuing on a request that cannot act only parks the notice
-	 * until an administrator who can act arrives, which is the request this gate lets resolution run
-	 * on anyway. Nothing is consumed or suppressed by waiting: the standalone is still there to
-	 * detect.
+	 * plugins_loaded dispatches well before auth_redirect(), so an unauthenticated GET of any admin
+	 * URL gets this far. It gates every policy, not only the destructive one, and that costs nothing:
+	 * Notices\Presenter::render() refuses to render or clear for a user this same guard turns away.
 	 *
 	 * @since 1.0.0
 	 *
@@ -132,13 +99,9 @@ class Gatekeeper {
 	/**
 	 * Whether this request is one a person is watching in wp-admin.
 	 *
-	 * Conflict resolution deactivates a plugin and ends the request, so it must only run where
-	 * someone is there to see the result. Unguarded it fires at plugins_loaded on every request:
-	 * a visitor's checkout POST becomes a 302 that drops the order, a login POST bounces back to
-	 * a blank form, wp-cron never reaches its event loop, and a WP-CLI command exits 0 having
-	 * printed nothing, because header() is a no-op under the CLI SAPI.
-	 *
-	 * is_admin() alone is not enough: admin-ajax.php and admin-post.php both define WP_ADMIN.
+	 * Resolution deactivates a plugin and ends the request, so unguarded it turns a visitor's
+	 * checkout POST into a 302 that drops the order. is_admin() alone is not enough: admin-ajax.php
+	 * and admin-post.php both define WP_ADMIN.
 	 *
 	 * @since 1.0.0
 	 *
@@ -153,11 +116,9 @@ class Gatekeeper {
 			return false;
 		}
 
-		// Only a GET. A redirect discards the request, and the browser follows it with a GET, so
-		// anything submitted is gone -- which is exactly what would happen to a form posted to
-		// admin-post.php or options.php, both of which define WP_ADMIN and neither of which
-		// wp_doing_ajax() catches. Core draws the same line in wp_cron(). Deferring resolution to
-		// the next page view costs nothing: the standalone is still there to detect.
+		// Only a GET: a redirect discards whatever was submitted -- as it would for a form posted to
+		// options.php, which defines WP_ADMIN and which wp_doing_ajax() does not catch. Deferring to
+		// the next page view costs nothing, since the standalone is still there to detect.
 		if ( ( $_SERVER['REQUEST_METHOD'] ?? 'GET' ) !== 'GET' ) {
 			return false;
 		}
@@ -168,20 +129,9 @@ class Gatekeeper {
 	/**
 	 * Whether this GET is asking wp-admin to do something rather than to draw something.
 	 *
-	 * A GET is not automatically safe to discard. `update.php?action=upgrade-plugin`,
-	 * `plugins.php?action=activate` and an `admin-post.php` link are all admin GETs that perform
-	 * work, and resolving on one deactivates, redirects and exits before core reaches the work: the
-	 * user clicks "Update Now" and lands on a list screen with nothing updated. That is the same
-	 * silent discard of a submitted action the POST branch exists to prevent, one verb over.
-	 *
-	 * `plugins.php?action=activate` matters twice, because it is the request
-	 * plugin_sandbox_scrape() replays while activating a plugin -- an exit there aborts the
-	 * activation itself and core reports the plugin as fatal.
-	 *
-	 * The test is deliberately blunt: any action arg at all, not a list of the dangerous ones. Half
-	 * the screens in wp-admin take an `action`, plugins define their own, and a list of known-safe
-	 * values would have to be right about every one of them forever. Refusing them all costs a
-	 * deferral to the next plain page view, and the standalone is still there to be detected then.
+	 * A GET is not automatically safe to discard: resolving on `plugins.php?action=activate` exits
+	 * inside the request plugin_sandbox_scrape() replays, and core reports the plugin as fatal. Blunt
+	 * on purpose -- any action arg at all, since a known-safe list would have to stay right forever.
 	 *
 	 * @since 1.0.0
 	 *
@@ -195,20 +145,18 @@ class Gatekeeper {
 		foreach ( self::ACTION_ARGS as $arg ) {
 			$raw = $_GET[ $arg ] ?? null;
 
-			// Anything that is not a string names no action core could dispatch on: an array never
-			// matches one of core's action names, and a missing arg asks for nothing at all. There is
-			// no work on either to interrupt.
+			// Anything but a string names no action core could dispatch on.
 			if ( ! is_string( $raw ) ) {
 				continue;
 			}
 
-			// Compared as it arrived rather than through sanitize_key(): admin.php dispatches
-			// admin_action_{$action} on the raw value, so an action named outside a-z0-9_- -- a
-			// non-Latin script, a bare '+' -- is work a plugin can be hooked to, and sanitizing
-			// first would empty it and admit the very request this gate exists to refuse.
-			$action = wp_unslash( $raw );
-
-			if ( is_string( $action ) && $action !== '' && $action !== self::NO_ACTION ) {
+			// Compared as it arrived: admin.php dispatches admin_action_{$action} on the raw value, so
+			// sanitize_key() would empty an action named outside a-z0-9_- and admit that request. Not
+			// unslashed either, for the reason Conflict\Resolver reads the request URI raw -- core
+			// slashes in wp_magic_quotes(), after plugins_loaded, so stripslashes() would only damage
+			// the value, turning '\' into '' and '-\1' into '-1', both of which read here as no action
+			// at all.
+			if ( $raw !== '' && $raw !== self::NO_ACTION ) {
 				return true;
 			}
 		}
@@ -219,15 +167,9 @@ class Gatekeeper {
 	/**
 	 * The admin script this request is running, as a bare file name.
 	 *
-	 * $pagenow is what core's own admin code branches on, and wp-settings.php requires the file that
-	 * sets it before it loads a single plugin, so it is already populated when plugins_loaded
-	 * dispatches. It is also the value that has been reduced to a bare file name for all three
-	 * admins -- site, network and user -- where matching on a path would have to know about each of
-	 * those prefixes.
-	 *
-	 * The fallback is not superstition: core derives $pagenow from PHP_SELF, which some SAPI and
-	 * proxy configurations leave empty, and a host is free to have unset the global. SCRIPT_NAME is
-	 * consulted first there because it is the one every FastCGI SAPI fills in.
+	 * $pagenow is set before any plugin loads and is already a bare name in all three admins, where
+	 * matching on a path would have to know each prefix. The fallback is not superstition: core
+	 * derives $pagenow from PHP_SELF, which some SAPI and proxy configurations leave empty.
 	 *
 	 * @since 1.0.0
 	 *
@@ -245,9 +187,10 @@ class Gatekeeper {
 				continue;
 			}
 
-			$path = wp_unslash( $candidate );
-
-			return strtolower( basename( is_string( $path ) ? $path : '' ) );
+			// Read as the SAPI left it. wp_magic_quotes() slashes $_SERVER, and wp-settings.php
+			// calls it after do_action( 'plugins_loaded' ), so nothing here has been slashed yet and
+			// wp_unslash() would only delete backslashes that arrived in the path itself.
+			return strtolower( basename( $candidate ) );
 		}
 
 		return '';

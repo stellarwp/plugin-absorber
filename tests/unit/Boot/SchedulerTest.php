@@ -194,9 +194,9 @@ class SchedulerTest extends WPTestCase {
 	 * something to do — a standalone in the way under the policy that only talks, and a bundled file to
 	 * require — so the step that did not throw is the one whose effect is still there afterwards.
 	 *
-	 * The report is asserted by its wording, because the conflict step has two catch arms and both end
-	 * "no conflict was resolved". Only "the conflict pass threw" belongs to the backstop under test
-	 * here; the arm that names an unreadable registry is the duplicate-slug case further down.
+	 * The report is asserted by its wording rather than by the fact of one, because every gate in this
+	 * library reports through `_doing_it_wrong()`: "the conflict pass threw" is what only this backstop
+	 * says, and a looser assertion would go on passing after the backstop stopped running at all.
 	 *
 	 * @dataProvider throwing_steps
 	 *
@@ -444,16 +444,15 @@ class SchedulerTest extends WPTestCase {
 
 	/**
 	 * Reading the registry flushes the registration buffer, and the registrar refuses a slug it
-	 * already holds. The conflict step reads a priority ahead of the load pass, so it — not the load
-	 * pass that has always guarded this — is the first pass a duplicate slug reaches, and a throw
-	 * here arrives inside plugins_loaded, where it takes wp-admin down and locks the developer out
-	 * of the screen where the second registration could be undone.
+	 * already holds. The conflict step reads a priority ahead of the load pass, so it is the first
+	 * pass a duplicate slug reaches — and standing the step down over one refused registration left
+	 * an active standalone in place, with the re-declaration fatal that pair is heading for still in
+	 * front of the site, on the screens the mistake could have been corrected from.
 	 *
-	 * The front end never reaches it, because the request gate turns away first. That is what makes
-	 * this the worse failure rather than a lesser one: the only requests that fatal are the ones the
-	 * mistake could have been corrected from.
+	 * The registry the collision was refused from is intact, so the sub-plugin that did register is
+	 * still in conflict and the step still resolves it. The refusal is reported alongside.
 	 */
-	public function test_a_duplicate_slug_is_reported_rather_than_fataling_the_conflict_step(): void {
+	public function test_a_duplicate_slug_does_not_stand_the_conflict_step_down(): void {
 		set_current_screen( 'dashboard' );
 
 		$this->bind_active_standalone();
@@ -468,20 +467,10 @@ class SchedulerTest extends WPTestCase {
 
 		do_action( 'plugins_loaded' );
 
-		// Reaching this line at all is half of what is under test: the step has to return.
-		$this->assertSame(
-			[],
+		$this->assertArrayHasKey(
+			'give-recurring:conflict',
 			$this->queued_notices(),
-			'A read that failed has no list to resolve from, so nothing may be resolved.'
-		);
-
-		// The arm under test, by the only words that separate it from the Throwable backstop beside it
-		// — which would catch the same exception and say "the conflict pass threw" instead. Without
-		// this the arm could be deleted outright and the test would go on passing.
-		$this->assert_the_library_reported_incorrect_usage_saying(
-			'The registered sub-plugins could not be read, so no conflict was resolved',
-			'An unreadable registry is the one failure here a developer can act on directly, and it is'
-				. ' reported as itself rather than as any throw.'
+			'One mistaken registration must not cost the step the conflict it was there to resolve.'
 		);
 		$this->assert_the_library_reported_incorrect_usage_saying(
 			'Two sub-plugins are registered under the slug "give-recurring"',
@@ -736,6 +725,68 @@ class SchedulerTest extends WPTestCase {
 		// would go on describing this case while quietly testing a different one every time the
 		// load priority moved.
 		yield 'the default a host omits' => [ 10 - self::load_priority() ];
+	}
+
+	/**
+	 * The `return` that ends the inline fallback, which nothing was pinning.
+	 *
+	 * Delete it and the sequence runs inline and is then wired as well — and every other assertion
+	 * about a late boot goes on passing, because the wired copy of the load pass finds the guard
+	 * constant the inline copy defined a moment earlier and stands down at the second gate. What it
+	 * really costs is the conflict pass: a standalone reactivated between two dispatches is
+	 * deactivated out from under a request that has already resolved once, and a host listening for
+	 * `loaded` and `skipped` hears the same request twice.
+	 *
+	 * That the bundled plugin loaded says nothing about which branch ran — both branches load it,
+	 * which is the point of having a fallback. The callback count is the only thing that separates
+	 * them: wiring leaves callbacks behind and running inline never adds one. Counted over every
+	 * priority rather than at the two the sequence names, so a step wired at a priority the constants
+	 * no longer carry is caught here too.
+	 */
+	public function test_booting_too_late_wires_nothing_on_plugins_loaded(): void {
+		$this->expect_incorrect_usage();
+
+		$this->register_sub_plugin();
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			static function (): void {
+				Absorber::boot();
+			},
+			self::load_priority() + 1
+		);
+
+		// Counted with this test's own callback already on the hook, so the only thing that can move
+		// the number is what boot() does.
+		$before = $this->callbacks_at( 'plugins_loaded' );
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'A boot this late has to run the sequence inline.' );
+		$this->assertSame(
+			$before,
+			$this->callbacks_at( 'plugins_loaded' ),
+			'And having run it, it must not wire it as well: the steps would run a second time on the'
+				. ' next dispatch.'
+		);
+
+		// The counter has to be shown able to see a wiring, or "nothing was wired" is what a probe
+		// reading the wrong hook name reports too. Booting inside the window is what puts callbacks
+		// there, so the window is reopened and boot() called again.
+		Absorber_State::reset();
+		unset( $GLOBALS['wp_actions']['plugins_loaded'] );
+
+		Absorber::boot();
+
+		$this->assertGreaterThan(
+			$before,
+			$this->callbacks_at( 'plugins_loaded' ),
+			'The counter must catch a boot that really did wire.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'must run before plugins_loaded priority 5',
+			'The late boot is the mistake under test, not whatever a step ran into on the way.'
+		);
 	}
 
 	/**

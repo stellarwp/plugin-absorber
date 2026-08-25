@@ -345,10 +345,11 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
-	 * The redirector is handed the current request, unslashed — not the referrer. What the user is
-	 * looking at is what has to be re-rendered without the standalone's code in memory, and core slashes
-	 * $_SERVER on the way in, so a query string with an apostrophe in it would otherwise gain a
-	 * backslash every time a conflict was resolved.
+	 * The redirector is handed the current request — not the referrer — exactly as the SAPI left it.
+	 * What the user is looking at is what has to be re-rendered without the standalone's code in
+	 * memory, and core adds its slashes in `wp_magic_quotes()`, which wp-settings.php calls after
+	 * `do_action( 'plugins_loaded' )`: at priority 5 there are none to take off, so unslashing here
+	 * would delete a backslash the user typed rather than one core added.
 	 */
 	public function test_it_asks_the_redirector_where_to_send_the_current_request(): void {
 		$redirector = new class() extends Redirector {
@@ -385,12 +386,29 @@ class ResolverTest extends WPTestCase {
 
 		$this->standalone_is( true );
 		$this->register();
-		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=O\\\'Brien';
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=C:\\projects';
 
 		$location = $this->capture_resolution();
 
-		$this->assertSame( [ '/wp-admin/edit.php?s=O\'Brien' ], $redirector->asked );
+		$this->assertSame( [ '/wp-admin/edit.php?s=C:\\projects' ], $redirector->asked );
 		$this->assertSame( admin_url( 'tools.php' ), $location );
+	}
+
+	/**
+	 * The same claim through the real redirector, because handing the URI over intact is only half of
+	 * it: an admin searching for a Windows path who trips a conflict has to be sent back to the search
+	 * they ran, not to a search for `C:projects`. The backslash leaves re-encoded, which is
+	 * `Conflict\Redirector`'s doing and its own tests' subject; that it is still there to encode is
+	 * this one's.
+	 */
+	public function test_a_backslash_in_the_query_survives_into_the_destination(): void {
+		$this->standalone_is( true );
+		$this->register();
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit.php?s=C:\\projects';
+
+		$location = $this->capture_resolution();
+
+		$this->assertStringContainsString( 's=C%3A%5Cprojects', $location );
 	}
 
 	/**
@@ -511,8 +529,21 @@ class ResolverTest extends WPTestCase {
 	 * Nothing exotic is required to get here: a site or mu-plugin filtering `option_active_plugins`
 	 * puts the standalone straight back into the active list, which is a pattern `learndash-core`
 	 * itself uses.
+	 *
+	 * And the merge notice is the other half. "We deactivated it for you" is a claim the owner can
+	 * disprove by looking at the plugins list the notice is drawn above, and it is re-queued on every
+	 * admin GET for as long as the standalone keeps coming back — so the one sentence this library
+	 * says about a conflict has to wait until the re-check says there is a merge to report.
+	 *
+	 * Nothing is reported to the developer either, and the silence is deliberate: the standalone is
+	 * running, so its own guard constant stands the bundled copy down and nothing re-declares. Every
+	 * way to get here is a site's own configuration rather than a mistake in the host's code, and the
+	 * conflict is re-detected on every admin GET — a report would be the same sentence on every screen
+	 * of a debugging site, for a site behaving as its owner set it up to. That is covered without an
+	 * assertion of its own: WPTestCase fails a test that receives a `_doing_it_wrong()` it never said
+	 * to expect.
 	 */
-	public function test_a_standalone_that_survives_deactivation_does_not_redirect(): void {
+	public function test_a_standalone_that_survives_deactivation_neither_redirects_nor_reports_a_merge(): void {
 		$this->standalone_is( true );
 		$this->standalone_survives_deactivation( 'give-recurring/give-recurring.php' );
 		$this->register();
@@ -520,12 +551,13 @@ class ResolverTest extends WPTestCase {
 		$this->resolve_all();
 
 		$this->assertCount( 1, $this->deactivations, 'The policy still runs: deactivation is asked for.' );
-		$this->assertArrayHasKey(
-			'give-recurring:merge',
+		$this->assertSame(
+			[],
 			$this->queued_notices(),
-			'The request goes on rendering, so the notice explaining the deactivation must survive to be drawn.'
+			'A standalone the owner can watch still running must not be reported as deactivated.'
 		);
 	}
+
 
 	/**
 	 * The same failure through the seam a host owns rather than through the site's own filters: a
@@ -572,7 +604,11 @@ class ResolverTest extends WPTestCase {
 			$this->deactivations,
 			'The bound deactivator is what deactivates, so nothing was ever taken out of the active list.'
 		);
-		$this->assertArrayHasKey( 'give-recurring:merge', $this->queued_notices() );
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'A host is invited to bind deactivation away; being told its plugin was deactivated anyway is the lie.'
+		);
 	}
 
 	/**
@@ -663,7 +699,11 @@ class ResolverTest extends WPTestCase {
 		);
 
 		$queued = $this->queued_notices();
-		$this->assertArrayHasKey( 'give-recurring:merge', $queued );
+		$this->assertArrayNotHasKey(
+			'give-recurring:merge',
+			$queued,
+			'The stubborn one is still running, whatever the request managed for the other.'
+		);
 		$this->assertArrayHasKey( 'give-fee-recovery:merge', $queued );
 	}
 
@@ -740,8 +780,8 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
-	 * The notice is queued after the deactivation, so it must not depend on the plugin still
-	 * being active — and it is the only record the site owner gets.
+	 * The notice is queued after the deactivation and after the re-check that confirms it, so it must
+	 * not depend on the plugin still being active — and it is the only record the site owner gets.
 	 */
 	public function test_the_merge_notice_is_queued_before_the_redirect_halts_the_request(): void {
 		$this->standalone_is( true );

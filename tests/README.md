@@ -11,6 +11,8 @@ slic cc build
 
 slic run unit                     # singlesite
 slic run unit --env multisite     # multisite
+
+composer test:unit                # both legs, singlesite then multisite
 ```
 
 CI runs both envs on PHP 7.4 and 8.5 — the ends of the supported range — against WordPress
@@ -301,6 +303,26 @@ The trait needs `UopzFunctions` on the same class, for the stub.
 a stub really can stop a code path before it reaches `exit`, and that the shared
 helper reports it when one does not.
 
+## An absence needs a control
+
+An assertion that something is *not* there passes just as happily when the place it looked was
+empty, and it goes on passing after the behaviour it was written for stops running. So the same
+read has to be shown holding something first:
+
+```php
+add_option( self::AUTOLOADED_CONTROL, 'Carried on every request.', '', 'yes' );
+
+$autoloaded = array_keys( wp_load_alloptions() );
+
+$this->assertContains( self::AUTOLOADED_CONTROL, $autoloaded );
+$this->assertNotContains( self::OPTION, $autoloaded );
+```
+
+That is the same rule as the recorder one — record calls, assert the list is empty, then invoke the
+stub once and assert it caught it — and it is why `Spy_Writer` records only the notice branches
+something reads back. A recorder no test reads is an invitation to assert it is empty and be told
+nothing, so a counter lands in the same change as the assertion that reads it.
+
 ## Expecting `_doing_it_wrong()`
 
 `setExpectedIncorrectUsage()` matches the first argument exactly, which for a
@@ -320,9 +342,13 @@ $loader->load_all();
 $this->assert_the_library_reported_incorrect_usage();
 ```
 
-An unexpected report still fails the test, because everything the listener sees
-is recorded and asserted to belong to this library. Call
-`stop_expecting_incorrect_usage()` from tearDown.
+An unexpected report still fails the test. `expect_incorrect_usage()` declares
+that *this library* may report a developer mistake and nothing else, so that is
+all the listener registers with WPTestCase: a report named for anything else —
+WordPress's own, another plugin's, a translation loaded before `init` — stays
+unexpected and fails the test as it always did. Registering whatever arrived
+would have given that protection away on the first report a test did expect,
+which is most of them. Call `stop_expecting_incorrect_usage()` from tearDown.
 
 ## The scenario suite
 
@@ -618,13 +644,14 @@ sequenceDiagram
 ```
 
 **A duplicate slug is reported, and what was registered behind it still loads.**
-The collision is the registrar's exception and it is raised long after both
+The collision is the registrar's refusal and it is found long after both
 `Absorber::register()` calls returned, from inside `plugins_loaded` — the hook
-this library exists to keep a site off the floor on. Both passes guard the read,
-so the conflict pass reports it and the load pass, finding the buffer already
-drained, gets on with the load. The whole batch is registered before the
-collision is rethrown, which is what keeps a host from silently losing every
-sub-plugin it registered after the mistake.
+this library exists to keep a site off the floor on. So it is reported where it
+is found and nothing is raised out of the read: the conflict pass reports it and
+resolves what it has, and the load pass behind it loads the registry that read
+left standing. Only the colliding entry is refused, which is what keeps a host
+from silently losing every sub-plugin it registered after the mistake — or,
+back when the read still threw, every sub-plugin it registered at all.
 
 ```mermaid
 sequenceDiagram
@@ -638,8 +665,8 @@ sequenceDiagram
     Note over R: first read — the conflict pass, priority 5
     R->>Reg: A, then A again, then B
     Reg-->>R: the second A collides
-    R-->>R: whole batch registered, the first collision rethrown after it
-    Note over R: the pass reports it and abandons its own step
+    R-->>R: the second A refused and reported; A and B kept
+    Note over R: the pass carries on with the registry it has
     Note over R: second read — priority 6, buffer already drained
     R-->>L: A and B
     L->>L: both load
@@ -741,9 +768,9 @@ sequenceDiagram
 **The request after a deactivation does not loop.** The failure mode a merge
 notice queued on every request would produce: a redirect loop, or a screen
 reporting the same deactivation for ever. Nothing is re-registered between the
-two requests — a duplicate slug throws — because this is the next page view, not
-a second bootstrap. The second request must *not* halt, and the helper fails the
-test if it does.
+two requests — a duplicate slug is refused — because this is the next page view,
+not a second bootstrap. The second request must *not* halt, and the helper fails
+the test if it does.
 
 ```mermaid
 sequenceDiagram

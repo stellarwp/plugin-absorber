@@ -27,9 +27,7 @@ class Checker implements Checker_Interface {
 	public function is_active( string $basename ): bool {
 		$this->load_plugin_functions();
 
-		// WordPress's own is_plugin_active() already ORs in the network check, so asking
-		// is_plugin_active_for_network() as well would only buy a second get_site_option() per
-		// sub-plugin per request.
+		// is_plugin_active() already ORs in the network check.
 		return is_plugin_active( $basename );
 	}
 
@@ -43,8 +41,7 @@ class Checker implements Checker_Interface {
 	public function is_network_active( string $basename ): bool {
 		$this->load_plugin_functions();
 
-		// is_plugin_active_for_network() checks is_multisite() itself and returns false off a
-		// network, so the stranding guard that reads this needs no is_multisite() test of its own.
+		// Returns false off a network on its own, so callers need no is_multisite() test.
 		return is_plugin_active_for_network( $basename );
 	}
 }

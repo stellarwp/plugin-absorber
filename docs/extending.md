@@ -1,13 +1,13 @@
 # Extending
 
-Everything the library does past registration is a small object resolved from your container, so any
-one piece can be swapped without replacing the rest. This is the one doc that names those classes;
-nothing else in the docs asks you to know them.
+Everything the library does past registration is a small object resolved from your container, so
+any one piece can be swapped on its own. This is the one doc that names those classes.
 
 ## The seams
 
-Bind any of these ids before or after `Absorber::boot()` — boot binds the defaults and skips an
-*interface* your container already answers for, so your binding wins either way:
+Bind any of these interface ids before or after `Absorber::boot()` — boot binds the defaults and
+skips an interface your container already answers for, so your binding wins either way;
+[class-name ids are different](#class-name-bindings-must-come-after-boot):
 
 ```php
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
@@ -25,29 +25,25 @@ $container->singleton( Registrar_Interface::class, My_Registrar::class );
 | `Contracts\Activator_Interface` | `Activator` | Runs a sub-plugin's activation callback once, ever. |
 
 **Rebind `Plugin\Contracts\Checker_Interface` when your plugin filters `option_active_plugins` or
-`site_option_active_sitewide_plugins`** — LearnDash injects and then strips a synthetic path — because
-`is_plugin_active()` then does not report what is in the database.
+`site_option_active_sitewide_plugins`**: `is_plugin_active()` then does not report what is in the
+database.
 
 **Rebind `Activator_Interface` to record "once, ever" somewhere else**: your own migration table, or
-a per-site option on a large multisite network where one run for the whole network is not what you
-want. See [the recipe](recipes.md#do-per-site-work-on-multisite).
+a per-site option on a large network. See [the recipe](recipes.md#do-per-site-work-on-multisite).
 
 ## What each seam must implement
 
-The table names the job; these are the methods, and every one of them is required — PHP refuses to
-load a class that leaves one out, at class-declaration time rather than when the library first calls
-it. Two of this library's types appear below:
+Every method below is required. Two of this library's types appear in them:
 
 ```php
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 ```
 
-`Sub_Plugin` is one registered configuration, and its accessors — `get_slug()`,
-`get_standalone_plugin_basename()`, the message accessors named below — are how an implementation
-reads the config keys and runs [their filters](filters.md). A throw from any of these is caught at
-the hook boundary and reported through `_doing_it_wrong()`, so it costs that one step rather than the
-site; nothing retries it on the same request.
+`Sub_Plugin` is one registered configuration; its accessors — `get_slug()` and the message
+accessors below — read the config keys and run [their filters](filters.md). A throw from one is
+caught at the hook boundary and reported through `_doing_it_wrong()`: it costs that step, not the
+site, and the next request runs the step again.
 
 ### `Registry\Contracts\Registrar_Interface`
 
@@ -56,12 +52,9 @@ public function register( Sub_Plugin $sub_plugin ): void;
 public function all(): array;
 ```
 
-`register()` stores one sub-plugin, and a slug may only be registered once — throw a
-`Config_Exception` on the second rather than overwriting, or a copy-pasted slug silently replaces the
-sub-plugin it collided with. `all()` returns every registered sub-plugin keyed by slug, in
-registration order: `array<string,Sub_Plugin>`. The library narrows that array to `Sub_Plugin`
-instances before reading it, so anything else in it is dropped rather than fataling — which loses a
-sub-plugin quietly, and is worth not doing.
+`register()` stores one sub-plugin; throw a `Config_Exception` on a slug already registered rather
+than overwriting it. `all()` returns `array<string,Sub_Plugin>`, keyed by slug, in registration
+order — anything else in it is dropped quietly.
 
 ### `Notices\Contracts\Writer_Interface`
 
@@ -73,24 +66,21 @@ public function queue_dependency_notice( Sub_Plugin $sub_plugin ): void;
 public function option_name(): string;
 ```
 
-- `queue_merge_notice()` — a deactivation has just been performed. Raised exactly once and never
-  re-queued, and the resolver redirects immediately afterwards, so it has to be kept somewhere that
-  outlives the request that wrote it. Word it from
+- `queue_merge_notice()` — a deactivation has just been performed. Raised once, never re-queued,
+  and followed by a redirect, so keep it somewhere that outlives the request. Word it from
   `$sub_plugin->get_conflict_notice_message( $your_default )`, which applies the config key and its
-  filter over the default you pass.
+  filter over it.
 - `queue_conflict_notice()` — `NOTICE_ONLY`: the standalone is still running and the user is being
   asked to turn it off. Same accessor, a default that asks rather than reports.
 - `queue_stranding_notice()` — multisite only, and recurring rather than once-ever: a network-active
-  standalone was left active because deactivating it network-wide would strand the sites the host
-  plugin never reaches. Its wording is `$sub_plugin->get_stranding_notice_message()`, and it must not
-  tell the user to deactivate the standalone — see
+  standalone was left running rather than strand sites. Word it from
+  `$sub_plugin->get_stranding_notice_message()`, and do not tell the user to deactivate it — see
   [the stranding guard](conflict-handling.md#the-multisite-stranding-guard).
 - `queue_dependency_notice()` — `dependency_check` returned false, so the sub-plugin did not load at
   all. `$sub_plugin->get_dependency_notice_message()`.
-- `option_name()` — where *your* implementation keeps the queue. It is on the contract rather than on
-  the default class because `Absorber::notices()->option_name()` is what a host
-  [rendering the queue itself](notices.md#rendering-them-yourself) reads: name an option nothing
-  writes to and that host reads an empty one.
+- `option_name()` — where *your* implementation keeps the queue, and what a host
+  [rendering the queue itself](notices.md#rendering-them-yourself) reads through
+  `Absorber::notices()->option_name()`.
 
 ### `Plugin\Contracts\Deactivator_Interface`
 
@@ -98,12 +88,10 @@ public function option_name(): string;
 public function deactivate( string $basename ): void;
 ```
 
-One method, one argument: a plugin basename like `give-recurring/give-recurring.php`, the only
-identifier WordPress itself accepts. Called unattended during `plugins_loaded`, under the
-`DEACTIVATE` policy, on behalf of a user who did not ask for it. It reports nothing — whether the
-standalone actually went away is asked of the checker afterwards, not of you — so a no-op
-implementation is the honest way to say "plugin state is managed outside WordPress here", and an
-implementation that means to deactivate but does not leaves two copies of the plugin to load.
+One argument: a plugin basename like `give-recurring/give-recurring.php`. Called unattended during
+`plugins_loaded`, under the `DEACTIVATE` policy. It reports nothing — the checker is asked
+afterwards whether the standalone went away — so a deliberate no-op is fine, while a silent
+failure leaves two copies to load.
 
 ### `Plugin\Contracts\Checker_Interface`
 
@@ -112,14 +100,11 @@ public function is_active( string $basename ): bool;
 public function is_network_active( string $basename ): bool;
 ```
 
-Two methods, asked for different reasons. `is_active()` answers "this plugin's code is going to run
-this request", so both scopes count: a network activation runs it as surely as a site one.
-`is_network_active()` is network scope only, and it is the one question the
-[stranding guard](conflict-handling.md#the-multisite-stranding-guard) asks — "would deactivating this
-reach every site". Return `false` whenever the site is not multisite, exactly as core's
-`is_plugin_active_for_network()` does: callers lean on that instead of guarding with `is_multisite()`
-themselves, so answering `true` off a network can have the guard decline a deactivation on a site
-with nothing to strand.
+`is_active()` answers "this plugin's code is going to run this request", so both scopes count.
+`is_network_active()` is network scope only, and is what the
+[stranding guard](conflict-handling.md#the-multisite-stranding-guard) asks: return `false` off
+multisite, as core's `is_plugin_active_for_network()` does, since `true` there has the guard decline
+a deactivation with nothing to strand.
 
 ```php
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
@@ -149,13 +134,11 @@ class My_Checker implements Checker_Interface {
 public function resolve_all(): void;
 ```
 
-Called once per request, at `plugins_loaded` priority 5, and only after the
-[request and capability gates](conflict-handling.md#when-resolution-runs) pass and a conflict has
-been found. It is handed nothing: read the registry from the container your
-implementation was built with, and resolve every sub-plugin whose standalone is active — including
-the ones behind the first, which is why the default catches per sub-plugin. Ending the request is
-allowed, and the default does (`wp_safe_redirect()` then `exit`) — but after the loop, never inside
-it, or a site with two active standalones never reaches the second.
+Called once per request at `plugins_loaded` priority 5, after the
+[request and capability gates](conflict-handling.md#when-resolution-runs) pass and a conflict is
+found. It is handed nothing: read the registry from the container it was built with and resolve
+every sub-plugin whose standalone is active, catching per sub-plugin. Ending the request is allowed
+— the default does `wp_safe_redirect()` then `exit` — but after the loop, never inside it.
 
 ### `Contracts\Activator_Interface`
 
@@ -163,43 +146,37 @@ it, or a site with two active standalones never reaches the second.
 public function maybe_run( Sub_Plugin $sub_plugin ): void;
 ```
 
-Called by the load pass after a `require_once` that actually happened, on every request, for every
-sub-plugin that loaded. Deciding it has already run for this slug is the whole job:
-`$sub_plugin->get_activation_callback()` hands back the configured `callable` or `null`, it is
-invoked with the `Sub_Plugin`, and where "already run" is recorded is yours. Record it after the
-callback returns rather than before, so a callback that throws is retried on the next request instead
-of being marked done half-finished.
+Called on every request, for every sub-plugin whose `require_once` actually happened; deciding it
+has already run for this slug is the whole job. `$sub_plugin->get_activation_callback()` hands back
+the configured `callable` or `null` — invoke it with the `Sub_Plugin` and record "already run"
+after the callback returns, so one that throws is retried rather than marked done.
 
 ## Class-name bindings must come after boot
 
 Everything without an interface is bound by class name — `Notices\Store`, `Notices\Renderer`,
 `Notices\Presenter`, `Conflict\Detector`, `Conflict\Gatekeeper`, `Conflict\Redirector`,
-`Conflict\Rewriter`, `Loader`, `Registry\Reader`, `Boot\Scheduler`. Bind one of those **after**
-`Absorber::boot()`: di52 reports `has()` true for any class that exists, bound or not, so boot cannot
-tell your binding from the container's own willingness to build the class, and replaces it.
+`Conflict\Rewriter`, `Loader`, `Registry\Reader`, `Boot\Scheduler`. Bind those **after**
+`Absorber::boot()`: di52 reports `has()` true for any class that exists, bound or not, so boot
+cannot tell your binding from an autowirable class, and overwrites it.
 
-Boot also binds `StellarWP\ContainerContract\ContainerInterface` to the container itself, first and
-before anything else, so a container that builds unbound classes reflectively can still satisfy the
-library classes that take one. That id is an interface rather than a class, so the skip above applies
-to it: a container that already answers for it keeps whatever it has, whenever you bound it.
+Boot also binds `StellarWP\ContainerContract\ContainerInterface` to the container itself, so library
+classes that take one can be built reflectively — an interface id, so your own binding stands.
 
 ## What rebinding does not buy you
 
 Binding your own `Conflict\Contracts\Resolver_Interface` does not put you in charge of *when*
-resolution may run. The request and capability gates — [an interactive admin `GET` carrying no
-action, and the capability to deactivate across the
-network](conflict-handling.md#when-resolution-runs) — are asked before your resolver is built at all,
-so an implementation that never thought about either is still safe. Everything the resolver *does* —
-which policy branch, what the notice says, where the user lands — is yours.
+resolution runs: the gates — [an interactive admin `GET` carrying no action,
+and the capability to deactivate across the
+network](conflict-handling.md#when-resolution-runs) — are asked before your resolver is built. What
+it *does* is yours.
 
 ## The notice queue
 
 Four objects, so you can replace the part you have an opinion about:
 
-- `Notices\Writer` decides what a notice says. The one behind an interface, and the seam for a host
-  already running its own notices library.
-- `Notices\Store` keeps the queue. Rebind to store it elsewhere.
-- `Notices\Renderer` draws it. Rebind to change the markup and leave the storage alone.
+- `Notices\Writer` decides what a notice says — the one behind an interface.
+- `Notices\Store` keeps the queue; rebind to store it elsewhere.
+- `Notices\Renderer` draws it; rebind for the markup alone.
 - `Notices\Presenter` decides who may consume it, and does the render-then-clear.
 
 Rendering the queue yourself needs none of this — read
@@ -220,20 +197,13 @@ remove_action( 'all_admin_notices', [ Absorber::class, 'render_notices' ] );
 ## When a binding is wrong
 
 `Absorber::registrar()`, `notices()`, `resolver()` and `all()` check what your container hands back
-and throw a `Config_Exception` naming the id they asked for and the class that failed it, rather than
-letting a `TypeError` blame this library for your typo inside `plugins_loaded`. A binding your
-container cannot build at all is reported the same way and not raised at you raw: whatever it threw
-is caught and wrapped in a `Config_Exception` that names the id, keeping the original as
-`getPrevious()`. `Absorber::boot()` is the one that does not wrap — a container that cannot build the
-provider or the scheduler throws its own exception out of your `boot()` call. Past the check,
-`Absorber::all()` also drops anything a rebound registrar returns that is not a `Sub_Plugin`.
+and throw a `Config_Exception` naming the id and the class that failed it. A binding the container
+cannot build at all is wrapped the same way, keeping the original as `getPrevious()` — except in
+`Absorber::boot()`, where a container that cannot build the provider or the scheduler throws its own
+exception out of your `boot()` call. Past the check, `Absorber::all()` drops anything a rebound
+registrar returns that is not a `Sub_Plugin`, and `Absorber::registrar()` hands back a registrar with
+every registration made so far already in it, so the two answer alike whenever you ask.
 
-`Absorber::resolver()` hands you the resolver, not the gates in front of it: `resolve_all()` re-checks
-neither the request gate nor the capability gate, because the conflict step has already asked both by
-the time it runs. Calling it yourself can therefore deactivate a plugin and `exit` on a POST, a cron
-run, or a request from someone who may not deactivate anything. Leave it to the hook unless you have
-made both checks first.
-
-Nothing is built at boot beyond the two objects that do the booting: each hook resolves its
-collaborator when it fires, so a request that reaches none of them builds none of them, and you may
-rebind right up until the hook runs.
+`Absorber::resolver()` hands you the resolver, not the gates in front of it: `resolve_all()`
+re-checks neither, so calling it yourself can deactivate a plugin and `exit` on a POST, a cron run,
+or a request from someone who may not deactivate anything. Make both checks first.

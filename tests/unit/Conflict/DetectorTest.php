@@ -14,7 +14,6 @@ use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict_Policy;
-use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
@@ -22,6 +21,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Config_State;
 use Nexcess\PluginAbsorber\Tests\Support\Stub_Registry_Reader;
 use Nexcess\PluginAbsorber\Tests\Support\Test_Container;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithContainer;
+use Nexcess\PluginAbsorber\Tests\Support\Traits\WithIncorrectUsage;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithNoticeQueue;
 use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 
@@ -34,7 +34,9 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
  * anything it changed would be a change made on behalf of an anonymous visitor, and anything
  * expensive it read would be read on every admin GET a site ever serves. Policy is the expensive
  * thing it must not read — a host's policy callable and the filter behind it can do anything at all,
- * and neither says whether a standalone is running.
+ * and neither says whether a standalone is running. The `should_load` filter is the one piece of host
+ * code it does read, because that one decides whether the bundled copy will be there at all — and it
+ * is read last, of a sub-plugin every cheap check has already agreed is in conflict.
  *
  * `has_conflict()` reads the registry through the reader it was built with, so most of the tests for
  * it register through the facade the default reader is behind; `is_in_conflict()` is handed the
@@ -47,6 +49,7 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
 class DetectorTest extends WPTestCase {
 	use UopzFunctions;
 	use WithContainer;
+	use WithIncorrectUsage;
 	use WithNoticeQueue;
 	use WithSubPlugins;
 
@@ -60,6 +63,16 @@ class DetectorTest extends WPTestCase {
 	 * @var string[]
 	 */
 	private $asked = [];
+
+	/**
+	 * The `should_load` filter a test installed, taken back off in tearDown.
+	 *
+	 * By identity rather than with `remove_all_filters()`, which would strip the hook bare for the
+	 * rest of the process — including whatever the library itself has on it.
+	 *
+	 * @var callable|null
+	 */
+	private $load_gate = null;
 
 	/**
 	 * Every deactivate_plugins() call, as the arguments it was made with.
@@ -105,6 +118,10 @@ class DetectorTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
+		// Before Config_State::reset(), which takes away the prefix the hook name is built from.
+		$this->remove_the_load_gate();
+
+		$this->stop_expecting_incorrect_usage();
 		$this->clear_notices();
 		Absorber_State::reset();
 		Config_State::reset();
@@ -175,6 +192,23 @@ class DetectorTest extends WPTestCase {
 		);
 
 		$this->assertFalse( $this->detector()->has_conflict() );
+	}
+
+	/**
+	 * The gate the load pass reads one priority later, read here as well. A host that vetoes a
+	 * sub-plugin through `should_load` is getting no bundled copy at priority 6, so a probe that
+	 * answered yes at priority 5 would send the step on to deactivate the only copy of that code the
+	 * site has — and the merge notice would tell the owner the bundled one had taken over.
+	 */
+	public function test_it_ignores_a_sub_plugin_the_load_gate_vetoes(): void {
+		$this->standalone_is( true );
+		$this->register();
+		$this->gate_the_load_with( static fn( $should_load ) => false );
+
+		$this->assertFalse(
+			$this->detector()->has_conflict(),
+			'A sub-plugin that is not going to load is no more in conflict than a disabled one.'
+		);
 	}
 
 	public function test_it_is_false_with_nothing_registered(): void {
@@ -310,18 +344,27 @@ class DetectorTest extends WPTestCase {
 
 	/**
 	 * The probe reads the registry and nothing else, which is what keeps it cheap enough to ask of
-	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still raise,
-	 * because it is only found when the buffer reaches the registrar. The conflict step catches this
-	 * exception type around the probe for exactly this case, so it has to arrive as this type.
+	 * every admin GET — and a duplicate slug is the one bootstrap mistake that read can still meet,
+	 * because it is only found when the buffer reaches the registrar. It is refused and reported as it
+	 * drains, and the probe answers over the registry that is left: this step runs a priority ahead of
+	 * the load pass, so a mistake that stood it down would leave an active standalone in place with
+	 * nothing left in the request to deactivate it.
 	 */
-	public function test_a_duplicate_slug_surfaces_from_the_probe(): void {
+	public function test_a_duplicate_slug_does_not_stop_the_probe_answering(): void {
 		$this->standalone_is( true );
 		$this->register();
 		$this->register();
 
-		$this->expectException( Config_Exception::class );
+		$this->expect_incorrect_usage();
 
-		$this->detector()->has_conflict();
+		$this->assertTrue(
+			$this->detector()->has_conflict(),
+			'The sub-plugin that did register is still in conflict, whatever the second registration did.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The refusal has to reach the developer, or a sub-plugin goes missing with nothing said.'
+		);
 	}
 
 	/**
@@ -403,6 +446,92 @@ class DetectorTest extends WPTestCase {
 		$this->assertSame( [ 'give-fee-recovery/give-fee-recovery.php' ], $this->asked );
 	}
 
+	public function test_is_in_conflict_is_false_when_the_load_gate_vetoes_the_sub_plugin(): void {
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$this->gate_the_load_with( static fn( $should_load ) => false );
+
+		$this->assertFalse(
+			$detector->is_in_conflict(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			),
+			'The standalone is the only copy of that code the site is going to run.'
+		);
+	}
+
+	/**
+	 * The same two arguments the load pass passes, in the same order. A host wires one filter and it
+	 * is asked from two places now, so a signature that differed between them would make the second
+	 * call the one that broke it.
+	 */
+	public function test_is_in_conflict_asks_the_load_gate_the_way_the_load_pass_does(): void {
+		$seen       = [];
+		$sub_plugin = $this->make_sub_plugin(
+			[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+		);
+
+		$this->gate_the_load_with(
+			static function ( $should_load, $filtered ) use ( &$seen ) {
+				$seen[] = [ $should_load, $filtered ];
+
+				return $should_load;
+			}
+		);
+
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$this->assertTrue( $detector->is_in_conflict( $sub_plugin ) );
+		$this->assertSame(
+			[ [ true, $sub_plugin ] ],
+			$seen,
+			'The default is true and the sub-plugin is the one being asked about, exactly as at the load.'
+		);
+	}
+
+	/**
+	 * Last of the four, behind every check that costs nothing. The gate is host code that may do
+	 * anything at all, and this runs on every admin GET a site serves — so a sub-plugin that is
+	 * disabled, has no standalone, or has no standalone *running* is turned away before any of it.
+	 */
+	public function test_is_in_conflict_asks_the_load_gate_last(): void {
+		$asked = [];
+
+		$this->gate_the_load_with(
+			static function ( $should_load, $filtered ) use ( &$asked ) {
+				$asked[] = $filtered instanceof Sub_Plugin ? $filtered->get_slug() : '';
+
+				return $should_load;
+			}
+		);
+
+		$standalone = new Detector( new Stub_Registry_Reader(), $this->recording_checker( false ) );
+
+		$standalone->is_in_conflict(
+			$this->make_sub_plugin(
+				[
+					'enabled'                    => false,
+					'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+				]
+			)
+		);
+		$standalone->is_in_conflict( $this->make_sub_plugin() );
+		$standalone->is_in_conflict(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+
+		$this->assertSame( [], $asked, 'None of those three is a conflict, so none of them may run host code.' );
+
+		// A filter that failed to install leaves the same empty log, so it is shown working once the
+		// cheap checks have all passed.
+		$conflicted = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$conflicted->is_in_conflict(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+
+		$this->assertSame( [ 'give-recurring' ], $asked, 'The gate really is on the hook and really is read.' );
+	}
+
 	/**
 	 * A checker that was never reached and a checker whose recorder was never installed leave the
 	 * same empty log, so every test asserting the checker was *not* asked shows it working once
@@ -444,6 +573,11 @@ class DetectorTest extends WPTestCase {
 		bool $expected
 	): void {
 		Config::set_host_plugin_basename( $host_basename );
+
+		// The host names a plugin that really is installed in every one of these, so which sites it
+		// is switched on for is the only thing varying. A basename nothing answers to is its own
+		// case, below.
+		$this->install_plugins( array_filter( [ $host_basename, 'give-recurring/give-recurring.php' ] ) );
 		$this->install_checker( $this->checker_network_active_for( $network_active ) );
 
 		$sub_plugin = $this->make_sub_plugin(
@@ -468,6 +602,144 @@ class DetectorTest extends WPTestCase {
 		yield 'site-only standalone, non-network host' => [ $host, [], false ];
 		yield 'site-only standalone, network host'     => [ $host, [ $host ], false ];
 		yield 'no host basename configured'            => [ '', [ $standalone ], false ];
+	}
+
+	/**
+	 * `Config::set_host_plugin_basename()` takes the string and stores it, because it cannot do
+	 * anything else: a host calls it at plugin-file scope, where `get_plugins()` does not exist yet.
+	 * So the name is checked here, where it is about to decide something — and three ordinary shapes
+	 * make it wrong for ever: a typo, `__FILE__` where `plugin_basename( __FILE__ )` was meant, and a
+	 * host that `plugin_basename()` does not round-trip, an mu-plugin or one behind a symlink. Each
+	 * one reads as a host that is not network-active, so the guard declines a deactivation that would
+	 * strand nobody and the stranding notice comes back on every admin page load, telling the owner to
+	 * network-activate a plugin that is already running everywhere.
+	 */
+	public function test_it_reports_a_host_basename_no_installed_plugin_answers_to(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+
+		// Only the standalone is installed. The host names a plugin nothing on the site answers to.
+		$this->install_plugins( [ 'give-recurring/give-recurring.php' ] );
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+		$this->expect_incorrect_usage();
+
+		$this->assertTrue(
+			$this->detector()->deactivation_would_strand_sites(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			),
+			'The answer is unchanged: a name nothing answers to is not consent to deactivate network-wide.'
+		);
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'give/give.php',
+			'The report has to name the basename that was configured, or there is nothing to correct.'
+		);
+		$this->assertCount(
+			1,
+			$this->incorrect_usage_reports,
+			'Said once, and to the developer: the lookup is per request, not per call.'
+		);
+	}
+
+	/**
+	 * One bootstrap mistake, reported once — not once for every sub-plugin the resolver walks past it
+	 * with. `get_plugins()` parses the header of every plugin on the site, and a report repeated per
+	 * sub-plugin buries the one sentence the host has to act on under copies of itself.
+	 */
+	public function test_it_reports_an_unknown_host_basename_once_however_many_sub_plugins_it_is_asked_about(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+		$this->install_plugins( [] );
+		$this->install_checker(
+			$this->checker_network_active_for(
+				[ 'give-recurring/give-recurring.php', 'give-fee-recovery/give-fee-recovery.php' ]
+			)
+		);
+		$this->expect_incorrect_usage();
+
+		$detector = $this->detector();
+
+		$detector->deactivation_would_strand_sites(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+		$detector->deactivation_would_strand_sites(
+			$this->make_sub_plugin(
+				[
+					'slug'                       => 'give-fee-recovery',
+					'standalone_plugin_basename' => 'give-fee-recovery/give-fee-recovery.php',
+				]
+			)
+		);
+
+		$this->assertCount(
+			1,
+			$this->incorrect_usage_reports,
+			'The mistake is the host\'s bootstrap, not either sub-plugin.'
+		);
+	}
+
+	/**
+	 * The ordinary case, which has to stay silent: a host that passed
+	 * `plugin_basename( __FILE__ )` names a plugin the site really has.
+	 */
+	public function test_it_says_nothing_about_a_host_basename_an_installed_plugin_answers_to(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+		$this->install_plugins( [ 'give/give.php', 'give-recurring/give-recurring.php' ] );
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+
+		$sub_plugin = $this->make_sub_plugin(
+			[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+		);
+
+		// Asserted by its absence, and by WPTestCase rather than by anything here: a test that
+		// receives a _doing_it_wrong() it never expected fails on it, and this one expects none.
+		$this->assertTrue( $this->detector()->deactivation_would_strand_sites( $sub_plugin ) );
+
+		// An expectation that was never armed would keep an empty log just as convincingly, so the
+		// same recorder is shown catching a real report before the emptiness above is believed.
+		Config::set_host_plugin_basename( 'give/nothing-answers-to-this.php' );
+		$this->expect_incorrect_usage();
+
+		$fresh = new Detector(
+			new Stub_Registry_Reader(),
+			$this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] )
+		);
+
+		$fresh->deactivation_would_strand_sites( $sub_plugin );
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'give/nothing-answers-to-this.php',
+			'The recorder really is on the hook, and it is this basename it caught.'
+		);
+	}
+
+	/**
+	 * The opt-in stays exactly as documented: with no host basename set the guard stands down before
+	 * anything is read, the plugin list included.
+	 */
+	public function test_it_looks_up_nothing_when_no_host_basename_is_configured(): void {
+		$looked = 0;
+
+		$this->setFunctionReturn(
+			'get_plugins',
+			static function () use ( &$looked ): array {
+				++$looked;
+
+				return [];
+			},
+			true
+		);
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+
+		$this->assertFalse(
+			$this->detector()->deactivation_would_strand_sites(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			)
+		);
+		$this->assertSame( 0, $looked, 'A host that never opted in pays nothing for the guard.' );
+
+		// The counter has to be shown to work, or a stub that failed to install passes this.
+		get_plugins();
+
+		$this->assertSame( 1, $looked );
 	}
 
 	/**
@@ -736,5 +1008,50 @@ class DetectorTest extends WPTestCase {
 	 */
 	private function standalone_is( bool $active ): void {
 		$this->setFunctionReturn( 'is_plugin_active', $active );
+	}
+
+	/**
+	 * Put a host's `should_load` filter on the hook, as a host would.
+	 *
+	 * The real hook and the real name `Config` builds, not a double: what these tests are about is
+	 * that the detector reads the same gate the load pass reads, and a filter installed under any
+	 * other name would prove the opposite.
+	 *
+	 * @param callable $callback Filter callback.
+	 *
+	 * @return void
+	 */
+	private function gate_the_load_with( callable $callback ): void {
+		$this->load_gate = $callback;
+
+		add_filter( Config::get_hook_name( 'should_load' ), $callback, 10, 2 );
+	}
+
+	/**
+	 * @return void
+	 */
+	private function remove_the_load_gate(): void {
+		if ( $this->load_gate === null ) {
+			return;
+		}
+
+		remove_filter( Config::get_hook_name( 'should_load' ), $this->load_gate );
+
+		$this->load_gate = null;
+	}
+
+	/**
+	 * Say which plugins the site has installed, as `get_plugins()` answers it.
+	 *
+	 * Stubbed rather than written to disk: the host basename check asks WordPress what is installed,
+	 * and a test that put a directory under wp-content/plugins would be asserting about the machine
+	 * the suite runs on.
+	 *
+	 * @param string[] $basenames Plugin basenames the site has installed.
+	 *
+	 * @return void
+	 */
+	private function install_plugins( array $basenames ): void {
+		$this->setFunctionReturn( 'get_plugins', array_fill_keys( $basenames, [ 'Name' => 'Fixture' ] ) );
 	}
 }

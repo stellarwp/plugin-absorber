@@ -10,18 +10,9 @@ namespace Nexcess\PluginAbsorber\Conflict;
 /**
  * Where the user lands after a standalone has been deactivated.
  *
- * The point of the redirect is to re-render whatever the user asked for, now that the standalone is
- * gone -- so the destination is derived from the *current* request, not from the referrer. The
- * referrer is the page before this one: an admin who clicks through from a public post, or who
- * opens an admin screen from a bookmark, carries a referrer that names something other than what
- * they are looking at, and following it sends them somewhere they did not ask to go.
- *
- * The request URI is never trusted as a URL. Only the screen and the query survive it, and the
- * destination is assembled inside the admin URL space from those two parts.
- *
- * Decides where, and never goes there: `wp_safe_redirect()` and the `exit` after it stay in
- * Resolver. That is what lets every destination be asserted directly, without a test having to
- * stand in for the end of a request.
+ * The destination comes from the *current* request, not the referrer, which for an admin arriving
+ * from a bookmark names somewhere they never asked to go. The URI is never trusted as a URL -- only
+ * the screen and the query survive it. `wp_safe_redirect()` and the `exit` stay in Resolver.
  *
  * @since 1.0.0
  */
@@ -29,20 +20,18 @@ class Redirector {
 	/**
 	 * Where to send the user after deactivating.
 	 *
-	 * Re-requesting the screen the user is already on is the point rather than a waste: the
-	 * standalone's code is in memory for this request and only a fresh one sheds it. That includes
-	 * the plugins list, which is why there is no "stay put" answer. It cannot loop, either --
-	 * the next request finds no active standalone, so nothing resolves and nothing redirects.
-	 *
-	 * The update screens are the exception, because reloading either of them re-runs an update.
+	 * Re-requesting the screen the user is already on is the point, not a waste: only a fresh request
+	 * sheds the standalone's code from memory, and it cannot loop. The parameter is documented
+	 * `string` and declared as nothing, so a filtered $_SERVER value cannot TypeError from here.
 	 *
 	 * @since 1.0.0
 	 *
-	 * @param string|null $request_uri The current request URI, i.e. $_SERVER['REQUEST_URI'].
+	 * @param string $request_uri The current request URI, i.e. $_SERVER['REQUEST_URI'].
 	 *
 	 * @return string Absolute admin URL to send the user to.
 	 */
 	public function after_deactivation( $request_uri ): string {
+		// A non-string meets no other refusal; an empty string names no screen.
 		if ( ! is_string( $request_uri ) || $request_uri === '' ) {
 			return $this->admin_url_for( 'plugins.php' );
 		}
@@ -51,13 +40,12 @@ class Redirector {
 
 		$screen = $this->screen_from_path( is_string( $path ) ? $path : '' );
 
-		// Nothing that names an admin screen, so there is nothing to re-render: a front-end
-		// permalink, a directory that is not an admin root, a traversal attempt. Those take the same
-		// route as no request URI at all.
+		// Names no admin screen -- a front-end permalink, a traversal attempt -- nothing to re-render.
 		if ( $screen === '' ) {
 			return $this->admin_url_for( 'plugins.php' );
 		}
 
+		// The exception to re-requesting: reloading either update screen re-runs an update.
 		if ( $screen === 'update.php' || $screen === 'update-core.php' ) {
 			return $this->admin_url_for( 'plugins.php' );
 		}
@@ -68,12 +56,9 @@ class Redirector {
 	/**
 	 * The admin screen a request path names, or an empty string if it names none.
 	 *
-	 * Read from the path's basename rather than from the URI, and returned only once it looks like
-	 * an admin screen. The request URI is a path on a site that may live in a subdirectory, may be
-	 * behind a TLS-terminating proxy whose scheme disagrees with admin_url(), and on multisite may
-	 * sit under the network or user admin -- so nothing built from admin_url() would recognise it.
-	 * Taking the basename is also what keeps a crafted URI out of the destination: only a validated
-	 * screen name leaves here, and admin_url_for() supplies everything in front of it.
+	 * Read from the path's basename rather than the URI: the request URI is a bare path on a site
+	 * that may sit in a subdirectory, behind a TLS-terminating proxy, or under the network or user
+	 * admin, so nothing built from admin_url() would recognise it. It also keeps a crafted URI out.
 	 *
 	 * @since 1.0.0
 	 *
@@ -84,20 +69,16 @@ class Redirector {
 	private function screen_from_path( string $path ): string {
 		$screen = basename( $path );
 
-		// Anchored with \z rather than $, which in PCRE also matches immediately before a trailing
-		// newline -- so "edit.php\n" would satisfy $ and a line break would leave here inside the
-		// one value this class promises is validated.
-		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php\z/', $screen ) ) {
+		// Anchored with \z rather than $, which in PCRE also matches before a trailing newline -- so
+		// "edit.php\n" would satisfy $ and leave here inside the one value this class promises is
+		// validated. The pattern runs first: it is what makes the name safe to put after a directory.
+		if ( (bool) preg_match( '/^[A-Za-z0-9_-]+\.php\z/', $screen ) && $this->is_admin_screen( $screen ) ) {
 			return $screen;
 		}
 
-		// The admin roots name the dashboard by leaving it out, the way core's own /wp-admin/ link
-		// does -- so a path that resolves to one is not a nameless directory, it is index.php. The
-		// network and user admins have roots of their own, and admin_url_for() picks the base to put
-		// in front of the screen.
-		//
-		// Matched against the end of the path rather than against its last segment alone, because a
-		// front-end permalink ending in /network/ would otherwise read as the network admin's root.
+		// The admin roots name the dashboard by leaving it out, as core's own /wp-admin/ link does.
+		// Matched against the end of the path rather than its last segment alone, or a front-end
+		// permalink ending in /network/ would read as the network admin's root.
 		$trimmed = rtrim( $path, '/' );
 
 		foreach ( [ '/wp-admin', '/wp-admin/network', '/wp-admin/user' ] as $root ) {
@@ -110,17 +91,36 @@ class Redirector {
 	}
 
 	/**
+	 * Whether the admin this request belongs to has a screen of that name to be sent back to.
+	 *
+	 * Well formed is not the same as naming a screen: `wp-login.php` satisfies the pattern above and
+	 * would be rebuilt as an admin URL for a file that is not there. Asked of the filesystem rather
+	 * than a list of core's screens, since a plugin's screens are core's files with a `page` arg.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $screen A screen name that has passed the pattern in screen_from_path().
+	 *
+	 * @return bool
+	 */
+	private function is_admin_screen( string $screen ): bool {
+		if ( is_network_admin() ) {
+			return is_file( ABSPATH . 'wp-admin/network/' . $screen );
+		}
+
+		if ( is_user_admin() ) {
+			return is_file( ABSPATH . 'wp-admin/user/' . $screen );
+		}
+
+		return is_file( ABSPATH . 'wp-admin/' . $screen );
+	}
+
+	/**
 	 * The current request's query, re-encoded, ready to append to a screen name.
 	 *
-	 * The query carries which list, which page and which filter the user was looking at, so
-	 * dropping it would re-render the screen showing something else. It is taken apart and rebuilt
-	 * rather than carried over verbatim, because it arrives from the URL bar and nothing about it
-	 * has been checked.
-	 *
-	 * http_build_query() rather than add_query_arg(), which is the usual answer: add_query_arg()
-	 * writes the array it is given straight into the result -- build_query() passes $urlencode as
-	 * false -- so a value holding an '&' or a '#' would go on to add a parameter or a fragment of
-	 * its own. Here both halves of every pair are encoded, which is the whole reason for rebuilding.
+	 * The query carries which list, page and filter the user was looking at, so dropping it would
+	 * re-render something else. Rebuilt with http_build_query() rather than add_query_arg(), which
+	 * passes $urlencode as false -- a value holding an '&' would add a parameter of its own.
 	 *
 	 * @since 1.0.0
 	 *
@@ -152,17 +152,9 @@ class Redirector {
 	/**
 	 * The parsed query with CR, LF and NUL taken out of every string in it, and nothing else.
 	 *
-	 * The property being protected is that the destination cannot end a header: it is handed to
-	 * wp_safe_redirect(), which puts it in a Location. That is all that is being protected, because
-	 * it is all that is left to protect -- http_build_query() re-encodes both halves of every pair
-	 * with PHP_QUERY_RFC3986, so no value can add a parameter, open a fragment or arrive as markup,
-	 * whatever it holds.
-	 *
-	 * Deliberately not sanitize_text_field(). wp_parse_str() has already url-decoded these values,
-	 * and _sanitize_text_fields() deletes every '%xx' sequence it can find and entity-encodes a bare
-	 * '<' -- so a search for '100%ab' would be re-run as '100', and one for 'a<b' as 'a&lt;b'.
-	 * Re-rendering the screen the user asked for is the entire point of the redirect, and that
-	 * quietly re-renders a different one.
+	 * All that is left to protect is that the destination cannot end a header; http_build_query()
+	 * re-encodes both halves of every pair. Deliberately not sanitize_text_field(): wp_parse_str()
+	 * has already url-decoded these, so a search for '100%ab' would be re-run as '100'.
 	 *
 	 * @since 1.0.0
 	 *
@@ -188,16 +180,9 @@ class Redirector {
 	/**
 	 * An absolute admin URL for a screen, on whichever of the three admins this request belongs to.
 	 *
-	 * admin_url() always names a site's own admin, so a super admin resolving a conflict from
-	 * /wp-admin/network/ would be thrown out of the network admin and onto the current blog's
-	 * screens -- where a network-activated standalone is not manageable at all. The user admin under
-	 * /wp-admin/user/ is the same failure with a different victim: someone editing their profile
-	 * across a network would land on whichever site the request happened to resolve against, which
-	 * they need not even be a member of.
-	 *
-	 * The constants both of these read are defined by wp-admin/network/admin.php and
-	 * wp-admin/user/admin.php before either reaches wp-load.php, so they are already answerable at
-	 * plugins_loaded, where conflict resolution runs.
+	 * admin_url() always names a site's own admin, so a super admin resolving from /wp-admin/network/
+	 * would be thrown onto the current blog's screens -- where a network-activated standalone is not
+	 * manageable at all. Both branches read constants defined before wp-load.php, so already set here.
 	 *
 	 * @since 1.0.0
 	 *

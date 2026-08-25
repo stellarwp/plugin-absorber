@@ -26,11 +26,8 @@ class Registrar implements Registrar_Interface {
 	 * Register a sub-plugin.
 	 *
 	 * A slug is an identity, not a key this map happens to use: it also names the sub-plugin's
-	 * notices and its once-ever activation record. Letting a second registration win would drop
-	 * the first sub-plugin from the load silently and hand its activation record to the winner, so
-	 * the collision is refused instead. There is no legitimate second registration to protect —
-	 * a decision the host cannot make up front belongs in the `enabled` callable, which is
-	 * re-evaluated on every load, not in a second call to this method.
+	 * notices and its once-ever activation record, so letting a second registration win would
+	 * silently drop the first from the load and hand it that record.
 	 *
 	 * @since 1.0.0
 	 *
@@ -45,7 +42,7 @@ class Registrar implements Registrar_Interface {
 
 		if ( isset( $this->sub_plugins[ $slug ] ) ) {
 			// Both files, because the two registrations routinely come from different host plugins
-			// and the stack trace only shows the one that lost.
+			// and the stack trace shows only the one that lost.
 			throw new Config_Exception(
 				sprintf(
 					'Two sub-plugins are registered under the slug "%1$s": %2$s and %3$s.'

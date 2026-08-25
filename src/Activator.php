@@ -39,9 +39,8 @@ class Activator implements Activator_Interface {
 			return;
 		}
 
-		// Recorded after the callback rather than before it. A callback that fatals halfway leaves
-		// the site half-migrated either way, but recording first would also mean the next request
-		// skips it, so the half-finished state becomes permanent and invisible.
+		// Recorded after the callback, never before: recording first would freeze a callback that
+		// throws halfway, since the next request would skip it rather than retry.
 		$callback( $sub_plugin );
 
 		$done[ $slug ] = true;
@@ -52,14 +51,9 @@ class Activator implements Activator_Interface {
 	/**
 	 * Slugs whose activation callback has already run, keyed by slug.
 	 *
-	 * A site option, not a plain one: `deactivate_plugins()` is network-wide on multisite, so an
-	 * activation that follows a network-wide merge has to be recorded network-wide too, or every
-	 * site in the network runs the callback again.
-	 *
-	 * The other end of that is the accepted cost: a site created on the network afterwards finds the
-	 * record already set and never runs the callback at all. One run for the network is what this
-	 * default promises, and per-site work belongs on a host's own new-site hook, or in an
-	 * `Activator_Interface` of its own that records per site.
+	 * A site option, not a plain one: `deactivate_plugins()` is network-wide on multisite, so the
+	 * record is too. The cost is that a site created afterwards finds it set and never runs the
+	 * callback; per-site work belongs in an `Activator_Interface` of the host's own.
 	 *
 	 * @since 1.0.0
 	 *
@@ -70,19 +64,15 @@ class Activator implements Activator_Interface {
 	private function completed(): array {
 		$done = get_site_option( $this->option_name(), [] );
 
-		// Anything that is not an array is replaced rather than trusted. A corrupted option would
-		// otherwise fatal on the array read, inside plugins_loaded, on every request.
+		// A corrupted option would otherwise fatal on the array read, on every request.
 		return is_array( $done ) ? $done : [];
 	}
 
 	/**
 	 * The option every slug's activation record lives in.
 	 *
-	 * Private, and not static, unlike `Notices\Store::option_name()`: that one is public because
-	 * `docs/notices.md` tells a host to read the queue option itself, and this record has no such
-	 * reader. Nothing outside this class composes the name, so nothing outside it needs to be told
-	 * the name, and a host that wants the bookkeeping elsewhere binds `Activator_Interface` rather
-	 * than reading around this one.
+	 * Private, unlike `Notices\Store::option_name()`: nothing outside reads it, and a host wanting
+	 * the bookkeeping elsewhere binds `Activator_Interface` instead.
 	 *
 	 * @since 1.0.0
 	 *

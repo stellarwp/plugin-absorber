@@ -19,6 +19,7 @@ use Nexcess\PluginAbsorber\Notices\Presenter;
 use Nexcess\PluginAbsorber\Notices\Writer;
 use Nexcess\PluginAbsorber\Provider;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Registry\Registrar;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
@@ -288,6 +289,77 @@ class AbsorberTest extends WPTestCase {
 		yield 'bind'      => [ 'bind' ];
 	}
 
+	/**
+	 * The two public reads of the registry have to answer alike. Registration is buffered until
+	 * something reads it, so a registrar handed over undrained holds nothing at all until the first
+	 * pass reads at plugins_loaded priority 5 — while its own contract promises every registered
+	 * sub-plugin, in registration order, and `Absorber::all()` hands back exactly that. A host
+	 * asking either question during its bootstrap, which is every host, would get two answers.
+	 */
+	public function test_the_registrar_accessor_holds_what_all_reports(): void {
+		$this->set_up_container();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		// Asked before Absorber::all(), which is the whole of the test: a read through the reader
+		// first would drain the buffer and leave nothing for the two to disagree about.
+		$registrar = Absorber::registrar();
+
+		$this->assertSame( [ 'give-recurring' ], array_keys( $registrar->all() ) );
+		$this->assertSame( array_keys( Absorber::all() ), array_keys( $registrar->all() ) );
+	}
+
+	/**
+	 * Into the registrar the accessor is about to hand back, and once. The buffer is emptied as it
+	 * drains, so asking again must not hand the registrar a slug it already holds and trip the
+	 * duplicate guard on a registration the host only made once.
+	 */
+	public function test_the_registrar_accessor_drains_into_the_registrar_it_returns(): void {
+		$bound = $this->bind_registrar();
+
+		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
+
+		$this->assertSame( $bound, Absorber::registrar() );
+		$this->assertArrayHasKey( 'give-recurring', $bound->sub_plugins );
+		$this->assertSame( 1, $bound->register_calls );
+
+		Absorber::registrar();
+		Absorber::all();
+
+		$this->assertSame( 1, $bound->register_calls, 'Neither read may register what the registrar holds.' );
+	}
+
+	/**
+	 * The drain happens after the binding has been resolved and checked, and this is the ordering
+	 * that buys. `Registry\Reader` takes a registrar as a constructor argument, so a registrar bound
+	 * to the wrong class is a reader that cannot be built either — and a drain that ran first would
+	 * send the host after a collaborator it never bound, instead of naming the one binding it did
+	 * get wrong.
+	 */
+	public function test_a_registrar_of_the_wrong_type_is_reported_before_the_accessor_drains(): void {
+		$container = new Test_Container();
+		$container->singleton(
+			Registrar_Interface::class,
+			static function (): object {
+				return new stdClass();
+			}
+		);
+		$this->set_up_container( $container );
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+			$this->assertStringContainsString( 'does not implement', $exception->getMessage() );
+			$this->assertStringNotContainsString(
+				Reader::class,
+				$exception->getMessage(),
+				'The reader is this library\'s own collaborator; naming it sends the host to the wrong file.'
+			);
+		}
+	}
+
 	public function test_register_builds_a_sub_plugin_and_stores_it(): void {
 		$this->set_up_container();
 
@@ -373,10 +445,13 @@ class AbsorberTest extends WPTestCase {
 
 	/**
 	 * Deferring registration moves the duplicate-slug report from the second register() call to the
-	 * first read. It still names both bundled files, which is what the host needs to find them.
+	 * first read, where it is reported rather than raised: what a host asks for here is the list of
+	 * sub-plugins, and the second registration under a slug is no reason to hand back none of them.
+	 * The report still names both bundled files, which is what the host needs to find them.
 	 */
 	public function test_a_duplicate_slug_is_refused_at_the_first_read(): void {
 		$this->set_up_container();
+		$this->expect_incorrect_usage();
 
 		Absorber::register( $this->sub_plugin_config( 'give-recurring' ) );
 		Absorber::register(
@@ -387,13 +462,22 @@ class AbsorberTest extends WPTestCase {
 			]
 		);
 
-		try {
-			Absorber::all();
-			$this->fail( 'Expected a Config_Exception.' );
-		} catch ( Config_Exception $exception ) {
-			$this->assertStringContainsString( 'give-recurring', $exception->getMessage() );
-			$this->assertStringContainsString( '/tmp/other/other.php', $exception->getMessage() );
-		}
+		$all = Absorber::all();
+
+		$this->assertSame( [ 'give-recurring' ], array_keys( $all ) );
+		$this->assertSame(
+			'/tmp/give-recurring/give-recurring.php',
+			$all['give-recurring']->get_bundled_plugin_file(),
+			'The registration that arrived first under a slug is the one that stands.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'Two sub-plugins are registered under the slug "give-recurring"',
+			'The collision is what failed, and the report has to say so rather than name some other gate.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'/tmp/other/other.php',
+			'The report has to name the registration that lost, or the host cannot find it.'
+		);
 	}
 
 	public function test_all_is_empty_before_anything_is_registered(): void {
@@ -551,6 +635,94 @@ class AbsorberTest extends WPTestCase {
 			$container->has( Registrar_Interface::class ),
 			'The default provider really does bind what the assertion above looked for.'
 		);
+	}
+
+	/**
+	 * Set the container first, and do not replace it: what happens otherwise is documented on
+	 * `boot()` and until now was only documented. `Boot\Scheduler` closes over the container boot()
+	 * handed it, so the steps on the hooks keep resolving from that one however many containers
+	 * arrive afterwards.
+	 *
+	 * Asserted by loading a sub-plugin rather than by counting resolutions: the promise is that the
+	 * request the host is in the middle of still works, and it does — against bindings the host
+	 * believes it has replaced.
+	 */
+	public function test_a_container_set_after_boot_does_not_reach_the_wired_steps(): void {
+		$wired = $this->boot_with_a_watched_registrar();
+
+		$this->register_bundled_sub_plugin();
+
+		$late = $this->bind_registrar();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'The load pass runs, whichever container it runs from.' );
+		$this->assertArrayHasKey(
+			'give-recurring',
+			$wired->sub_plugins,
+			'The registry the steps read is the one the container at boot time built.'
+		);
+		$this->assertSame( 0, $late->register_calls, 'Nothing the replacement container built is on a hook.' );
+
+		// The recorder has to be shown to work: a spy no hook ever reached and a spy that cannot
+		// record look exactly alike from the assertion above.
+		Absorber::register( $this->sub_plugin_config( 'give-fee-recovery' ) );
+		Absorber::all();
+
+		$this->assertSame( 1, $late->register_calls, 'The replacement registrar really does record what reaches it.' );
+	}
+
+	/**
+	 * The other half of the same split, and the half a host sees: the accessors resolve from
+	 * whatever `Config` holds when they are called, so after a second `set_container()` they answer
+	 * for the replacement while the hooks answer for the original. `Absorber::all()` reports nothing
+	 * registered, on a request that has already loaded the sub-plugin — two live registries, no
+	 * report, and a host debugging the empty one.
+	 */
+	public function test_a_container_set_after_boot_splits_the_accessors_from_the_hooks(): void {
+		$this->boot_with_a_watched_registrar();
+
+		$this->register_bundled_sub_plugin();
+
+		$late = $this->bind_registrar();
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( $late, Absorber::registrar(), 'The accessors read whatever Config holds now.' );
+		$this->assertSame( [], Absorber::all(), 'So the registry a host can reach is the empty one …' );
+		$this->assertSame( 1, $this->bundled_plugin_loads(), '… while the sub-plugin really did load.' );
+	}
+
+	/**
+	 * And booting again is no way out of it. `boot()` is idempotent by the flag it sets last, so the
+	 * second call returns before the provider runs: the container that arrived after boot never gets
+	 * the library's bindings, and the accessors that resolve from it fail on every one.
+	 */
+	public function test_a_second_boot_binds_nothing_into_a_container_set_afterwards(): void {
+		$this->rewind_plugins_loaded();
+		$this->set_up_container();
+
+		Absorber::boot();
+
+		$replacement = $this->bare_container();
+
+		Config::set_container( $replacement );
+
+		Absorber::boot();
+
+		// An interface id, for the reason the provider test gives: a container answers for any class
+		// that exists whether or not anything bound it, so only an interface says what ran.
+		$this->assertFalse(
+			$replacement->has( Registrar_Interface::class ),
+			'The second boot() returns early, so no provider runs over the container that replaced the first.'
+		);
+
+		try {
+			Absorber::registrar();
+			$this->fail( 'Expected a Config_Exception.' );
+		} catch ( Config_Exception $exception ) {
+			$this->assertStringContainsString( Registrar_Interface::class, $exception->getMessage() );
+		}
 	}
 
 	public function test_render_notices_delegates_to_the_bound_presenter(): void {
@@ -812,6 +984,25 @@ class AbsorberTest extends WPTestCase {
 		$this->plugins_loaded_count = did_action( 'plugins_loaded' );
 
 		unset( $GLOBALS['wp_actions']['plugins_loaded'] );
+	}
+
+	/**
+	 * Boot against a container whose registrar this test can watch.
+	 *
+	 * The hook counter is rewound first, or the scheduler rightly reports that it is too late to
+	 * wire and runs the sequence inline — which is the one shape these tests are not about, since
+	 * nothing inline is left holding a container when the next one arrives.
+	 *
+	 * @return Spy_Registrar
+	 */
+	private function boot_with_a_watched_registrar(): Spy_Registrar {
+		$this->rewind_plugins_loaded();
+
+		$bound = $this->bind_registrar();
+
+		Absorber::boot();
+
+		return $bound;
 	}
 
 	/**

@@ -49,7 +49,7 @@ slic run unit --env multisite     # multisite
 slic run unit tests/unit/ConfigTest.php
 slic run unit "tests/unit/ConfigTest.php:test_it_rejects_invalid_hook_prefixes"
 
-composer test:unit                # wraps `slic run unit`
+composer test:unit                # both legs: `slic run unit` under singlesite, then multisite
 composer test:analysis            # PHPStan level 9 — must stay green on every PR
 ```
 
@@ -205,9 +205,10 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Absorber.php` | Static facade: registration, `boot()`, the accessors, and the two notice trampolines. Holds no collaborator's state. |
 | `src/Provider.php` | Binds every collaborator; the only file that names a default implementation. |
 | `src/Boot/Scheduler.php` | Hook wiring and boot timing: the sequence, the priorities, and the fallback for a host that boots too late. |
-| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback. |
+| `src/Loader.php` | The load pass: the gate chain, the `require_once`, the activation callback, and the `loaded`/`skipped` announcements. |
 | `src/Sub_Plugin.php` | Value object; validates config and answers what it can without a container-bound collaborator. |
 | `src/Conflict_Policy.php` | The three policy constants, `default()`, `is_valid()`. |
+| `src/Skip_Reason.php` | The five reasons the `skipped` action carries, one per gate in the load pass. |
 | `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active in either scope, and whether it is network-active — `is_plugin_active_for_network()`, which is `false` off a network so no caller needs an `is_multisite()` guard), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
@@ -242,12 +243,14 @@ whenever the host's bootstrap happens to run it. This is also why `Absorber::reg
 resolves nothing — registration at plugin-file scope is a shape a host is entitled to use, and it
 would otherwise register into the throwaway.
 
-**A duplicate slug is `Registry\Registrar::register()`'s exception, not `Absorber::register()`'s.** What
+**A duplicate slug is `Registry\Registrar::register()`'s refusal, not `Absorber::register()`'s.** What
 `Absorber::register()` throws is config validation, from the `Sub_Plugin` constructor, in the call
-the host can see in its own stack trace. The buffer reaches the registrar at the first read —
-`plugins_loaded` priority 5 on a request that passes the gatekeeper, priority 6 otherwise — so the
-collision surfaces from inside a core action. Both are `Config_Exception`; only one of them can name
-the line the host wrote.
+the host can see in its own stack trace. A collision cannot be found there: the buffer reaches the
+registrar at the first read — `plugins_loaded` priority 5 on a request that passes the gatekeeper,
+priority 6 otherwise — long after both `register()` calls returned. So the registrar throws, and
+`Registry\Reader::flush()` catches it per entry and reports it through `_doing_it_wrong()` naming the
+registration that was discarded. The first registration under the slug stands, the second is dropped,
+and everything registered behind it still reaches the registrar.
 
 **The too-late barrier measures against the first step in the sequence, not the last.**
 `Boot\Scheduler` compares the priority `plugins_loaded` is already dispatching against the lowest
@@ -271,6 +274,13 @@ activation callback (only after a *successful* require). The file gate is `is_fi
 is_readable()`, not `file_exists()`: that last is true for a directory and for a file with no read
 permission, and `require_once` fatals on both. Only the dependency gate queues a notice; an
 unreadable file is a broken build in the host plugin and reports through `_doing_it_wrong()`.
+
+**Each gate's reason is a `Skip_Reason` constant, not a constant on `Loader`.** What the five values
+belong to is the `skipped` action rather than the pass that fires it: `Loader` is bound by class name
+and a host may replace it outright, and a replacement announcing the same vocabulary should not have
+to import the implementation it swapped out to name one — the reason `Conflict_Policy` sits at the
+root rather than on `Conflict\Resolver`. Unlike `Conflict_Policy` it carries no behaviour: the library
+only ever emits a reason, never receives one, so an `is_valid()` there would have no caller.
 
 The activation callback is the last of those and runs through `Activator_Interface`, which `Loader`
 takes as a constructor argument like the writer and the registry reader. Last, because a bundled
@@ -296,12 +306,15 @@ constructed with rather than through the registrar they could resolve for themse
 drains the pending registrations before it reads and a registrar asked directly would miss anything
 registered since the last flush.
 
-**Both passes also catch `Config_Exception` around that read.** A duplicate slug is only found when
-the buffer reaches the registrar, which is a read — long after both `register()` calls returned — and
-it arrives inside `plugins_loaded`, the hook that exists to prevent a fatal, so this is the last place
-allowed to cause one. The conflict pass needs the guard more than the load pass, not less: its request
-gate means the only requests reaching it are admin page views, so an escaping throw lands on exactly
-the screens the mistaken registration would have to be corrected from.
+**Neither pass guards that read, because the read no longer raises.** The one exception it used to
+carry was the duplicate slug, and that is now refused and reported inside `Registry\Reader::flush()`,
+where it is found. A guard at the read was the wrong altitude for it: the first pass to read caught
+it and stood down whole — the load pass loading nothing at all on the front end, the conflict pass
+resolving nothing in wp-admin — over a registry that was intact and readable the entire time. One
+mistaken registration is one sub-plugin's problem and the sub-plugins around it still have to load.
+What remains are the backstops that were always the right altitude for an unexpected throw: the
+`Throwable` catch on each `plugins_loaded` step in `Boot\Scheduler`, and the per-sub-plugin catch
+inside `Loader::load_all()` and `Conflict\Resolver::resolve_all()`.
 
 The container is no longer the other half of that. A pass is handed a reader that already holds its
 registrar, so a container that cannot supply one fails while the *pass* is being built — where an
@@ -420,6 +433,9 @@ runnable inline as well as wirable.
   `{$hook_prefix}/plugin_absorber/conflict_notice_message`,
   `{$hook_prefix}/plugin_absorber/dependency_notice_message` and
   `{$hook_prefix}/plugin_absorber/stranding_notice_message` (all four `Sub_Plugin`)
+- Actions: `{$hook_prefix}/plugin_absorber/loaded` and `{$hook_prefix}/plugin_absorber/skipped`
+  (`Loader`, one per sub-plugin the load pass finished with; the skip reasons are `Skip_Reason`
+  constants)
 - Options: `{$option_prefix}_plugin_absorber_activations` (`Activator`),
   `{$option_prefix}_plugin_absorber_notices` (`Notices\Store`)
 
@@ -484,6 +500,12 @@ than coercing to `"0"` or `""` and surfacing as a wrong value somewhere downstre
 deliberately does not change is the hook boundary — WordPress's own files are not strict, so core
 calling our typed methods still coerces weakly, and a callback that receives a loose type from a
 filter behaves exactly as it did.
+
+**Every `_doing_it_wrong()` names `Class::method`, never a bare class name.** WordPress prints it as
+"Function %s was called incorrectly", so it is the only part of a report that says where in this
+library the sentence came from, and a class alone cannot separate two reports made by the same one.
+Written `self::class . '::method'` rather than `__METHOD__`, because `__METHOD__` inside a trait
+names the trait rather than the class that actually stood down.
 
 **Comments describe behaviour, not the plan.** Never reference a task or plan-step number in a code
 comment; the code outlives the plan. Comments earn their place by explaining *why*, especially where
@@ -554,8 +576,12 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
   `Conflict\Resolver::resolve_all()` catch *per sub-plugin* as well, because one sub-plugin's throw
   must not take the ones behind it in the registration order with it. Everything past those catches is
   somebody else's code — `enabled`, `dependency_check`, `activation_callback`, `conflict_policy`, the
-  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, and the
-  standalone's own deactivation hook. The one failure none of this can catch is a re-declaration
+  notice messages, the `should_load` filter, the bundled file a `require` runs top to bottom, the
+  standalone's own deactivation hook, and every listener on the actions this library fires.
+  `Loader::announce()` is the one that catches its own rather than falling to the enclosing catch,
+  because by then the require has happened and the activation callback has run — left to the
+  per-sub-plugin catch, a listener's bug would be reported as the sub-plugin having been abandoned,
+  on the channel a host built its log line on. The one failure none of this can catch is a re-declaration
   fatal, which PHP does not raise as a `Throwable`; the guard constant, checked before the require, is
   what prevents that one.
 - **The guard constant and the standalone basename are two separate keys.** No constant does double
