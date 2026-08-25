@@ -185,11 +185,6 @@ line to the author who wrote it in the standalone. Path-filtered
 `git log -- sub-plugins/give-recurring` is the exception and stops at the move, since that is where
 the directory begins.
 
-Where the files were copied in by hand already, that merge conflicts `add/add` on every shared file
-and `-X ours` resolves toward what you have, leaving the tree byte-identical and blame intact. It
-only settles files present on both sides, so read `git show --stat HEAD` for anything the standalone
-tracked and you never copied.
-
 ## What changes for the bundled plugin
 
 This library includes bundled plugins from inside a method, not at global scope, so variables
