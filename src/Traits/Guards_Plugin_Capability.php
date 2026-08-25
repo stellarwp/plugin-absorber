@@ -16,7 +16,7 @@ namespace Nexcess\PluginAbsorber\Traits;
  *
  * Network-scoped wherever a network exists, because that is how far the act reaches.
  * `activate_plugins` cannot be relied on to imply the network capability: core widens it only while
- * the `menu_items` site option keeps the Plugins menu off, and that menu is usually on.
+ * the `menu_items` site option keeps the Plugins menu off, and a network may turn that menu on.
  *
  * @since 1.0.0
  */
