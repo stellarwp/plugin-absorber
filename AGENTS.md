@@ -420,12 +420,16 @@ sentences is still there to swap out. And it sanitises with `wp_kses_post()` *be
 emptiness, since a message that filters down to nothing must leave core's wording standing rather
 than blank the notice box.
 
-**Two sentences, and the sandbox iframe comes out with whichever one is rewritten.** The fatal pauses
-the standalone, so a Resume link re-runs it under core's other wording. The resume redirect carries no
-`plugin` arg, so that nonce is tried against every registered standalone — behind `error=resuming`,
+**Two sentences, and the sandbox iframe comes out with whichever one is rewritten.** The resume screen
+is not the activation screen's sequel: `plugin_sandbox_scrape()` defines `WP_SANDBOX_SCRAPING`, which
+stands the fatal-error handler down, so a failed activation pauses nothing. What pauses a standalone
+is a fatal on an ordinary request, and the Resume link appears in recovery mode. That redirect carries
+no `plugin` arg, so the nonce is tried against every registered standalone — behind `error=resuming`,
 since otherwise somebody else's failed activation fires `wp_verify_nonce_failed` once per sub-plugin.
 Core's `error_scrape` iframe re-runs the fatal with `display_errors` on, so it goes with a sentence
-that was replaced and stays on a notice that was not, where it is the only diagnostic left.
+that was replaced and stays on a notice that was not, where it is the only diagnostic left. Core has
+stripped that iframe itself since 6.4 — `wp_admin_notice()` echoes through `wp_kses_post()`, which
+allows no `<iframe>` — so the removal is forward-looking until core stops sanitising its own notice.
 
 **`Boot\Scheduler` wires `wp_admin_notice_markup` as a named static callback, not a closure.** Both
 admin-only hooks are `[ Absorber::class, … ]` pairs that resolve their own collaborator — the

@@ -117,8 +117,9 @@ class Rewriter {
 	 *
 	 * Read back through `__()` against core's own text domain rather than written out as literals: an
 	 * English needle would match nothing on a site running WordPress in another language. Resume sits
-	 * beside activation because core pauses the plugin its sandbox died in, so the standalone comes
-	 * back with a Resume link that re-runs the same re-declaration.
+	 * beside activation because a standalone that fatals on an ordinary request is paused by core --
+	 * the activation sandbox pauses nothing, having defined WP_SANDBOX_SCRAPING -- and the Resume link
+	 * then re-runs the same re-declaration.
 	 *
 	 * @since 1.0.0
 	 *
@@ -235,6 +236,9 @@ class Rewriter {
 	 * under the explanation, contradicting it. Matched on `error_scrape` inside the opening tag rather
 	 * than on the element core built, which would mean reproducing `add_query_arg()`, `urlencode()`
 	 * and `esc_url()` over a filterable URL and missing silently once one of them changed.
+	 *
+	 * Forward-looking as it stands: `wp_admin_notice()` has echoed through `wp_kses_post()` since 6.4,
+	 * which allows no `<iframe>`, so core strips this one itself before it reaches a browser.
 	 *
 	 * @since 1.0.0
 	 *

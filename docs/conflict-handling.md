@@ -129,9 +129,12 @@ So the library filters `wp_admin_notice_markup`, swaps that sentence for the sub
 `conflict_notice_message`, falling back to a generic one naming the slug, and takes the iframe out
 with it. That filter is what puts the WordPress floor at 6.4.
 
-The fatal also leaves the standalone *paused*, so it comes back to the plugins list with a **Resume**
-link that fails identically — *"Plugin could not be resumed because it triggered a fatal error."*
-Both sentences are rewritten.
+Since WordPress 6.4 core sanitises its own notice on the way out, and that strips the iframe whether
+or not this library does — so the removal only matters if core stops.
+
+A standalone that fatals on an ordinary request is *paused* instead, and the **Resume** link that
+appears fails identically — *"Plugin could not be resumed because it triggered a fatal error."* Both
+sentences are rewritten. (The activation sandbox pauses nothing; that screen is reached separately.)
 
 It touches nothing else: the markup comes back untouched unless the screen is `plugins`, or
 `plugins-network` in the network admin; `_error_nonce` verifies for a registered standalone, named by
