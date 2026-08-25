@@ -61,8 +61,10 @@ container that was never taught about this library. Set the container once, befo
 Sub-plugins load in **registration order**, so register a dependency before anything that
 extends it at include time, and register each slug exactly once. A config array the library
 cannot use throws `Config_Exception` on the spot, in the call you can see in your own stack
-trace; a duplicate slug is the exception that surfaces later, on `plugins_loaded`, since
-registrations are buffered until the first read.
+trace. A duplicate slug is found later, at the first read of the registry — normally on
+`plugins_loaded` — since registrations are buffered until then: it is refused there and reported
+through `_doing_it_wrong()`, the first registration under the slug stands, and the second is
+discarded.
 
 Register unconditionally and put anything you cannot decide up front — a licence, a setting the
 site owner can change — in `enabled`, which is re-evaluated on every load. See

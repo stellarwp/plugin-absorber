@@ -67,9 +67,6 @@ class Loader {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception From loading a sub-plugin, which reads the hook prefix the guard
-	 *                          above has already established is set.
-	 *
 	 * @return void
 	 */
 	public function load_all(): void {
@@ -82,30 +79,11 @@ class Loader {
 
 		// The reader rather than the registrar directly: it drains the registrations still buffered
 		// on the facade before it reads, and a registrar asked on its own would miss anything
-		// registered since the last read.
-		try {
-			$sub_plugins = $this->registry->all();
-		} catch ( Config_Exception $exception ) {
-			// The flush is where a duplicate slug is caught, and reading the registrar is where a
-			// missing container or an unusable binding is. All three are bootstrap mistakes, and
-			// all three arrive inside plugins_loaded: letting one out would fatal every request,
-			// front end and admin alike, and lock the developer out of the screen where the
-			// registration could be corrected. The hook this runs on exists to prevent a fatal, so
-			// it is the last place that may cause one -- the mistake is reported to the developer
-			// and the load is abandoned instead.
-			_doing_it_wrong(
-				self::class,
-				sprintf(
-					'The registered sub-plugins could not be read, so none were loaded: %s',
-					$exception->getMessage()
-				),
-				'1.0.0'
-			);
-
-			return;
-		}
-
-		foreach ( $sub_plugins as $sub_plugin ) {
+		// registered since the last read. Unguarded, because the read answers with whatever the
+		// registrar legitimately holds: a duplicate slug is refused and reported where it is found,
+		// so the sub-plugins around it still reach this loop rather than a host's one mistaken
+		// registration costing the site every bundled plugin it has.
+		foreach ( $this->registry->all() as $sub_plugin ) {
 			// Everything past this line is somebody else's code: the enabled and dependency_check
 			// callables, the host's should_load filter, and the bundled file itself, which a require
 			// runs from top to bottom. Any of it may throw, and this loop runs inside plugins_loaded

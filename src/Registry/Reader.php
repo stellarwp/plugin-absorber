@@ -82,9 +82,12 @@ class Reader {
 	 * registered since the last read, a host registering from its own `plugins_loaded` callback
 	 * included.
 	 *
-	 * @since 1.0.0
+	 * A read always answers with what the registrar legitimately holds. A duplicate slug is refused
+	 * and reported as it drains, never raised out of here: every caller is inside `plugins_loaded`,
+	 * and one host bootstrap mistake about one sub-plugin must not stand down a pass that had every
+	 * other sub-plugin to get on with.
 	 *
-	 * @throws Config_Exception When two sub-plugins were registered under one slug.
+	 * @since 1.0.0
 	 *
 	 * @return array<string,Sub_Plugin>
 	 */
@@ -124,16 +127,25 @@ class Reader {
 	 * while this object is being built, with the registrations still buffered for the read that comes
 	 * after the host has fixed its bindings.
 	 *
-	 * That same emptying is why a duplicate slug is caught per entry rather than allowed to end the
-	 * loop. The registrar refuses the collision, and letting the throw out of the loop would leave
-	 * every sub-plugin registered *behind* the colliding one in no registrar and in no buffer — the
-	 * host would get a report naming the two that collided and silently lose the rest, on both
-	 * passes, for the rest of the process. Registering the whole batch and throwing afterwards costs
-	 * the collision nothing: it still surfaces from the read, where both passes catch it.
+	 * A collision the registrar refuses is reported here, with the discarded registration named, and
+	 * goes no further. Throwing it on made one mistaken registration decide what a whole pass did: the
+	 * first pass to read caught it and stood down — the load pass loading nothing at all on the front
+	 * end, the conflict pass resolving nothing in wp-admin — while the registry it was standing down
+	 * over was intact and readable the entire time. A slug registered twice is one sub-plugin's
+	 * problem, and the sub-plugins around it still have to load.
+	 *
+	 * Reported as it is discovered, which is once per process and therefore once per request, since
+	 * registration runs at plugin-file scope on every one: the host sees it in the log for as long as
+	 * the duplicate exists, and the load pass does not repeat a sentence the conflict pass has
+	 * already printed a priority earlier in the same request. A registration that arrives after a
+	 * read — a host module registering from its own `plugins_loaded` callback — is checked when it
+	 * drains, so a later collision still reports.
+	 *
+	 * Every collision is reported, not just the first. They are separate mistakes naming separate
+	 * slugs, and hiding the second behind the first only means the host fixes one and gets the next
+	 * on the following request.
 	 *
 	 * @since 1.0.0
-	 *
-	 * @throws Config_Exception When two sub-plugins were registered under one slug.
 	 *
 	 * @return void
 	 */
@@ -146,25 +158,28 @@ class Reader {
 
 		self::$pending = [];
 
-		// The first collision, not the last, so that a buffer containing two of them reports the one
-		// the host wrote first and keeps reporting the same one until it is fixed. The exception is
-		// rethrown as the registrar raised it: it names the slug and both bundled files, which is the
-		// mistake the host has to go and correct, and what this method did with the rest of the batch
-		// is nothing they can act on.
-		$collision = null;
-
 		foreach ( $pending as $sub_plugin ) {
 			try {
 				$this->registrar->register( $sub_plugin );
 			} catch ( Config_Exception $exception ) {
-				if ( $collision === null ) {
-					$collision = $exception;
-				}
+				// The registrar's own sentence, unwrapped: it names the slug and both bundled files,
+				// which is the whole of what the host has to go and correct. One clause is added,
+				// because the registrar refuses a registration without saying what became of it, and
+				// what became of it is now the consequence -- the site runs one of those two files
+				// and silently does not run the other. Every other report in this library says what
+				// the outcome was; this one has to as well. The clause names the loser as "the
+				// duplicate" rather than by path alone, because the two registrations may well name
+				// the same file, and a bare path then reads as if the surviving one went too.
+				_doing_it_wrong(
+					self::class,
+					sprintf(
+						'%1$s The original registration was kept; the duplicate %2$s was discarded.',
+						$exception->getMessage(),
+						$sub_plugin->get_bundled_plugin_file()
+					),
+					'1.0.0'
+				);
 			}
-		}
-
-		if ( $collision !== null ) {
-			throw $collision;
 		}
 	}
 }
