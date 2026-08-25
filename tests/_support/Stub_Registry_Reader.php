@@ -47,4 +47,14 @@ class Stub_Registry_Reader extends Reader {
 	public function all(): array {
 		return $this->sub_plugins;
 	}
+
+	/**
+	 * Nothing to drain, and nowhere to drain it to. This reader answers from the sub-plugins a test
+	 * named, so it holds no registrar — and the inherited flush would reach for one that was never
+	 * constructed the moment a test that used this stub had also registered something.
+	 *
+	 * @return void
+	 */
+	public function flush(): void {
+	}
 }

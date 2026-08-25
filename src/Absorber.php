@@ -46,11 +46,12 @@ final class Absorber {
 	/**
 	 * The registrar, holding every registration made so far.
 	 *
-	 * Drained on the way past, like `all()` and for the same reason: registration is buffered until
-	 * something reads it, so a registrar handed over as it is holds nothing at all until the first
-	 * pass reads at plugins_loaded priority 5 — which is after every point a host bootstrap gets to
-	 * ask. The two public reads of the registry would then disagree, one of them against the
-	 * contract `Registrar_Interface::all()` states, and neither would say so.
+	 * Drained before it is handed back, as `all()` is on its way to the list and for the same
+	 * reason: registration is buffered until something reads it, so a registrar handed over as it is
+	 * holds nothing at all until the first pass reads at plugins_loaded priority 5 — which is after
+	 * every point a host bootstrap gets to ask. The two public reads of the registry would then
+	 * disagree, one of them against the contract `Registrar_Interface::all()` states, and neither
+	 * would say so.
 	 *
 	 * Drained *after* the binding has been resolved and checked, not before. `Registry\Reader` takes
 	 * a registrar as a constructor argument, so a registrar bound to the wrong class is a reader
@@ -64,12 +65,11 @@ final class Absorber {
 	 * @return Registrar_Interface
 	 */
 	public static function registrar(): Registrar_Interface {
+		// Resolved before the drain, not after. The ordering is the paragraph above: the reader is
+		// built from this binding, so asking for it first is what names the binding at fault.
 		$registrar = self::collaborator( Registrar_Interface::class );
 
-		// Read for the drain rather than for the list: handing the pending registrations over is
-		// what `Registry\Reader::all()` does on its way to the registrar, and the list it comes back
-		// with is what `all()` exists to give a host.
-		self::collaborator( Reader::class )->all();
+		self::collaborator( Reader::class )->flush();
 
 		return $registrar;
 	}
