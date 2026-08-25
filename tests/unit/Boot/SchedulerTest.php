@@ -739,6 +739,68 @@ class SchedulerTest extends WPTestCase {
 	}
 
 	/**
+	 * The `return` that ends the inline fallback, which nothing was pinning.
+	 *
+	 * Delete it and the sequence runs inline and is then wired as well — and every other assertion
+	 * about a late boot goes on passing, because the wired copy of the load pass finds the guard
+	 * constant the inline copy defined a moment earlier and stands down at the second gate. What it
+	 * really costs is the conflict pass: a standalone reactivated between two dispatches is
+	 * deactivated out from under a request that has already resolved once, and a host listening for
+	 * `loaded` and `skipped` hears the same request twice.
+	 *
+	 * That the bundled plugin loaded says nothing about which branch ran — both branches load it,
+	 * which is the point of having a fallback. The callback count is the only thing that separates
+	 * them: wiring leaves callbacks behind and running inline never adds one. Counted over every
+	 * priority rather than at the two the sequence names, so a step wired at a priority the constants
+	 * no longer carry is caught here too.
+	 */
+	public function test_booting_too_late_wires_nothing_on_plugins_loaded(): void {
+		$this->expect_incorrect_usage();
+
+		$this->register_sub_plugin();
+
+		$this->add_tracked_action(
+			'plugins_loaded',
+			static function (): void {
+				Absorber::boot();
+			},
+			self::load_priority() + 1
+		);
+
+		// Counted with this test's own callback already on the hook, so the only thing that can move
+		// the number is what boot() does.
+		$before = $this->callbacks_at( 'plugins_loaded' );
+
+		do_action( 'plugins_loaded' );
+
+		$this->assertSame( 1, $this->bundled_plugin_loads(), 'A boot this late has to run the sequence inline.' );
+		$this->assertSame(
+			$before,
+			$this->callbacks_at( 'plugins_loaded' ),
+			'And having run it, it must not wire it as well: the steps would run a second time on the'
+				. ' next dispatch.'
+		);
+
+		// The counter has to be shown able to see a wiring, or "nothing was wired" is what a probe
+		// reading the wrong hook name reports too. Booting inside the window is what puts callbacks
+		// there, so the window is reopened and boot() called again.
+		Absorber_State::reset();
+		unset( $GLOBALS['wp_actions']['plugins_loaded'] );
+
+		Absorber::boot();
+
+		$this->assertGreaterThan(
+			$before,
+			$this->callbacks_at( 'plugins_loaded' ),
+			'The counter must catch a boot that really did wire.'
+		);
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'must run before plugins_loaded priority 5',
+			'The late boot is the mistake under test, not whatever a step ran into on the way.'
+		);
+	}
+
+	/**
 	 * The inline fallback runs the *whole* sequence, in hook order, and this is the request that turns
 	 * on it: a host booting at `plugins_loaded` 10 with the standalone still active. Lose the conflict
 	 * step and the load pass requires the bundled copy on top of the standalone WordPress included from
