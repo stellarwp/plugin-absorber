@@ -93,11 +93,12 @@ class Loader {
 			// loop carries on with the next.
 			//
 			// A re-declaration is the one failure this cannot catch, because PHP does not raise it as
-			// a Throwable -- which is what the guard constant, checked before any of this, is for.
+			// a Throwable -- which is what the guard constant, checked before any of this and checked
+			// again once the require has happened, is for.
 			//
 			// The loaded and skipped actions run host code too, but they catch their own throws
 			// rather than falling to this one: by the time `loaded` fires the require has happened,
-			// the guard constant is defined and the activation callback has run, so a listener's
+			// the guard constant has been checked and the activation callback has run, so a listener's
 			// throw arriving here would report a sub-plugin that is loaded and healthy as one that
 			// was abandoned -- on the channel a host built its log line on.
 			try {
@@ -195,6 +196,42 @@ class Loader {
 		// wrapping here can hand a required file the global scope it would have had.
 		require_once $file;
 
+		// The same defined() the second gate asked, on the other side of the require -- asked of the
+		// constant table here rather than through `Sub_Plugin::is_already_loaded()`, because it is no
+		// longer the same question. In front of the require that predicate means "the code is already
+		// here, from whichever copy"; behind it, the only thing worth asking is whether this require
+		// did what the guard promises. `Sub_Plugin` still owns the name, so nothing here spells a guard
+		// constant for Strauss's constant_prefix to rewrite at build time.
+		//
+		// Nothing else checks: a typo in `plugin_loaded_constant`, or a bundled plugin that defines its
+		// constant from its own plugins_loaded callback rather than at file scope, leaves the code in
+		// memory with nothing standing a standalone copy down -- and a re-declaration fatal, which PHP
+		// does not raise as a Throwable and nothing here can catch, is then one activation away while
+		// every counter and every action says the load went perfectly.
+		//
+		// Reported rather than skipped, and the load carries on. The require happened and cannot be
+		// undone: the file's code is in memory whatever the guard says, so the activation callback
+		// behind this still has to run and `loaded` still has to fire -- announcing a skip would tell
+		// a host that code which is running is not there, and withholding the callback would leave
+		// the sub-plugin loaded with the tables it expects never created. What is broken is the
+		// host's build, which is a developer's to fix and nothing a site owner's screen can help with --
+		// so it goes to _doing_it_wrong() and to no notice.
+		$guard_constant = $sub_plugin->get_plugin_loaded_constant();
+
+		if ( ! defined( $guard_constant ) ) {
+			_doing_it_wrong(
+				self::class . '::load',
+				sprintf(
+					'The bundled plugin "%s" was required and left %s undefined, so nothing stands a'
+						. ' standalone copy down. Define the guard constant at file scope, or correct'
+						. ' plugin_loaded_constant.',
+					$sub_plugin->get_slug(),
+					$guard_constant
+				),
+				'1.0.0'
+			);
+		}
+
 		// Only after a require that actually happened. A bundled plugin is included rather than
 		// activated, so register_activation_hook() never fires for it and whatever that hook would
 		// have done -- creating a table, seeding options -- would never happen at all. Running it
@@ -235,10 +272,10 @@ class Loader {
 	 *
 	 * The throw is caught here rather than a frame up, because `load_all()`'s per-sub-plugin catch
 	 * has exactly one sentence and it is "threw while loading, so it was abandoned". For a listener
-	 * on `loaded` that sentence is false in both halves: the require happened, the guard constant is
-	 * defined and the activation callback has already run, so the sub-plugin is loaded and nothing
-	 * about it was abandoned. A host would get the `loaded` announcement and a report of a failed
-	 * load for the same sub-plugin in the same pass, and the log line it keeps would read a
+	 * on `loaded` that sentence is false in both halves: the require happened, the guard constant has
+	 * been checked and the activation callback has already run, so the sub-plugin is loaded and
+	 * nothing about it was abandoned. A host would get the `loaded` announcement and a report of a
+	 * failed load for the same sub-plugin in the same pass, and the log line it keeps would read a
 	 * successful load as a broken one. The same is true of a listener on `skipped`, which reports a
 	 * skip that really did happen.
 	 *

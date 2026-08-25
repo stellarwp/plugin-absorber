@@ -275,6 +275,52 @@ class LoadTest extends Bootstrap_Test_Case {
 	}
 
 	/**
+	 * The require is the only thing that can deliver a guard constant, and here it does not: the file
+	 * loads and the constant the registration named never arrives. That is what a typo in
+	 * `plugin_loaded_constant` looks like from here, and what a bundled plugin that defines its guard
+	 * from its own `plugins_loaded` callback looks like at the moment the require returns — and with
+	 * nothing checking, the site keeps the re-declaration fatal this library exists to prevent while
+	 * every counter and every action says the load went perfectly.
+	 *
+	 * The sub-plugin is loaded all the same. Its code is in memory, so its activation callback runs
+	 * and `loaded` is fired; what is broken is the host's build, which is a developer's to fix and
+	 * nothing the owner's screen can help with.
+	 */
+	public function test_a_bundled_file_that_defines_no_guard_is_loaded_and_reported(): void {
+		$this->expect_incorrect_usage();
+
+		$activated = [];
+
+		// The registration names one guard constant and the fixture defines another, which is the
+		// state a mistyped key leaves behind without a fixture no bundled plugin resembles.
+		$expected = $this->register(
+			[
+				'bundled_plugin_file' => $this->make_bundled_plugin_file( $this->make_guard_constant() ),
+				'activation_callback' => static function ( Sub_Plugin $sub_plugin ) use ( &$activated ): void {
+					$activated[] = $sub_plugin->get_slug();
+				},
+			]
+		);
+
+		$this->boot();
+		$this->run_request();
+
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+		$this->assertFalse( defined( $expected ), 'Nothing defined the guard the registration named.' );
+		$this->assertSame( [ self::SLUG ], $activated, 'The code is in memory, so the setup it needs still runs.' );
+		$this->assertSame( [ self::SLUG => true ], $this->activation_record() );
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			sprintf( '"%s" was required and left %s undefined', self::SLUG, $expected ),
+			'The report has to name the sub-plugin and the constant nothing defined.'
+		);
+
+		$rendered = $this->render_admin_notices();
+
+		$this->assertSame( [], $this->queued_notices(), 'A build the owner cannot fix is nothing to tell them about.' );
+		$this->assertStringNotContainsString( self::SLUG, $rendered );
+	}
+
+	/**
 	 * All the way to the screen: the load is skipped, the host's own explanation is queued, the render
 	 * draws it as an error, and the render consumes the queue so the owner is told once rather than on
 	 * every admin page load for ever.

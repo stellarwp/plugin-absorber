@@ -61,8 +61,8 @@ load pass runs at all, so on that request no sub-plugin announces anything.
 ## Your listener cannot take the site down
 
 These fire from inside `plugins_loaded`, so a listener that throws is caught rather than allowed
-out. It costs nothing: by the time `loaded` fires the require has happened, the guard constant is
-defined and the activation callback has run, and a `skipped` announcement is the last thing that
+out. It costs nothing: by the time `loaded` fires the require has happened, the guard constant has
+been checked and the activation callback has run, and a `skipped` announcement is the last thing that
 happens to that sub-plugin either way. The throw is reported through `_doing_it_wrong()` as what it
 is — a listener, named by the hook it is on — rather than as the sub-plugin having failed, so a host
 reading its log does not mistake its own bug for a load that broke. That is a backstop, not a
