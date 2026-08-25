@@ -272,10 +272,17 @@ class Resolver implements Resolver_Interface {
 			return;
 		}
 
-		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		// Read raw, not through wp_unslash(). Core adds the slashes in wp_magic_quotes(), which
+		// wp-settings.php calls *after* do_action( 'plugins_loaded' ) -- so at priority 5 there are
+		// none on this value and unslashing is a plain stripslashes() over the URL bar. An admin
+		// searching for a Windows path who trips a conflict would be sent back to a search for
+		// "C:projects", which is the one thing the redirect exists to get right. Reached from the
+		// inline fallback a too-late boot reports, this can run after the slashing instead, where the
+		// cost is a stray backslash in a re-encoded query arg rather than a deleted one.
+		$request_uri = $_SERVER['REQUEST_URI'] ?? '';
 
-		// $_SERVER carries whatever the SAPI put there and wp_unslash() hands back the shape it was
-		// given, so the string the redirector is promised is made one here rather than assumed.
+		// $_SERVER carries whatever the SAPI put there, so the string the redirector is promised is
+		// made one here rather than assumed.
 		if ( ! is_string( $request_uri ) ) {
 			$request_uri = '';
 		}

@@ -66,6 +66,7 @@
         "unsets",
         "unslash",
         "unslashed",
+        "unslashing",
         "unstubbed",
         "unwire",
         "unwires",
@@ -83,6 +84,7 @@
     "ignoreWords": [
         "ance",
         "Brien",
+        "Cprojects",
         "defered",
         "Dpage",
         "giverecurring",
