@@ -109,7 +109,7 @@ misspelt option cannot turn a plugin off.
 ## Defer to a standalone that is a new codebase
 
 An edge case that has happened: `learndash-propanel/learndash_propanel.php` was ProPanel 2.x, which
-LearnDash absorbed into its Reports module, and ProPanel 3.0 later arrived at that same path as an
+LearnDash absorbed into its Reports module, and ProPanel 3.0 arrived at that same path as an
 unrelated codebase with its own namespace and its own `LDRP_*` constants.
 `standalone_plugin_basename` cannot tell the two apart; the installed version can, so read it and
 defer:
