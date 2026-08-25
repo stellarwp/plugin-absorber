@@ -147,14 +147,6 @@ git remote remove old-repo
 git branch -d old-repo-import
 ```
 
-**The scratch worktree is what stops this deleting your build output.** Checking the standalone's
-tree out over your own means git writing a tree that knows nothing about your repository, and git
-does not protect ignored files: one that collides is overwritten in place, and switching back then
-removes any directory left holding nothing but ignored files. A `dist/` or `assets/` the standalone
-also tracks takes your untracked build artifacts with it, silently, and a `.gitignore`d database dump
-under one goes the same way. A worktree is a second checkout of the same repository in another
-directory, so the branch work happens there and yours is only ever merged into.
-
 **Move everything, so the merge only ever touches the sub-plugin directory.** The standalone's
 `README.md`, `LICENSE` and `.gitignore` sit at *its* top level: leave them there and they merge into
 *your* repository root, conflicting with the files of the same name and adding the ones with no
@@ -167,6 +159,14 @@ the standalone's own checkout, so a destination like `includes/notifications` la
 one entry fails while every other one succeeds, so the error scrolls past in a screen of moves that
 worked. Setting the whole tree aside under a name nothing uses, then renaming it into place once,
 does not care where the destination sits.
+
+**The scratch worktree is what stops this deleting your build output.** Checking the standalone's
+tree out over your own means git writing a tree that knows nothing about your repository, and git
+does not protect ignored files: one that collides is overwritten in place, and switching back then
+removes any directory left holding nothing but ignored files. A `dist/` or `assets/` the standalone
+also tracks takes your untracked build artifacts with it, silently, and a `.gitignore`d database dump
+under one goes the same way. A worktree is a second checkout of the same repository in another
+directory, so the branch work happens there and yours is only ever merged into.
 
 **`--no-tags`.** A plain fetch also takes any tag reachable from what it downloads. The standalone's
 `1.1.0` then sits among your own releases, while a `1.0.0` you already have silently does not import
