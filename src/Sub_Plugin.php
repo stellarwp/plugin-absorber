@@ -272,8 +272,8 @@ class Sub_Plugin {
 	/**
 	 * True when the plugin's code is already present, from either copy. The fatal guard.
 	 *
-	 * Only sound when the constant is defined at file scope: a standalone defining it from a hook at
-	 * plugins_loaded or later has not defined it yet when this is asked.
+	 * Only sound when the constant is defined at file scope: a standalone defining it from a hook
+	 * past the load pass has not defined it yet when this is asked.
 	 *
 	 * @since 1.0.0
 	 *
