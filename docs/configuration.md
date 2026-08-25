@@ -127,22 +127,33 @@ git switch -c absorb-give-recurring
 git remote add old-repo git@github.com:givewp/give-recurring.git
 git fetch --no-tags old-repo
 
-# Nest every top-level entry it tracks, so it shares no path with the host.
-git switch -c old-repo-import old-repo/main
+# Nest every top-level entry it tracks, in a scratch worktree so that this checkout
+# is never switched away from.
+git worktree add -b old-repo-import ../absorb-worktree old-repo/main
+cd ../absorb-worktree
 mkdir __absorb-import
 git ls-tree --name-only -z HEAD | xargs -0 -I{} git mv {} __absorb-import/
 mkdir -p sub-plugins
 git mv __absorb-import sub-plugins/give-recurring
 git commit -m "Move Give Recurring under sub-plugins/give-recurring"
+cd -
 
 # Nothing overlaps now, so this merge has nothing to conflict over.
-git switch absorb-give-recurring
 git merge --allow-unrelated-histories old-repo-import
 
-# The history is part of your branch now; the remote and import branch can be deleted.
+# The history is part of your branch now; the rest can be deleted.
+git worktree remove ../absorb-worktree
 git remote remove old-repo
 git branch -d old-repo-import
 ```
+
+**The scratch worktree is what stops this deleting your build output.** Checking the standalone's
+tree out over your own means git writing a tree that knows nothing about your repository, and git
+does not protect ignored files: one that collides is overwritten in place, and switching back then
+removes any directory left holding nothing but ignored files. A `dist/` or `assets/` the standalone
+also tracks takes your untracked build artifacts with it, silently, and a `.gitignore`d database dump
+under one goes the same way. A worktree is a second checkout of the same repository in another
+directory, so the branch work happens there and yours is only ever merged into.
 
 **Move everything, so the merge only ever touches the sub-plugin directory.** The standalone's
 `README.md`, `LICENSE` and `.gitignore` sit at *its* top level: leave them there and they merge into
