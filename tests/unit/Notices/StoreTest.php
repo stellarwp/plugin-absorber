@@ -34,6 +34,12 @@ class StoreTest extends WPTestCase {
 	private const OPTION_NORMALISED = 'give_core_plugin_absorber_notices';
 
 	/**
+	 * An option deliberately written with autoload on, so that "the queue is not in the bundle" is
+	 * read off a bundle that demonstrably holds something.
+	 */
+	private const AUTOLOADED_CONTROL = 'plugin_absorber_autoload_control';
+
+	/**
 	 * The second site the network-scope test reads the queue from, once it has one.
 	 *
 	 * @var int|null
@@ -53,6 +59,7 @@ class StoreTest extends WPTestCase {
 		delete_site_option( self::OPTION );
 		delete_site_option( self::OPTION_WOO );
 		delete_site_option( self::OPTION_NORMALISED );
+		delete_option( self::AUTOLOADED_CONTROL );
 		Config_State::reset();
 		parent::tearDown();
 	}
@@ -186,6 +193,11 @@ class StoreTest extends WPTestCase {
 	/**
 	 * The queue is empty on nearly every request and only ever read in the admin, so it must not
 	 * ride along in the autoloaded bundle on every front-end request.
+	 *
+	 * The control option is what makes the absence mean anything. An `assertNotContains()` over an
+	 * empty bundle passes without the store having done a thing, and goes on passing for ever — so
+	 * an option written with autoload on is looked for first, out of a bundle re-read from the
+	 * database rather than off the cache entry the write above just touched.
 	 */
 	public function test_the_queue_is_not_autoloaded(): void {
 		if ( is_multisite() ) {
@@ -194,7 +206,18 @@ class StoreTest extends WPTestCase {
 
 		( new Store() )->put( 'give-recurring:merge', 'Bundled now.' );
 
-		$this->assertNotContains( self::OPTION, array_keys( wp_load_alloptions() ) );
+		add_option( self::AUTOLOADED_CONTROL, 'Carried on every request.', '', 'yes' );
+
+		wp_cache_delete( 'alloptions', 'options' );
+
+		$autoloaded = array_keys( wp_load_alloptions() );
+
+		$this->assertContains(
+			self::AUTOLOADED_CONTROL,
+			$autoloaded,
+			'The bundle has to carry an autoloaded option, or the queue not being in it says nothing.'
+		);
+		$this->assertNotContains( self::OPTION, $autoloaded );
 	}
 
 	/**

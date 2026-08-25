@@ -19,8 +19,11 @@ namespace Nexcess\PluginAbsorber\Tests\Support\Traits;
  * observe — that the mistake is reported at all, and reported against this library rather than
  * swallowed or blamed on WordPress — is what these assertions pin.
  *
- * The expectation is registered from the report itself, so an unexpected report still fails the test:
- * anything the library reports is recorded here and asserted over.
+ * The expectation is registered from the report itself, but only for a report this library made.
+ * `expect_incorrect_usage()` declares that this library may report a developer mistake and nothing
+ * more, so that is the only thing registered with WPTestCase — a report from anywhere else is left
+ * unexpected and still fails the test. Registering whatever arrived would have handed WordPress's own
+ * protection away on the first report a test did expect, which is most of them.
  *
  * The *message* is recorded alongside the name, because "something was reported" is a weak thing to
  * assert on its own: a failed registry read, a missing hook prefix and the gate a test is actually
@@ -73,14 +76,23 @@ trait WithIncorrectUsage {
 
 		$reports  = &$this->incorrect_usage_reports;
 		$messages = &$this->incorrect_usage_messages;
+		$declared = self::declared_report_prefix();
 
-		$listener = function ( $function_name, $message = '' ) use ( &$reports, &$messages ): void {
+		$listener = function ( $function_name, $message = '' ) use ( &$reports, &$messages, $declared ): void {
 			if ( ! is_string( $function_name ) ) {
 				return;
 			}
 
 			$reports[]  = $function_name;
 			$messages[] = is_string( $message ) ? $message : '';
+
+			// Only what this library reports is what a caller of this trait declared it expects, so
+			// only that is registered with WPTestCase. A report from anywhere else — WordPress's
+			// own, another plugin's, a translation loaded before `init` — stays unexpected and
+			// still fails the test, which is the protection a blanket registration gave away.
+			if ( strpos( $function_name, $declared ) !== 0 ) {
+				return;
+			}
 
 			$this->setExpectedIncorrectUsage( $function_name );
 		};
@@ -104,7 +116,7 @@ trait WithIncorrectUsage {
 
 		foreach ( $this->incorrect_usage_reports as $report ) {
 			$this->assertStringStartsWith(
-				'Nexcess\\PluginAbsorber\\',
+				self::declared_report_prefix(),
 				$report,
 				'The report has to name this library, or the host goes looking in WordPress.'
 			);
@@ -151,6 +163,21 @@ trait WithIncorrectUsage {
 
 		$this->incorrect_usage_reports  = [];
 		$this->incorrect_usage_messages = [];
+	}
+
+	/**
+	 * What a report has to be named for this trait to count it as the one a caller expects.
+	 *
+	 * Every report this library makes carries `__METHOD__`, so its namespace is the whole of the
+	 * declaration `expect_incorrect_usage()` stands for. A method rather than a constant: PHP 7.4
+	 * has no trait constants.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @return string
+	 */
+	private static function declared_report_prefix(): string {
+		return 'Nexcess\\PluginAbsorber\\';
 	}
 
 	/**

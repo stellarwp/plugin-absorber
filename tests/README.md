@@ -11,6 +11,8 @@ slic cc build
 
 slic run unit                     # singlesite
 slic run unit --env multisite     # multisite
+
+composer test:unit                # both legs, singlesite then multisite
 ```
 
 CI runs both envs on PHP 7.4 and 8.5 — the ends of the supported range — against WordPress
@@ -301,6 +303,26 @@ The trait needs `UopzFunctions` on the same class, for the stub.
 a stub really can stop a code path before it reaches `exit`, and that the shared
 helper reports it when one does not.
 
+## An absence needs a control
+
+An assertion that something is *not* there passes just as happily when the place it looked was
+empty, and it goes on passing after the behaviour it was written for stops running. So the same
+read has to be shown holding something first:
+
+```php
+add_option( self::AUTOLOADED_CONTROL, 'Carried on every request.', '', 'yes' );
+
+$autoloaded = array_keys( wp_load_alloptions() );
+
+$this->assertContains( self::AUTOLOADED_CONTROL, $autoloaded );
+$this->assertNotContains( self::OPTION, $autoloaded );
+```
+
+That is the same rule as the recorder one — record calls, assert the list is empty, then invoke the
+stub once and assert it caught it — and it is why `Spy_Writer` records only the notice branches
+something reads back. A recorder no test reads is an invitation to assert it is empty and be told
+nothing, so a counter lands in the same change as the assertion that reads it.
+
 ## Expecting `_doing_it_wrong()`
 
 `setExpectedIncorrectUsage()` matches the first argument exactly, which for a
@@ -320,9 +342,13 @@ $loader->load_all();
 $this->assert_the_library_reported_incorrect_usage();
 ```
 
-An unexpected report still fails the test, because everything the listener sees
-is recorded and asserted to belong to this library. Call
-`stop_expecting_incorrect_usage()` from tearDown.
+An unexpected report still fails the test. `expect_incorrect_usage()` declares
+that *this library* may report a developer mistake and nothing else, so that is
+all the listener registers with WPTestCase: a report named for anything else —
+WordPress's own, another plugin's, a translation loaded before `init` — stays
+unexpected and fails the test as it always did. Registering whatever arrived
+would have given that protection away on the first report a test did expect,
+which is most of them. Call `stop_expecting_incorrect_usage()` from tearDown.
 
 ## The scenario suite
 

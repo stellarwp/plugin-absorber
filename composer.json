@@ -51,7 +51,8 @@
             "phpstan analyse -c phpstan.neon.dist --memory-limit=1G"
         ],
         "test:unit": [
-            "slic run unit"
+            "slic run unit --env singlesite",
+            "slic run unit --env multisite"
         ]
     },
     "config": {

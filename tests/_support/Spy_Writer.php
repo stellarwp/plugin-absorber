@@ -41,25 +41,11 @@ class Spy_Writer implements Writer_Interface {
 	public $merge_notices = [];
 
 	/**
-	 * Slugs handed to queue_conflict_notice(), in order.
-	 *
-	 * @var string[]
-	 */
-	public $conflict_notices = [];
-
-	/**
 	 * Slugs handed to queue_dependency_notice(), in order.
 	 *
 	 * @var string[]
 	 */
 	public $dependency_notices = [];
-
-	/**
-	 * Slugs handed to queue_stranding_notice(), in order.
-	 *
-	 * @var string[]
-	 */
-	public $stranding_notices = [];
 
 	/**
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
@@ -71,12 +57,17 @@ class Spy_Writer implements Writer_Interface {
 	}
 
 	/**
+	 * Recorded nowhere, because nothing reads it: the conflict branch is asserted against the real
+	 * queue's own `slug:conflict` key, in `Conflict\ResolverTest`. A recorder with no reader is a
+	 * standing invitation to assert it is empty and be told nothing at all — so if a test here ever
+	 * needs this call counted, the counter lands in the same change as the assertion that reads it.
+	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
 	 *
 	 * @return void
 	 */
 	public function queue_conflict_notice( Sub_Plugin $sub_plugin ): void {
-		$this->conflict_notices[] = $sub_plugin->get_slug();
+		// Intentionally empty: nothing here reads a conflict counter.
 	}
 
 	/**
@@ -89,12 +80,15 @@ class Spy_Writer implements Writer_Interface {
 	}
 
 	/**
+	 * Recorded nowhere, for the reason given on queue_conflict_notice(): the stranding branch is
+	 * asserted against the real queue's own `slug:stranding` key.
+	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
 	 *
 	 * @return void
 	 */
 	public function queue_stranding_notice( Sub_Plugin $sub_plugin ): void {
-		$this->stranding_notices[] = $sub_plugin->get_slug();
+		// Intentionally empty: nothing here reads a stranding counter.
 	}
 
 	/**

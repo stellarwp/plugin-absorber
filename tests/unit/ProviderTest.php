@@ -16,6 +16,7 @@ use Nexcess\PluginAbsorber\Conflict\Detector;
 use Nexcess\PluginAbsorber\Conflict\Gatekeeper;
 use Nexcess\PluginAbsorber\Conflict\Redirector;
 use Nexcess\PluginAbsorber\Conflict\Resolver;
+use Nexcess\PluginAbsorber\Conflict\Rewriter;
 use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Contracts\Provider_Interface;
 use Nexcess\PluginAbsorber\Loader;
@@ -84,6 +85,11 @@ class ProviderTest extends WPTestCase {
 	 * @return Generator<string,array{0:string,1:class-string}>
 	 */
 	public static function default_bindings(): Generator {
+		// The container's own contract is bound first and by the provider itself, so that a
+		// container which builds unbound classes reflectively can still satisfy a collaborator that
+		// takes one.
+		yield 'the container itself'  => [ ContainerInterface::class, Test_Container::class ];
+
 		yield 'the registrar'         => [ Registrar_Interface::class, Registrar::class ];
 		yield 'the registry reader'   => [ Reader::class, Reader::class ];
 		yield 'the notice writer'     => [ Writer_Interface::class, Writer::class ];
@@ -97,8 +103,22 @@ class ProviderTest extends WPTestCase {
 		yield 'the conflict detector' => [ Detector::class, Detector::class ];
 		yield 'the redirector'        => [ Redirector::class, Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class, Gatekeeper::class ];
+		yield 'the error rewriter'    => [ Rewriter::class, Rewriter::class ];
 		yield 'the load runner'       => [ Loader::class, Loader::class ];
 		yield 'the boot scheduler'    => [ Scheduler::class, Scheduler::class ];
+	}
+
+	/**
+	 * `instanceof` is not enough for this one id. Every other binding is answered by a class the
+	 * library names, so building the wrong object means building the wrong class — but a second
+	 * container of the same class is exactly what a self-binding gets wrong, and it satisfies the
+	 * type. What the collaborators taking one need is *this* container: another instance holds none
+	 * of the bindings the provider just made, and every id resolved through it fails.
+	 */
+	public function test_it_binds_the_container_under_its_own_contract(): void {
+		$container = $this->registered_container();
+
+		$this->assertSame( $container, $container->get( ContainerInterface::class ) );
 	}
 
 	/**
@@ -131,6 +151,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the conflict detector' => [ Detector::class ];
 		yield 'the redirector'        => [ Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class ];
+		yield 'the error rewriter'    => [ Rewriter::class ];
 		yield 'the load runner'       => [ Loader::class ];
 		yield 'the boot scheduler'    => [ Scheduler::class ];
 	}
@@ -168,6 +189,7 @@ class ProviderTest extends WPTestCase {
 		yield 'the conflict detector' => [ Detector::class ];
 		yield 'the redirector'        => [ Redirector::class ];
 		yield 'the conflict gate'     => [ Gatekeeper::class ];
+		yield 'the error rewriter'    => [ Rewriter::class ];
 		yield 'the load runner'       => [ Loader::class ];
 		yield 'the boot scheduler'    => [ Scheduler::class ];
 	}
@@ -229,19 +251,17 @@ class ProviderTest extends WPTestCase {
 	}
 
 	/**
-	 * A container with the defaults registered into it, plus the self-binding a host container
-	 * ordinarily offers.
+	 * A container with the defaults registered into it, and nothing else.
+	 *
+	 * It used to arrive carrying the self-binding a host container ordinarily offers, which meant
+	 * the one binding the provider makes first was the one binding nothing here ever exercised:
+	 * `bind_once()` sees an id already answered and stands down, so a provider that had dropped its
+	 * own would have resolved out of the helper and passed.
 	 *
 	 * @return Test_Container
 	 */
 	private function registered_container(): Test_Container {
 		$container = new Test_Container();
-		$container->singleton(
-			ContainerInterface::class,
-			static function () use ( $container ): ContainerInterface {
-				return $container;
-			}
-		);
 
 		( new Provider( $container ) )->register();
 
