@@ -37,9 +37,10 @@ sub-plugin you veto is invisible to it: no standalone is deactivated to make roo
 that is not going to load. So the filter may be asked more than once in a request, and it has to
 *decide* rather than do — no logging, no counters, no writes.
 
-A filter added later than priority 5 is too late for the conflict pass, which has already run. For a
-sub-plugin with a `standalone_plugin_basename`, put the toggle in the `enabled`
-[config key](configuration.md) instead: both passes read it, whenever it is set.
+Whether the conflict pass sees your callback turns on when you call `add_filter()`, not on the
+priority you give the callback: one registered after `plugins_loaded` priority 5 has missed that
+pass whatever its own priority. For a sub-plugin with a `standalone_plugin_basename`, put the toggle
+in the `enabled` [config key](configuration.md) instead: both passes read it, whenever it is set.
 
 **Watch the polarity when you wire an existing gate to this one.** `should_load` is true means *do
 load*. A host filter named for the opposite — LearnDash's `learndash_module_{x}_disabled`, where
