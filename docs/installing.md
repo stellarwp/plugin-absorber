@@ -42,8 +42,10 @@ git fetch --no-tags old-repo
 
 # Nest every top-level entry it tracks, so it shares no path with the host.
 git switch -c old-repo-import old-repo/main
-mkdir -p sub-plugins/give-recurring
-git ls-tree --name-only -z HEAD | xargs -0 -I{} git mv {} sub-plugins/give-recurring/
+mkdir __absorb-import
+git ls-tree --name-only -z HEAD | xargs -0 -I{} git mv {} __absorb-import/
+mkdir -p sub-plugins
+git mv __absorb-import sub-plugins/give-recurring
 git commit -m "Move Give Recurring under sub-plugins/give-recurring"
 
 # Nothing overlaps now, so this merge has nothing to conflict over.
@@ -60,6 +62,13 @@ git branch -d old-repo-import
 *your* repository root, conflicting with the files of the same name and adding the ones with no
 counterpart. `git ls-tree` moves whatever the standalone tracks, which a hand-written list of paths
 will not.
+
+**The staging directory keeps the destination out of the tree being moved.** That move runs against
+the standalone's own checkout, so a destination like `includes/notifications` lands under an
+`includes/` the standalone tracks itself, and git will not move a directory into itself. Only that
+one entry fails while every other one succeeds, so the error scrolls past in a screen of moves that
+worked. Setting the whole tree aside under a name nothing uses, then renaming it into place once,
+does not care where the destination sits.
 
 **`--no-tags`.** A plain fetch also takes any tag reachable from what it downloads. The standalone's
 `1.1.0` then sits among your own releases, while a `1.0.0` you already have silently does not import
