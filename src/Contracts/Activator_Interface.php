@@ -14,8 +14,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * Runs a sub-plugin's activation routine once, ever.
  *
  * A bundled plugin is `require_once`d rather than activated, so `register_activation_hook()` never
- * fires for it and whatever that hook would have done — creating a table, seeding options — never
- * happens. Bind a replacement to change how "once, ever" is recorded.
+ * fires for it. Bind a replacement to change how "once, ever" is recorded.
  *
  * @since 1.0.0
  */

@@ -27,20 +27,11 @@ class Deactivator implements Deactivator_Interface {
 	public function deactivate( string $basename ): void {
 		$this->load_plugin_functions();
 
-		// Silent, and with no $network_wide argument.
-		//
-		// Silent because this is an unattended deactivation, and the standalone's own deactivation
-		// hook has already been registered this request. Running it at plugins_loaded means a
-		// routine flush_rewrite_rules() in that callback regenerates the rules before init has
-		// registered a single post type, and every custom permalink on the site starts 404ing.
-		// WordPress core makes the same call: its interactive paths are noisy, its automatic ones
-		// -- validate_active_plugins(), the plugin upgrader -- are silent.
-		//
-		// The $network_wide default is null, not false, and null is the value that handles both
-		// scopes. WordPress core enters the network branch on `false !== $network_wide` and the
-		// blog branch on `true !== $network_wide`, so null takes both. A computed true would skip
-		// the blog branch, stranding an entry for a plugin that is active in both, which then takes
-		// a second request and a second deactivation hook to clear.
+		// Silent, because a flush_rewrite_rules() in the standalone's deactivation hook runs here
+		// at plugins_loaded and regenerates the rules before init has registered a post type,
+		// 404ing every custom permalink. And no $network_wide argument: its null default enters
+		// both of core's branches, where a computed true would skip the blog one and strand an
+		// entry for a plugin active in both.
 		deactivate_plugins( $basename, true );
 	}
 }

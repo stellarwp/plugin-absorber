@@ -14,23 +14,9 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
 /**
  * Rewrites the fatal-error screen an absorbed standalone earns when someone activates it.
  *
- * This is the one conflict the load guard cannot prevent. WordPress includes the plugin being
- * activated *after* the bundled copy is in memory, so the re-declaration is a real fatal; core
- * catches it in its activation sandbox and reports "the plugin triggered a fatal error" — true, and
- * useless to whoever pressed the button. All this library gets to do about it is reword that one
- * sentence, and the wording is the sub-plugin's own `conflict_notice_message`.
- *
- * Its own class rather than a method on the notice writer, though the message is shared with the
- * merge notice. Nothing here is stored, drawn or queued: it reads the request, checks the screen,
- * verifies a nonce and edits markup core wrote. The writer would have needed a registry to find out
- * which sub-plugin the screen is even about — a collaborator only that one method used — and every
- * host binding its own `Notices\Contracts\Writer_Interface` would have had to implement an error
- * screen to get its notices worded.
- *
- * In `Conflict\` rather than `Notices\` for the same reason: what it is about is the standalone
- * conflict, and it changes when that story does, alongside `Detector`, `Resolver` and `Redirector`.
- *
- * Not `final`: it is bound by class name, which is the seam a host rebinds and a test subclasses.
+ * The one conflict the load guard cannot prevent: core includes the plugin being activated *after*
+ * the bundled copy, so the re-declaration really does fatal and all this can do is reword core's
+ * sentence, with the sub-plugin's own `conflict_notice_message`. Not `final`: bound by class name.
  *
  * @since 1.0.0
  */
@@ -54,8 +40,8 @@ class Rewriter {
 	/**
 	 * The markup to print in place of the one WordPress was about to.
 	 *
-	 * Handed back untouched unless the request really is a nonce-verified activation error, on a
-	 * plugins screen, for a standalone this library has registered.
+	 * Handed back untouched unless the request is a nonce-verified activation error, on a plugins
+	 * screen, for a standalone this library has registered.
 	 *
 	 * @since 1.0.0
 	 *
@@ -72,37 +58,25 @@ class Rewriter {
 
 		$screen = get_current_screen();
 
-		// Both plugin lists, because wp-admin/network/plugins.php is a one-line require of
-		// wp-admin/plugins.php and draws the identical activation error -- but WP_Screen appends
-		// `-network` to the id there. On a default multisite the subsite has no plugins UI at all,
-		// so the network screen is the *only* place a super admin can reactivate the standalone,
-		// and matching 'plugins' alone would decline on the one screen that matters most.
+		// Both plugin lists: wp-admin/network/plugins.php is a one-line require of the other, but
+		// WP_Screen appends `-network` to the id there -- and on a default multisite it is the only
+		// screen an absorbed standalone can be reactivated from.
 		if ( $screen === null || ! in_array( $screen->id, [ 'plugins', 'plugins-network' ], true ) ) {
 			return $markup;
 		}
 
-		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- verified below, once
-		// the plugin named turns out to be one this library owns. Nothing is acted on until then.
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- verified below, before
+		// anything is acted on.
 		$basename = isset( $_GET['plugin'] ) ? wp_unslash( $_GET['plugin'] ) : '';
 
-		// Unslashed and no further. Core mints the activation-error nonce from
-		// wp_unslash( $_REQUEST['plugin'] ) verbatim (wp-admin/plugins.php), so sanitizing here
-		// would verify an action core never signed: a plugin whose folder name holds a '%xx'
-		// sequence, a '<' or a leading space comes back changed from sanitize_text_field(), and
-		// both the nonce check and the registry lookup below would then miss -- silently, and on
-		// the one screen this class exists to improve. Nothing sanitizing would remove is needed
-		// here either: the value is compared against a basename the host configured and hashed into
-		// a nonce action, and never reaches the page. What does reach it is the sub-plugin's message.
-		//
-		// is_string() because sanitize_text_field() was doing that job: '?plugin[]=x' arrives as an
-		// array, and an array reaching wp_verify_nonce() is a string conversion, not a refusal.
+		// Unslashed and no further: core mints the nonce from the unslashed value verbatim, so
+		// sanitizing a folder name holding a '%xx' sequence would make both the nonce check and the
+		// registry lookup miss, silently. is_string() because '?plugin[]=x' arrives as an array.
 		if ( ! is_string( $basename ) || $basename === '' ) {
 			return $markup;
 		}
 
-		// Looked up before the nonce is checked, deliberately: there is no nonce work to do for a
-		// plugin this library does not own, and the nonce is still verified before any markup is
-		// touched.
+		// Looked up first: there is no nonce work to do for a plugin this library does not own.
 		$sub_plugin = $this->find_by_standalone_basename( $basename );
 
 		if ( $sub_plugin === null ) {
@@ -126,11 +100,8 @@ class Rewriter {
 			)
 		);
 
-		// Sanitised before the emptiness check rather than after. wp_kses_post( '<script></script>' )
-		// is the empty string, and swapping WordPress's wording for nothing leaves a blank notice
-		// box where the explanation should be. wp_kses_post() and not esc_html(), for the reason
-		// the renderer uses it: these messages come from the host's own config, and a link to a
-		// knowledge-base article has to survive.
+		// Sanitised before the emptiness check rather than after: wp_kses_post( '<script></script>' )
+		// is the empty string, and swapping core's wording for nothing leaves a blank notice box.
 		$message = trim( wp_kses_post( $message ) );
 
 		if ( $message === '' ) {
@@ -146,10 +117,8 @@ class Rewriter {
 	/**
 	 * The registered sub-plugin a standalone basename belongs to, if any.
 	 *
-	 * Read through the reader this class was handed rather than a registrar of its own, for the
-	 * reason the conflict and load passes do: the reader drains the registrations still buffered
-	 * before it reads, and a registrar asked directly would miss anything registered since the last
-	 * read.
+	 * Read through the reader rather than a registrar of its own: it drains the buffered
+	 * registrations first.
 	 *
 	 * @since 1.0.0
 	 *

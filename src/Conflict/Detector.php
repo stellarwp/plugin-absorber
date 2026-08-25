@@ -17,19 +17,9 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
 /**
  * Whether a bundled sub-plugin's standalone counterpart is still active.
  *
- * Its own class because detection is asked for on its own: the conflict step needs something cheap
- * to ask between the request gate and the capability gate, so that `current_user_can()` — which
- * pins the current user for the rest of the request — is never reached on a request with nothing to
- * resolve. Answering that from `Resolver_Interface` would put a detection query on the contract of
- * every host that binds its own resolver, and give the resolver two reasons to change: how a
- * conflict is found, and what to do about one.
- *
- * Nothing here leaves a mark on the request. Nothing resolves a user,
- * deactivates a plugin or queues a notice — an answer is all a caller gets, and the acting is the
- * resolver's. The one thing either of them writes is a report to the developer about a bootstrap
- * that cannot be right, which changes nothing on the site and is addressed to nobody on it.
- *
- * Not `final`: it is bound by class name, which is the seam a host rebinds and a test subclasses.
+ * Its own class so the conflict step has something cheap to ask before `current_user_can()`, which
+ * pins the current user for the rest of the request. It changes no plugin's activation state. Not
+ * `final`: it is bound by class name, the seam a host rebinds and a test subclasses.
  *
  * @since 1.0.0
  */
@@ -73,8 +63,8 @@ class Detector {
 	/**
 	 * Whether any registered sub-plugin's standalone counterpart is currently active.
 	 *
-	 * Short-circuits on the first one found: the caller only needs to know whether the rest of the
-	 * conflict step is worth entering, and the resolver walks the whole registry again anyway.
+	 * Short-circuits: the caller only needs to know whether the rest of the conflict step is worth
+	 * entering.
 	 *
 	 * @since 1.0.0
 	 *
@@ -83,9 +73,7 @@ class Detector {
 	 * @return bool
 	 */
 	public function has_conflict(): bool {
-		// The reader rather than a registrar of our own: it drains the registrations still buffered
-		// on the facade before it reads, and a registrar asked directly would miss anything
-		// registered since the last read.
+		// The reader rather than a registrar of our own: it drains the buffered registrations first.
 		foreach ( $this->registry->all() as $sub_plugin ) {
 			if ( $this->is_in_conflict( $sub_plugin ) ) {
 				return true;
@@ -98,8 +86,8 @@ class Detector {
 	/**
 	 * Whether this sub-plugin's standalone counterpart is active and ours to act on.
 	 *
-	 * Policy is not consulted: a sub-plugin set to defer is still in conflict, and the resolver is
-	 * where the decision to leave it alone belongs.
+	 * Policy is not consulted: a sub-plugin set to defer is still in conflict, and leaving it alone
+	 * is the resolver's decision.
 	 *
 	 * The `should_load` filter is, and it is the one piece of host code this class reads. It decides
 	 * whether the bundled copy will be in memory at all, one priority behind this — so a sub-plugin
@@ -143,16 +131,9 @@ class Detector {
 	/**
 	 * Whether deactivating this standalone would strand sites the bundled copy will never reach.
 	 *
-	 * `deactivate_plugins()` takes a network-active standalone out of *every* site's plugins, but the
-	 * bundled copy only loads where the host plugin runs. So on the one topology of a network-active
-	 * standalone whose host is not itself network-active, a network-wide deactivation removes it from
-	 * the sites the host never loads on, where nothing stands in for it. The resolver reads this and
-	 * declines, leaving the load guard to defer the bundled copy network-wide instead.
-	 *
-	 * Opt-in, and cheap in the common case: with no host basename configured the guard stands down on
-	 * a single string compare, before any option is read. It needs no `is_multisite()` test either --
-	 * `Checker_Interface::is_network_active()` is `false` off a network, so the whole predicate is
-	 * `false` on a single site.
+	 * `deactivate_plugins()` pulls a network-active standalone from *every* site, while the bundled
+	 * copy loads only where the host does -- so a network-active standalone under a host that is not
+	 * network-active leaves those sites with nothing. False off a network: `is_network_active()` is.
 	 *
 	 * The basename itself is checked against the installed plugins on the way past, because a name no
 	 * plugin answers to answers "not network-active" for ever, and that is indistinguishable from the

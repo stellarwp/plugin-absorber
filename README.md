@@ -41,15 +41,15 @@ you already hand to Telemetry or Uplink.
 
 If your plugin can run on multisite, add
 `Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )`. It is a no-op off a network, so set
-it unconditionally: where it matters is the one topology the library must not deactivate a standalone
-in — a network-active standalone whose host plugin is not itself network-activated, where a
-network-wide deactivation would leave the network's other sites with no copy of it at all.
+it unconditionally: it stops the library deactivating a network-active standalone when your host
+plugin is not itself network-activated, which would leave the network's other sites with no copy of
+it at all.
 
-**Keep the `, 0`.** Anything below `plugins_loaded` priority 5 wires cleanly, but priority 0 is the
-recommendation, in the block that owns your container rather than in a service provider. Booting at 5
-or later still works and is reported through `_doing_it_wrong()`, with the whole sequence running
-inline instead. [Configuration][configuration] explains both, and closes with a complete bootstrap —
-two sub-plugins, every optional key.
+**Keep the `, 0`.** Anything below `plugins_loaded` priority 5 wires cleanly; priority 0, in the
+block that owns your container rather than a service provider, is the recommendation. Booting at 5
+or later still works, with the whole sequence running inline and reported through
+`_doing_it_wrong()`. [Configuration][configuration] explains both, and closes with a complete
+bootstrap — two sub-plugins, every optional key.
 
 ## Docs
 
@@ -65,15 +65,15 @@ two sub-plugins, every optional key.
 - [Tests][tests] — running the suite, the fixtures and traits it offers, and every scenario it drives
   the library through.
 
-`docs/` and `tests/` are both `export-ignore`d, so neither is in a vendored copy of this library —
-these point at the repository rather than at a path that would be missing beside the installed
-source.
+`docs/` and `tests/` are both `export-ignore`d, so neither ships in a vendored copy — these links
+point at the repository rather than at paths that would be missing beside the installed source.
 
 [installing]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/installing.md
 [configuration]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/configuration.md
 [recipes]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/recipes.md
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
+[actions]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/actions.md
 [notices]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/notices.md
 [extending]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/extending.md
 [tests]: https://github.com/stellarwp/plugin-absorber/blob/main/tests/README.md
