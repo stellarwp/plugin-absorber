@@ -53,6 +53,13 @@ final class Absorber {
 	 * disagree, one of them against the contract `Registrar_Interface::all()` states, and neither
 	 * would say so.
 	 *
+	 * Two resolutions, and not two registrars: every binding `Provider` makes is a singleton, so the
+	 * instance handed back here is the one `Registry\Reader` was constructed with and the one
+	 * `flush()` drains into. A host that binds `Registrar_Interface` transiently breaks that — and
+	 * the answer is still not to drain into the instance resolved here, which would empty the buffer
+	 * into an object nothing else holds and leave `all()`, the load pass and the conflict pass
+	 * reading a registrar those registrations never reached.
+	 *
 	 * Drained *after* the binding has been resolved and checked, not before. `Registry\Reader` takes
 	 * a registrar as a constructor argument, so a registrar bound to the wrong class is a reader
 	 * that cannot be built either — and a drain in front would report the reader, a collaborator the
