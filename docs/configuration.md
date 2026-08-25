@@ -108,6 +108,13 @@ for it. Whatever that hook would have done — create a table, seed options — 
 },
 ```
 
+**The wrapper is load-bearing, not decoration.** Like every callable key, `activation_callback` is
+checked with `is_callable()` at registration — which happens before the bundled plugin has been
+`require_once`d, so before `Give\Recurring\Install` exists. `[ Install::class, 'create_tables' ]`
+fails that check and throws `Config_Exception`, on a class that would have been perfectly loadable by
+the time the callback ran. A closure is callable the moment it is written and names the class only
+when the load pass calls it, with the plugin's code already in memory.
+
 It runs once ever per slug, is passed the `Sub_Plugin`, and only after a require that actually
 happened — never for a sub-plugin whose load was skipped. The record lives in the
 `{option_prefix}_plugin_absorber_activations` option, a network option on multisite, and is
@@ -119,8 +126,11 @@ callback runs, and the record is written, so two first requests arriving togethe
 the check. A `dbDelta()` migration survives that; a blind `INSERT` of seed rows does not.
 
 One record for the network is also one *run* for the network, in whichever site's request
-reached the load pass first. Per-site work — a `$wpdb->prefix` table, a per-site option — is
-yours to loop over: see [Do per-site work on multisite](recipes.md#do-per-site-work-on-multisite).
+reached the load pass first. A site created on the network **after** that run never gets the
+callback at all: the record is already set, and nothing re-reads it per site. Per-site work — a
+`$wpdb->prefix` table, a per-site option — is yours to loop over, and a site created later is yours
+to catch on `wp_initialize_site`: see
+[Do per-site work on multisite](recipes.md#do-per-site-work-on-multisite).
 
 ## What changes for the bundled plugin
 

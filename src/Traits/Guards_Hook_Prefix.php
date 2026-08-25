@@ -13,9 +13,11 @@ use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 /**
  * Turns "no hook prefix has been set" into something a developer sees and a request survives.
  *
- * Both of this library's hook callbacks need the prefix — one for the should_load filter, the
- * other for the option the notice queue lives in — and both are reached from a core action, where
- * throwing would take the whole site down over a bootstrap mistake. A trait rather than a shared
+ * Every entry point this library puts on a hook needs the prefix — it names the should_load filter,
+ * the conflict and notice filters, and the option the notice queue lives in — and every one of them
+ * is reached from a core hook, where throwing would take the whole site down over a bootstrap
+ * mistake. So the load pass, the conflict pass, the gatekeeper and both of the facade's admin
+ * trampolines ask this first and stand down when the answer is no. A trait rather than a shared
  * collaborator because the answer comes from `Config` either way; all that is shared is how the
  * mistake is reported.
  *

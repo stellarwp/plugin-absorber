@@ -56,6 +56,11 @@ class Activator implements Activator_Interface {
 	 * activation that follows a network-wide merge has to be recorded network-wide too, or every
 	 * site in the network runs the callback again.
 	 *
+	 * The other end of that is the accepted cost: a site created on the network afterwards finds the
+	 * record already set and never runs the callback at all. One run for the network is what this
+	 * default promises, and per-site work belongs on a host's own new-site hook, or in an
+	 * `Activator_Interface` of its own that records per site.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @throws Config_Exception When no hook prefix has been set.

@@ -29,7 +29,7 @@ interface Resolver_Interface {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return void
 	 */

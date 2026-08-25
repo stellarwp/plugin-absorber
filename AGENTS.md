@@ -71,8 +71,8 @@ A two-class static facade — `Config` (hook prefix, container, and optionally t
 basename) and `Absorber` (register/boot, plus accessors) — matching the shape of
 `stellarwp/assets` and `stellarwp/admin-notices`. Everything else is an implementation detail
 behind it. `Absorber` is
-`final`: every member is private static and every internal call is `self::`, so a subclass could
-override nothing and would silently change nothing.
+`final`: every member is static, the only property and the only helper are private, and every
+internal call is `self::`, so a subclass could override nothing and would silently change nothing.
 
 ### Collaborators
 
@@ -90,10 +90,11 @@ seams a host may rebind:
 
 The rest — `Boot\Scheduler`, `Loader`, `Registry\Reader`, `Conflict\Detector`, `Conflict\Gatekeeper`,
 `Conflict\Redirector`, `Conflict\Rewriter`, `Notices\Store`, `Notices\Renderer`, `Notices\Presenter` —
-are bound as concrete classes. A host that wants one of them different rebinds the class name; there
-is no interface because nothing in the library dispatches on one. `Provider` also binds the container
-under `ContainerInterface::class`, first and before anything else, so that a container which builds
-unbound classes reflectively can still satisfy the collaborators that take one.
+are bound as concrete classes. A host that wants one of them different rebinds the class name **after
+`boot()`**, for the reason `bind_once()` gives below; there is no interface because nothing in the
+library dispatches on one. `Provider` also binds the container under `ContainerInterface::class`,
+first and before anything else, so that a container which builds unbound classes reflectively can
+still satisfy the collaborators that take one.
 
 An interface belonging to a folder-scoped concern lives in that folder's `Contracts\`, not beside its
 implementation and not in the top-level `src/Contracts/`. What is left in `src/Contracts/` is the
@@ -144,16 +145,24 @@ floor ever reaches 8.3 *and* something needs `when()`/`needs()` — not before.
 fatal `TypeError` in practice, because di52 type-hints its own `ServiceProvider` base class which
 Foundation's abstract does not extend.
 
-**`Provider` never overwrites a binding.** It binds only what the container does not already have, so
-a host that bound its own implementation wins, and the order in which the host calls
-`set_container()` and `boot()` stops deciding which implementation it gets. Everything is a
-singleton: each binding is either a registry whose contents are the point — a second `Registry\Registrar`
-would hold a second, emptier list — or a stateless worker with nothing to gain from a second copy.
+**`Provider` never overwrites an *interface* binding.** `bind_once()` stands down on
+`! class_exists( $id ) && $this->container->has( $id )`, so the guarantee covers the seven interface
+ids and not the ten class-name ones, which are re-bound unconditionally. That is deliberate:
+`has()` means "can return an entry", not "the host bound this" — di52 answers it with `isBound() ||
+class_exists()` — so for a class id it is already true before anything is bound, and dropping the
+`class_exists()` half would stand down every concrete binding, the explicit factories included,
+leaving those collaborators autowired where the container autowires, broken where it does not, and
+singletons nowhere. What it costs is that a host replacing one of the concrete workers has to bind
+after `boot()`; the interface seams, which are the ones a host is invited to replace, win whenever
+they are bound. Everything is a singleton: each binding is either a registry whose contents are the
+point — a second `Registry\Registrar` would hold a second, emptier list — or a stateless worker with
+nothing to gain from a second copy.
 
 The container is **never** used to wire hooks, and the reason is no longer that it is optional.
 `Boot\Scheduler` wires callbacks that resolve *inside* the callback — a closure over the container,
-or a static trampoline reading `Absorber::notices()` — so wiring instantiates nothing, a host may
-rebind right up until the hook fires, and a request that reaches none of them builds none of them.
+or a static trampoline on `Absorber` that resolves `Notices\Presenter` or `Conflict\Rewriter` when it
+fires — so wiring instantiates nothing, a host may rebind right up until the hook fires, and a
+request that reaches none of them builds none of them.
 `$container->callback()` reads better and is what the hand-rolled copies in `learndash-core` use, but
 it is di52-only: `stellarwp/container-contract` declares `bind`, `get`, `has` and `singleton`, and
 nothing else. `[ $resolved_object, 'method' ]` is the other wrong answer — it forces every
@@ -163,8 +172,11 @@ collaborator to be built at boot.
 delegations to `$container->get()`, so what a host calls is unchanged; what changed is that a *collaborator* now
 depends on the peer it was handed rather than on the facade.
 
-**Nothing but `Absorber` names `Absorber`.** The registration buffer belongs to `Registry\Reader`,
-which is also what reads it back out: `Absorber::register()` pushes a `Sub_Plugin` into it and
+**No collaborator reaches the registry through `Absorber`.** The rule is about the registration
+buffer, not about the name: `Boot\Scheduler` spells `Absorber::class` three lines in, because the two
+admin hooks are wired as `[ Absorber::class, … ]` pairs and the name is what `remove_filter()` needs
+to reach. The registration buffer belongs to `Registry\Reader`, which is also what reads it back
+out: `Absorber::register()` pushes a `Sub_Plugin` into it and
 `Absorber::all()` delegates to it, while `Conflict\Detector`, `Conflict\Resolver` and `Loader` are
 each handed one. The buffer is static because it must be — `register()` is a static call a host makes
 at plugin-file scope, before there is a container to resolve a registrar from — and what is decided
@@ -356,6 +368,16 @@ capability gate covers every policy, not just the destructive one, and that is f
 branches only queue a notice, and `Notices\Presenter::render()` refuses to render *or clear* for a user
 without the same capability, so queuing earlier would only park it until a capable admin arrives.
 
+**That ordering covers the no-conflict case and only that, and the rest is known and not fixed.** A
+site that *is* in conflict stays in conflict until a capable admin opens a plain admin screen — days,
+on a site nobody administers in a browser — and every admin GET in between reaches
+`current_user_can()` at `plugins_loaded` priority 5, ahead of an SSO or JWT plugin that adds
+`determine_current_user` from its own `plugins_loaded` callback. There is no earlier answer available:
+nothing may deactivate a plugin on a user's behalf without first asking what that user is allowed to
+do. A host that hits it adds its `determine_current_user` filter at plugin-file scope instead. What
+does *not* happen is a bounce to `wp-login.php` — `auth_redirect()` reads `wp_validate_auth_cookie()`
+directly rather than the cached user.
+
 An unknown policy is normalised to `NOTICE_ONLY` through `Conflict_Policy::is_valid()` before the
 switch, never decided by wherever a `switch` happens to fall through — a typo like `'defered'` would
 otherwise deactivate a plugin the site owner deliberately turned on. The `default:` branch that
@@ -545,10 +567,15 @@ against real WordPress state. `Bootstrap_Test_Case.php` is the abstract parent o
 - **Notice messages are rendered through `wp_kses_post()`, not escaped.** They come from the host's
   own config or filter, never from user input, so a knowledge-base link survives. Tightening this to
   `esc_html()` after 1.0 would break every host that shipped one.
-- **A configured string is never called; every other callable form is.** A string function name is
-  indistinguishable from a string value, so honouring it would make the result depend on what else
-  the site loaded — `date`, `flush` and `key` are all real functions and plausible values. Closures,
-  `[ class, method ]` pairs and invokable objects say "call me" and nothing else.
+- **On a key that also takes a string, a configured string is never called; every other callable
+  form is.** That is `conflict_policy` and the two message keys — the three
+  `Sub_Plugin::resolve_deferred()` reads, and the only three the rule was ever about. There a string
+  function name is indistinguishable from a string value, so honouring it would make the result
+  depend on what else the site loaded — `date`, `flush` and `key` are all real functions and
+  plausible values. Closures, `[ class, method ]` pairs and invokable objects say "call me" and
+  nothing else. `enabled`, `dependency_check` and `activation_callback` take no string at all, so
+  nothing under them is ambiguous: a plain function name there is called, deliberately, and
+  `SubPluginTest` pins that.
 - **`conflict_notice_message` and `dependency_notice_message` reject a string outright.** Not just
   string callables — any string. A config array is built before `init`, so a translated string under
   one of these can only have been produced too early, and nothing in the value distinguishes it from

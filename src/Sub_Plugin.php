@@ -10,11 +10,15 @@ namespace Nexcess\PluginAbsorber;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 
 /**
- * One registered sub-plugin: its configuration, and the answers that configuration alone decides.
+ * One registered sub-plugin: its configuration, and every answer it can give without a
+ * container-bound collaborator.
  *
- * Deliberately not a window onto WordPress. Asking whether the standalone counterpart is active is
- * a question about the site rather than about this configuration, and it belongs to
- * Checker_Interface; this object only names the plugin to ask about.
+ * Not the same as "configuration alone". is_already_loaded() reads the global constant table, and a
+ * callable under `enabled` may query whatever the host likes. The line drawn here is dependency
+ * direction: asking whether the standalone counterpart is active needs Checker_Interface, and
+ * resolving one would put a container read in front of Absorber::register(), which deliberately
+ * performs none so that the container may arrive at any point before boot. This object only names
+ * the plugin to ask about.
  *
  * @since 1.0.0
  *
