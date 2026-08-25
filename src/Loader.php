@@ -171,8 +171,8 @@ class Loader {
 			return;
 		}
 
-		// No type guard on the return: there is no cast here, so anything odd is merely falsy and
-		// skips the load, which is the safe direction.
+		// Truthiness, not a cast: only a falsy return vetoes, so an array or an object here loads
+		// rather than fataling on the way to a string.
 		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
 
 		if ( ! $should_load ) {
@@ -208,8 +208,9 @@ class Loader {
 		}
 
 		// Last, and only after a require that happened: register_activation_hook() never fires for
-		// an included plugin, so this stands in for it with the sub-plugin's code in memory, and a
-		// skipped load would spend the once-ever record for good.
+		// an included plugin, so this stands in for it with the sub-plugin's code in memory, and
+		// creating its tables for code that is not loaded would spend the once-ever record before
+		// the first real load.
 		$this->activator->maybe_run( $sub_plugin );
 
 		// Behind the activation callback, not in front of it. A listener here is host code that will

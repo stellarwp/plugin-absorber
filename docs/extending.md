@@ -5,8 +5,9 @@ any one piece can be swapped on its own. This is the one doc that names those cl
 
 ## The seams
 
-Bind any of these ids before or after `Absorber::boot()` — boot binds the defaults and skips an
-*interface* your container already answers for, so your binding wins either way:
+Bind any of these interface ids before or after `Absorber::boot()` — boot binds the defaults and
+skips an interface your container already answers for, so your binding wins either way;
+[class-name ids are different](#class-name-bindings-must-come-after-boot):
 
 ```php
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;

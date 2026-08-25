@@ -18,8 +18,8 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * Whether a bundled sub-plugin's standalone counterpart is still active.
  *
  * Its own class so the conflict step has something cheap to ask before `current_user_can()`, which
- * pins the current user for the rest of the request. Everything here only reports. Not `final`: it
- * is bound by class name, the seam a host rebinds and a test subclasses.
+ * pins the current user for the rest of the request. It changes no plugin's activation state. Not
+ * `final`: it is bound by class name, the seam a host rebinds and a test subclasses.
  *
  * @since 1.0.0
  */

@@ -111,9 +111,9 @@ if ( ! defined( 'GIVE_RECURRING_VERSION' ) ) {
 }
 ```
 
-A standalone that defines it from a bootstrap hooked at `plugins_loaded` or later has not defined it
-when the guard is read, so the bundled copy loads on top of it. One that never defines the name is
-never stood down at all —
+The guard is read on `plugins_loaded` at priority 6, so a standalone defining it from a bootstrap
+hooked below that is still seen in time; one hooked at 6 or later is not, and the bundled copy loads
+on top of it. One that never defines the name is never stood down at all —
 [an included recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is a worked example.
 
 ## Reactivating the standalone

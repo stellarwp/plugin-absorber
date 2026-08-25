@@ -41,7 +41,8 @@ class Scheduler {
 	 *
 	 * A surviving standalone defines the guard constant as it loads and the load pass has to see
 	 * that. Also the number a host is measured against, being the first step in the sequence — 5
-	 * rather than 1 because hosts already wire Harbor's `set_container()` at priority 1.
+	 * rather than 1 because LearnDash and MemberDash already wire Harbor's `set_container()` at
+	 * priority 1, so a host copying that habit would land on the barrier.
 	 *
 	 * @since 1.0.0
 	 *
