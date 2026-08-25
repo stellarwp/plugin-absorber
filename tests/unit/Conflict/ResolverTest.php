@@ -511,8 +511,21 @@ class ResolverTest extends WPTestCase {
 	 * Nothing exotic is required to get here: a site or mu-plugin filtering `option_active_plugins`
 	 * puts the standalone straight back into the active list, which is a pattern `learndash-core`
 	 * itself uses.
+	 *
+	 * And the merge notice is the other half. "We deactivated it for you" is a claim the owner can
+	 * disprove by looking at the plugins list the notice is drawn above, and it is re-queued on every
+	 * admin GET for as long as the standalone keeps coming back — so the one sentence this library
+	 * says about a conflict has to wait until the re-check says there is a merge to report.
+	 *
+	 * Nothing is reported to the developer either, and the silence is deliberate: the standalone is
+	 * running, so its own guard constant stands the bundled copy down and nothing re-declares. Every
+	 * way to get here is a site's own configuration rather than a mistake in the host's code, and the
+	 * conflict is re-detected on every admin GET — a report would be the same sentence on every screen
+	 * of a debugging site, for a site behaving as its owner set it up to. That is covered without an
+	 * assertion of its own: WPTestCase fails a test that receives a `_doing_it_wrong()` it never said
+	 * to expect.
 	 */
-	public function test_a_standalone_that_survives_deactivation_does_not_redirect(): void {
+	public function test_a_standalone_that_survives_deactivation_neither_redirects_nor_reports_a_merge(): void {
 		$this->standalone_is( true );
 		$this->standalone_survives_deactivation( 'give-recurring/give-recurring.php' );
 		$this->register();
@@ -520,12 +533,13 @@ class ResolverTest extends WPTestCase {
 		$this->resolve_all();
 
 		$this->assertCount( 1, $this->deactivations, 'The policy still runs: deactivation is asked for.' );
-		$this->assertArrayHasKey(
-			'give-recurring:merge',
+		$this->assertSame(
+			[],
 			$this->queued_notices(),
-			'The request goes on rendering, so the notice explaining the deactivation must survive to be drawn.'
+			'A standalone the owner can watch still running must not be reported as deactivated.'
 		);
 	}
+
 
 	/**
 	 * The same failure through the seam a host owns rather than through the site's own filters: a
@@ -572,7 +586,11 @@ class ResolverTest extends WPTestCase {
 			$this->deactivations,
 			'The bound deactivator is what deactivates, so nothing was ever taken out of the active list.'
 		);
-		$this->assertArrayHasKey( 'give-recurring:merge', $this->queued_notices() );
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'A host is invited to bind deactivation away; being told its plugin was deactivated anyway is the lie.'
+		);
 	}
 
 	/**
@@ -663,7 +681,11 @@ class ResolverTest extends WPTestCase {
 		);
 
 		$queued = $this->queued_notices();
-		$this->assertArrayHasKey( 'give-recurring:merge', $queued );
+		$this->assertArrayNotHasKey(
+			'give-recurring:merge',
+			$queued,
+			'The stubborn one is still running, whatever the request managed for the other.'
+		);
 		$this->assertArrayHasKey( 'give-fee-recovery:merge', $queued );
 	}
 
@@ -740,8 +762,8 @@ class ResolverTest extends WPTestCase {
 	}
 
 	/**
-	 * The notice is queued after the deactivation, so it must not depend on the plugin still
-	 * being active — and it is the only record the site owner gets.
+	 * The notice is queued after the deactivation and after the re-check that confirms it, so it must
+	 * not depend on the plugin still being active — and it is the only record the site owner gets.
 	 */
 	public function test_the_merge_notice_is_queued_before_the_redirect_halts_the_request(): void {
 		$this->standalone_is( true );

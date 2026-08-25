@@ -99,7 +99,7 @@ class Resolver implements Resolver_Interface {
 	/**
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return void
 	 */
@@ -168,7 +168,7 @@ class Resolver implements Resolver_Interface {
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool Whether the standalone is gone -- not whether deactivating it was attempted.
 	 */
@@ -200,19 +200,7 @@ class Resolver implements Resolver_Interface {
 					return false;
 				}
 
-				$this->deactivate( $sub_plugin );
-
-				// Asked again rather than assumed, because turning the standalone off is not the same
-				// event as the standalone being off. A site or mu-plugin filtering
-				// `option_active_plugins` puts it straight back, a host may have rebound
-				// `Plugin\Contracts\Deactivator_Interface` to something that does nothing, and a
-				// rebound `Plugin\Contracts\Checker_Interface` may mean by "active" something
-				// `deactivate_plugins()` never touches. Answering true on a standalone that is still
-				// running redirects to the screen the user asked for, where the next request detects
-				// the same conflict and redirects again -- until the browser gives up and the whole of
-				// wp-admin is out of reach, with the merge notice never drawn because every one of
-				// those requests exits before `all_admin_notices`.
-				return ! $this->detector->is_in_conflict( $sub_plugin );
+				return $this->deactivate( $sub_plugin );
 
 			// NOTICE_ONLY, and anything is_valid() would accept that this switch has grown no
 			// branch for. The default sits on the branch that only talks, never on the one that
@@ -225,21 +213,46 @@ class Resolver implements Resolver_Interface {
 	}
 
 	/**
+	 * Turn the standalone off, and report the merge only if it really went off.
+	 *
+	 * The answer is also what decides the redirect. Sending the user back to the screen they asked for
+	 * while the standalone is still running arrives at the same conflict, deactivates to no effect and
+	 * redirects again -- until the browser gives up with the whole of wp-admin out of reach, and with
+	 * every one of those requests exiting before `all_admin_notices` could draw anything.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
 	 *
-	 * @throws Config_Exception When no hook prefix has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
-	 * @return void
+	 * @return bool Whether the standalone is gone -- not whether deactivating it was attempted.
 	 */
-	protected function deactivate( Sub_Plugin $sub_plugin ): void {
+	protected function deactivate( Sub_Plugin $sub_plugin ): bool {
 		$this->plugin_deactivator->deactivate( $sub_plugin->get_standalone_plugin_basename() );
 
-		// Queued as the deactivation is made rather than once at the end, so the explanation is
-		// durable whether or not the request goes on to redirect — and so a site with two
-		// standalones gets one notice per plugin it lost.
+		// Asked again rather than assumed, because turning the standalone off is not the same event as
+		// the standalone being off. A site or mu-plugin filtering `option_active_plugins` puts it
+		// straight back, a host may have rebound `Plugin\Contracts\Deactivator_Interface` to something
+		// that does nothing, and a rebound `Plugin\Contracts\Checker_Interface` may mean by "active"
+		// something `deactivate_plugins()` never touches.
+		if ( $this->detector->is_in_conflict( $sub_plugin ) ) {
+			// Nothing is said and nothing is reported. The merge notice would tell the owner a plugin
+			// they can watch still running had been deactivated, and would say it again on every admin
+			// GET for as long as the site kept putting it back; and this is the DEFER outcome reached
+			// by another route, so there is no failure to announce either -- the standalone is running,
+			// which means its own guard constant stands the bundled copy down and nothing re-declares.
+			// Every way of arriving here is a site's own configuration rather than a mistake in the
+			// host's code, and `Plugin\Contracts\Deactivator_Interface` invites one of them by name.
+			return false;
+		}
+
+		// Queued as each deactivation is confirmed rather than once at the end, so the explanation is
+		// durable whether or not the request goes on to redirect — and so a site with two standalones
+		// gets one notice per plugin it lost.
 		$this->notices->queue_merge_notice( $sub_plugin );
+
+		return true;
 	}
 
 	/**

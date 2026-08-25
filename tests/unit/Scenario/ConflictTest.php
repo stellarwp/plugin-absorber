@@ -246,6 +246,56 @@ class ConflictTest extends Bootstrap_Test_Case {
 	}
 
 	/**
+	 * The deactivation that does not take. A site whose mu-plugin filters `option_active_plugins` puts
+	 * the standalone straight back — a pattern `learndash-core` itself uses — so core's own
+	 * `deactivate_plugins()` really runs, really writes the option, and the plugin is active again by
+	 * the time the resolver looks.
+	 *
+	 * Nothing may be claimed about that. A merge notice would report a deactivation the owner can
+	 * disprove by looking at the list it is drawn above, and it would be re-queued on every admin GET
+	 * for as long as the site keeps putting the plugin back. The redirect goes for the same reason:
+	 * the request has nothing to shed, so the one it redirects to would arrive at the same conflict.
+	 */
+	public function test_a_standalone_the_site_puts_back_is_not_reported_as_merged(): void {
+		update_option( 'active_plugins', [ self::STANDALONE ] );
+
+		$this->add_tracked_filter(
+			'option_active_plugins',
+			static function (): array {
+				return [ self::STANDALONE ];
+			}
+		);
+
+		$this->register(
+			[
+				'standalone_plugin_basename' => self::STANDALONE,
+				'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+			]
+		);
+
+		$this->boot();
+
+		// run_request() fails the test on a redirect, which here is the loop itself rather than a
+		// symptom of one: every request after it would deactivate to no effect and redirect again.
+		$this->run_request();
+
+		$this->assertContains(
+			self::STANDALONE,
+			$this->active_plugins(),
+			'The site put it back, and this library does not fight the site over it.'
+		);
+		$this->assertSame(
+			[],
+			$this->queued_notices(),
+			'A standalone the owner can watch still running must not be reported as deactivated.'
+		);
+
+		// The request really did reach this library, which is what makes the silence above mean
+		// something: a bootstrap that wired nothing at all would satisfy every assertion before it.
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+	}
+
+	/**
 	 * DEFER hands the request to the standalone, and WordPress includes an active plugin from
 	 * wp-settings.php long before plugins_loaded — so by the time the resolver runs, the standalone
 	 * has already defined the guard constant. Defining it up front is what makes this the scenario
