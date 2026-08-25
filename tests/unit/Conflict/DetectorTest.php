@@ -34,7 +34,9 @@ use Nexcess\PluginAbsorber\Tests\Support\Traits\WithSubPlugins;
  * anything it changed would be a change made on behalf of an anonymous visitor, and anything
  * expensive it read would be read on every admin GET a site ever serves. Policy is the expensive
  * thing it must not read — a host's policy callable and the filter behind it can do anything at all,
- * and neither says whether a standalone is running.
+ * and neither says whether a standalone is running. The `should_load` filter is the one piece of host
+ * code it does read, because that one decides whether the bundled copy will be there at all — and it
+ * is read last, of a sub-plugin every cheap check has already agreed is in conflict.
  *
  * `has_conflict()` reads the registry through the reader it was built with, so most of the tests for
  * it register through the facade the default reader is behind; `is_in_conflict()` is handed the
@@ -60,6 +62,16 @@ class DetectorTest extends WPTestCase {
 	 * @var string[]
 	 */
 	private $asked = [];
+
+	/**
+	 * The `should_load` filter a test installed, taken back off in tearDown.
+	 *
+	 * By identity rather than with `remove_all_filters()`, which would strip the hook bare for the
+	 * rest of the process — including whatever the library itself has on it.
+	 *
+	 * @var callable|null
+	 */
+	private $load_gate = null;
 
 	/**
 	 * Every deactivate_plugins() call, as the arguments it was made with.
@@ -105,6 +117,9 @@ class DetectorTest extends WPTestCase {
 	}
 
 	public function tearDown(): void {
+		// Before Config_State::reset(), which takes away the prefix the hook name is built from.
+		$this->remove_the_load_gate();
+
 		$this->clear_notices();
 		Absorber_State::reset();
 		Config_State::reset();
@@ -175,6 +190,23 @@ class DetectorTest extends WPTestCase {
 		);
 
 		$this->assertFalse( $this->detector()->has_conflict() );
+	}
+
+	/**
+	 * The gate the load pass reads one priority later, read here as well. A host that vetoes a
+	 * sub-plugin through `should_load` is getting no bundled copy at priority 6, so a probe that
+	 * answered yes at priority 5 would send the step on to deactivate the only copy of that code the
+	 * site has — and the merge notice would tell the owner the bundled one had taken over.
+	 */
+	public function test_it_ignores_a_sub_plugin_the_load_gate_vetoes(): void {
+		$this->standalone_is( true );
+		$this->register();
+		$this->gate_the_load_with( static fn( $should_load ) => false );
+
+		$this->assertFalse(
+			$this->detector()->has_conflict(),
+			'A sub-plugin that is not going to load is no more in conflict than a disabled one.'
+		);
 	}
 
 	public function test_it_is_false_with_nothing_registered(): void {
@@ -401,6 +433,92 @@ class DetectorTest extends WPTestCase {
 		);
 
 		$this->assertSame( [ 'give-fee-recovery/give-fee-recovery.php' ], $this->asked );
+	}
+
+	public function test_is_in_conflict_is_false_when_the_load_gate_vetoes_the_sub_plugin(): void {
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$this->gate_the_load_with( static fn( $should_load ) => false );
+
+		$this->assertFalse(
+			$detector->is_in_conflict(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			),
+			'The standalone is the only copy of that code the site is going to run.'
+		);
+	}
+
+	/**
+	 * The same two arguments the load pass passes, in the same order. A host wires one filter and it
+	 * is asked from two places now, so a signature that differed between them would make the second
+	 * call the one that broke it.
+	 */
+	public function test_is_in_conflict_asks_the_load_gate_the_way_the_load_pass_does(): void {
+		$seen       = [];
+		$sub_plugin = $this->make_sub_plugin(
+			[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+		);
+
+		$this->gate_the_load_with(
+			static function ( $should_load, $filtered ) use ( &$seen ) {
+				$seen[] = [ $should_load, $filtered ];
+
+				return $should_load;
+			}
+		);
+
+		$detector = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$this->assertTrue( $detector->is_in_conflict( $sub_plugin ) );
+		$this->assertSame(
+			[ [ true, $sub_plugin ] ],
+			$seen,
+			'The default is true and the sub-plugin is the one being asked about, exactly as at the load.'
+		);
+	}
+
+	/**
+	 * Last of the four, behind every check that costs nothing. The gate is host code that may do
+	 * anything at all, and this runs on every admin GET a site serves — so a sub-plugin that is
+	 * disabled, has no standalone, or has no standalone *running* is turned away before any of it.
+	 */
+	public function test_is_in_conflict_asks_the_load_gate_last(): void {
+		$asked = [];
+
+		$this->gate_the_load_with(
+			static function ( $should_load, $filtered ) use ( &$asked ) {
+				$asked[] = $filtered instanceof Sub_Plugin ? $filtered->get_slug() : '';
+
+				return $should_load;
+			}
+		);
+
+		$standalone = new Detector( new Stub_Registry_Reader(), $this->recording_checker( false ) );
+
+		$standalone->is_in_conflict(
+			$this->make_sub_plugin(
+				[
+					'enabled'                    => false,
+					'standalone_plugin_basename' => 'give-recurring/give-recurring.php',
+				]
+			)
+		);
+		$standalone->is_in_conflict( $this->make_sub_plugin() );
+		$standalone->is_in_conflict(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+
+		$this->assertSame( [], $asked, 'None of those three is a conflict, so none of them may run host code.' );
+
+		// A filter that failed to install leaves the same empty log, so it is shown working once the
+		// cheap checks have all passed.
+		$conflicted = new Detector( new Stub_Registry_Reader(), $this->recording_checker( true ) );
+
+		$conflicted->is_in_conflict(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+
+		$this->assertSame( [ 'give-recurring' ], $asked, 'The gate really is on the hook and really is read.' );
 	}
 
 	/**
@@ -736,5 +854,35 @@ class DetectorTest extends WPTestCase {
 	 */
 	private function standalone_is( bool $active ): void {
 		$this->setFunctionReturn( 'is_plugin_active', $active );
+	}
+
+	/**
+	 * Put a host's `should_load` filter on the hook, as a host would.
+	 *
+	 * The real hook and the real name `Config` builds, not a double: what these tests are about is
+	 * that the detector reads the same gate the load pass reads, and a filter installed under any
+	 * other name would prove the opposite.
+	 *
+	 * @param callable $callback Filter callback.
+	 *
+	 * @return void
+	 */
+	private function gate_the_load_with( callable $callback ): void {
+		$this->load_gate = $callback;
+
+		add_filter( Config::get_hook_name( 'should_load' ), $callback, 10, 2 );
+	}
+
+	/**
+	 * @return void
+	 */
+	private function remove_the_load_gate(): void {
+		if ( $this->load_gate === null ) {
+			return;
+		}
+
+		remove_filter( Config::get_hook_name( 'should_load' ), $this->load_gate );
+
+		$this->load_gate = null;
 	}
 }

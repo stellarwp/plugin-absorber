@@ -23,7 +23,7 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  * every host that binds its own resolver, and give the resolver two reasons to change: how a
  * conflict is found, and what to do about one.
  *
- * Both methods leave the request exactly as they found it. Nothing here resolves a user,
+ * Nothing here leaves a mark on the request. Nothing resolves a user,
  * deactivates a plugin or queues a notice — an answer is all a caller gets, and the acting is the
  * resolver's.
  *
@@ -65,7 +65,7 @@ class Detector {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @throws Config_Exception When no container has been set, or a container binding is unusable.
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool
 	 */
@@ -88,9 +88,26 @@ class Detector {
 	 * Policy is not consulted: a sub-plugin set to defer is still in conflict, and the resolver is
 	 * where the decision to leave it alone belongs.
 	 *
+	 * The `should_load` filter is, and it is the one piece of host code this class reads. It decides
+	 * whether the bundled copy will be in memory at all, one priority behind this — so a sub-plugin
+	 * the host vetoes there is in conflict with nothing: deactivating its standalone would take away
+	 * the only copy of that code the site has, and the merge notice would tell the owner the bundled
+	 * copy had taken over. Invisible here exactly as a disabled sub-plugin already is.
+	 *
+	 * Asked last, so the sub-plugin has to be enabled, name a standalone, and have that standalone
+	 * actually running before any of it executes — the order the load pass asks it in, last of its
+	 * own gates, and it keeps a filter that is arbitrary host code off every admin GET with no
+	 * conflict to resolve.
+	 *
+	 * Nothing here catches: `Boot\Scheduler` wraps the whole conflict step in `catch ( Throwable )`
+	 * and `Conflict\Resolver` catches per sub-plugin behind that, so a host filter that throws is
+	 * already reported and already survivable from both callers.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin to test.
+	 *
+	 * @throws Config_Exception When no hook prefix has been set.
 	 *
 	 * @return bool
 	 */
@@ -99,7 +116,15 @@ class Detector {
 			return false;
 		}
 
-		return $this->plugin_checker->is_active( $sub_plugin->get_standalone_plugin_basename() );
+		if ( ! $this->plugin_checker->is_active( $sub_plugin->get_standalone_plugin_basename() ) ) {
+			return false;
+		}
+
+		// The same two arguments the load pass passes, so a host wires one filter and sees one
+		// signature wherever it is asked from.
+		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
+
+		return (bool) $should_load;
 	}
 
 	/**

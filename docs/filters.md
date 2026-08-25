@@ -19,7 +19,7 @@ deactivate](conflict-handling.md#policies).
 
 | Filter | Arguments | Purpose |
 |---|---|---|
-| `{prefix}/plugin_absorber/should_load` | `bool $should_load`, `Sub_Plugin $sub_plugin` | Last word before `require_once`. |
+| `{prefix}/plugin_absorber/should_load` | `bool $should_load`, `Sub_Plugin $sub_plugin` | Last word before `require_once`, and before a conflict is resolved. |
 
 ```php
 add_filter( 'give/plugin_absorber/should_load', function ( $should_load, $sub_plugin ) {
@@ -31,6 +31,16 @@ It is consulted only for a sub-plugin that would otherwise have loaded — after
 the guard constant, the dependency check and the file check. Returning `true` cannot force a load
 past the guard constant; anything other than a truthy return skips the load, which is the safe
 direction.
+
+**Conflict handling reads it too**, at `plugins_loaded` priority 5, one ahead of the load. A
+sub-plugin you veto is invisible to it: no standalone is deactivated to make room for a bundled copy
+that is not going to load. So the filter may be asked more than once in a request, and it has to
+*decide* rather than do — no logging, no counters, no writes.
+
+Whether the conflict pass sees your callback turns on when you call `add_filter()`, not on the
+priority you give the callback: one registered after `plugins_loaded` priority 5 has missed that
+pass whatever its own priority. For a sub-plugin with a `standalone_plugin_basename`, put the toggle
+in the `enabled` [config key](configuration.md) instead: both passes read it, whenever it is set.
 
 **Watch the polarity when you wire an existing gate to this one.** `should_load` is true means *do
 load*. A host filter named for the opposite — LearnDash's `learndash_module_{x}_disabled`, where
