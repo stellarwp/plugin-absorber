@@ -10,6 +10,7 @@ namespace Nexcess\PluginAbsorber\Conflict;
 use Nexcess\PluginAbsorber\Config;
 use Nexcess\PluginAbsorber\Exceptions\Config_Exception;
 use Nexcess\PluginAbsorber\Plugin\Contracts\Checker_Interface;
+use Nexcess\PluginAbsorber\Plugin\Loads_Plugin_Functions;
 use Nexcess\PluginAbsorber\Registry\Reader;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 
@@ -25,13 +26,16 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
  *
  * Nothing here leaves a mark on the request. Nothing resolves a user,
  * deactivates a plugin or queues a notice — an answer is all a caller gets, and the acting is the
- * resolver's.
+ * resolver's. The one thing either of them writes is a report to the developer about a bootstrap
+ * that cannot be right, which changes nothing on the site and is addressed to nobody on it.
  *
  * Not `final`: it is bound by class name, which is the seam a host rebinds and a test subclasses.
  *
  * @since 1.0.0
  */
 class Detector {
+	use Loads_Plugin_Functions;
+
 	/**
 	 * @since 1.0.0
 	 *
@@ -45,6 +49,15 @@ class Detector {
 	 * @var Checker_Interface
 	 */
 	private $plugin_checker;
+
+	/**
+	 * Whether the configured host basename has been looked up in this request.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @var bool
+	 */
+	private $host_plugin_looked_up = false;
 
 	/**
 	 * @since 1.0.0
@@ -141,6 +154,20 @@ class Detector {
 	 * `Checker_Interface::is_network_active()` is `false` off a network, so the whole predicate is
 	 * `false` on a single site.
 	 *
+	 * The basename itself is checked against the installed plugins on the way past, because a name no
+	 * plugin answers to answers "not network-active" for ever, and that is indistinguishable from the
+	 * guard working: the standalone is left active on a network where nothing would have been
+	 * stranded, and the notice comes back on every admin page load telling the owner to
+	 * network-activate a plugin that already runs everywhere. A typo does it, so does an mu-plugin or
+	 * a plugin behind a symlink that `plugin_basename()` cannot round-trip, and so does passing
+	 * `__FILE__` where `plugin_basename( __FILE__ )` was meant. The answer is not changed by the
+	 * report -- a name this library cannot resolve is not consent to take a plugin off every site on
+	 * a network -- and the developer is told which one, which is the only thing that fixes it.
+	 *
+	 * The lookup sits behind both cheap guards. `get_plugins()` parses the header of every plugin
+	 * installed, so it is paid for only where the answer is about to matter: a configured host, and a
+	 * standalone that really is network-active.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin whose standalone is active.
@@ -158,6 +185,55 @@ class Detector {
 			return false;
 		}
 
+		$this->report_a_host_basename_no_plugin_answers_to( $host_basename );
+
 		return ! $this->plugin_checker->is_network_active( $host_basename );
+	}
+
+	/**
+	 * Tell the developer when the configured host basename names nothing that is installed.
+	 *
+	 * Here rather than in `Config::set_host_plugin_basename()`, which is where a reader looks first:
+	 * that is a static setter a host calls at plugin-file scope, and `get_plugins()` lives in
+	 * `wp-admin/includes/plugin.php`, which is not loaded then and which nothing should be loading
+	 * that early to validate an argument. The honest place is the one point of use, on the request
+	 * where the value is about to decide whether a standalone is deactivated.
+	 *
+	 * Once per request, and per instance rather than through a static: the detector is a container
+	 * singleton, so one instance is one request, and the host hears about the mistake again on the
+	 * next one until it is fixed. A static flag would report from the first request a PHP worker
+	 * served and then stay quiet for every request that worker went on to serve -- and it would need
+	 * a reset for the suite's benefit, which is API this library would then support for ever.
+	 *
+	 * @since 1.0.0
+	 *
+	 * @param string $host_basename Host plugin basename, as the host configured it.
+	 *
+	 * @return void
+	 */
+	private function report_a_host_basename_no_plugin_answers_to( string $host_basename ): void {
+		if ( $this->host_plugin_looked_up ) {
+			return;
+		}
+
+		$this->host_plugin_looked_up = true;
+
+		$this->load_plugin_functions();
+
+		if ( array_key_exists( $host_basename, get_plugins() ) ) {
+			return;
+		}
+
+		_doing_it_wrong(
+			self::class . '::report_a_host_basename_no_plugin_answers_to',
+			sprintf(
+				'The host plugin basename "%s" names no installed plugin, so the multisite stranding '
+					. 'guard reads the host as never network-active: a standalone that would strand no '
+					. 'site is left active and its notice recurs on every admin page load. '
+					. 'Config::set_host_plugin_basename() takes plugin_basename( __FILE__ ), not __FILE__.',
+				$host_basename
+			),
+			'1.0.0'
+		);
 	}
 }

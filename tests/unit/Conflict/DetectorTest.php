@@ -573,6 +573,11 @@ class DetectorTest extends WPTestCase {
 		bool $expected
 	): void {
 		Config::set_host_plugin_basename( $host_basename );
+
+		// The host names a plugin that really is installed in every one of these, so which sites it
+		// is switched on for is the only thing varying. A basename nothing answers to is its own
+		// case, below.
+		$this->install_plugins( array_filter( [ $host_basename, 'give-recurring/give-recurring.php' ] ) );
 		$this->install_checker( $this->checker_network_active_for( $network_active ) );
 
 		$sub_plugin = $this->make_sub_plugin(
@@ -597,6 +602,144 @@ class DetectorTest extends WPTestCase {
 		yield 'site-only standalone, non-network host' => [ $host, [], false ];
 		yield 'site-only standalone, network host'     => [ $host, [ $host ], false ];
 		yield 'no host basename configured'            => [ '', [ $standalone ], false ];
+	}
+
+	/**
+	 * `Config::set_host_plugin_basename()` takes the string and stores it, because it cannot do
+	 * anything else: a host calls it at plugin-file scope, where `get_plugins()` does not exist yet.
+	 * So the name is checked here, where it is about to decide something — and three ordinary shapes
+	 * make it wrong for ever: a typo, `__FILE__` where `plugin_basename( __FILE__ )` was meant, and a
+	 * host that `plugin_basename()` does not round-trip, an mu-plugin or one behind a symlink. Each
+	 * one reads as a host that is not network-active, so the guard declines a deactivation that would
+	 * strand nobody and the stranding notice comes back on every admin page load, telling the owner to
+	 * network-activate a plugin that is already running everywhere.
+	 */
+	public function test_it_reports_a_host_basename_no_installed_plugin_answers_to(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+
+		// Only the standalone is installed. The host names a plugin nothing on the site answers to.
+		$this->install_plugins( [ 'give-recurring/give-recurring.php' ] );
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+		$this->expect_incorrect_usage();
+
+		$this->assertTrue(
+			$this->detector()->deactivation_would_strand_sites(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			),
+			'The answer is unchanged: a name nothing answers to is not consent to deactivate network-wide.'
+		);
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'give/give.php',
+			'The report has to name the basename that was configured, or there is nothing to correct.'
+		);
+		$this->assertCount(
+			1,
+			$this->incorrect_usage_reports,
+			'Said once, and to the developer: the lookup is per request, not per call.'
+		);
+	}
+
+	/**
+	 * One bootstrap mistake, reported once — not once for every sub-plugin the resolver walks past it
+	 * with. `get_plugins()` parses the header of every plugin on the site, and a report repeated per
+	 * sub-plugin buries the one sentence the host has to act on under copies of itself.
+	 */
+	public function test_it_reports_an_unknown_host_basename_once_however_many_sub_plugins_it_is_asked_about(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+		$this->install_plugins( [] );
+		$this->install_checker(
+			$this->checker_network_active_for(
+				[ 'give-recurring/give-recurring.php', 'give-fee-recovery/give-fee-recovery.php' ]
+			)
+		);
+		$this->expect_incorrect_usage();
+
+		$detector = $this->detector();
+
+		$detector->deactivation_would_strand_sites(
+			$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+		);
+		$detector->deactivation_would_strand_sites(
+			$this->make_sub_plugin(
+				[
+					'slug'                       => 'give-fee-recovery',
+					'standalone_plugin_basename' => 'give-fee-recovery/give-fee-recovery.php',
+				]
+			)
+		);
+
+		$this->assertCount(
+			1,
+			$this->incorrect_usage_reports,
+			'The mistake is the host\'s bootstrap, not either sub-plugin.'
+		);
+	}
+
+	/**
+	 * The ordinary case, which has to stay silent: a host that passed
+	 * `plugin_basename( __FILE__ )` names a plugin the site really has.
+	 */
+	public function test_it_says_nothing_about_a_host_basename_an_installed_plugin_answers_to(): void {
+		Config::set_host_plugin_basename( 'give/give.php' );
+		$this->install_plugins( [ 'give/give.php', 'give-recurring/give-recurring.php' ] );
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+
+		$sub_plugin = $this->make_sub_plugin(
+			[ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ]
+		);
+
+		// Asserted by its absence, and by WPTestCase rather than by anything here: a test that
+		// receives a _doing_it_wrong() it never expected fails on it, and this one expects none.
+		$this->assertTrue( $this->detector()->deactivation_would_strand_sites( $sub_plugin ) );
+
+		// An expectation that was never armed would keep an empty log just as convincingly, so the
+		// same recorder is shown catching a real report before the emptiness above is believed.
+		Config::set_host_plugin_basename( 'give/nothing-answers-to-this.php' );
+		$this->expect_incorrect_usage();
+
+		$fresh = new Detector(
+			new Stub_Registry_Reader(),
+			$this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] )
+		);
+
+		$fresh->deactivation_would_strand_sites( $sub_plugin );
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'give/nothing-answers-to-this.php',
+			'The recorder really is on the hook, and it is this basename it caught.'
+		);
+	}
+
+	/**
+	 * The opt-in stays exactly as documented: with no host basename set the guard stands down before
+	 * anything is read, the plugin list included.
+	 */
+	public function test_it_looks_up_nothing_when_no_host_basename_is_configured(): void {
+		$looked = 0;
+
+		$this->setFunctionReturn(
+			'get_plugins',
+			static function () use ( &$looked ): array {
+				++$looked;
+
+				return [];
+			},
+			true
+		);
+		$this->install_checker( $this->checker_network_active_for( [ 'give-recurring/give-recurring.php' ] ) );
+
+		$this->assertFalse(
+			$this->detector()->deactivation_would_strand_sites(
+				$this->make_sub_plugin( [ 'standalone_plugin_basename' => 'give-recurring/give-recurring.php' ] )
+			)
+		);
+		$this->assertSame( 0, $looked, 'A host that never opted in pays nothing for the guard.' );
+
+		// The counter has to be shown to work, or a stub that failed to install passes this.
+		get_plugins();
+
+		$this->assertSame( 1, $looked );
 	}
 
 	/**
@@ -895,5 +1038,20 @@ class DetectorTest extends WPTestCase {
 		remove_filter( Config::get_hook_name( 'should_load' ), $this->load_gate );
 
 		$this->load_gate = null;
+	}
+
+	/**
+	 * Say which plugins the site has installed, as `get_plugins()` answers it.
+	 *
+	 * Stubbed rather than written to disk: the host basename check asks WordPress what is installed,
+	 * and a test that put a directory under wp-content/plugins would be asserting about the machine
+	 * the suite runs on.
+	 *
+	 * @param string[] $basenames Plugin basenames the site has installed.
+	 *
+	 * @return void
+	 */
+	private function install_plugins( array $basenames ): void {
+		$this->setFunctionReturn( 'get_plugins', array_fill_keys( $basenames, [ 'Name' => 'Fixture' ] ) );
 	}
 }

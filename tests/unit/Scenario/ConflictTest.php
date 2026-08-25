@@ -48,9 +48,10 @@ class ConflictTest extends Bootstrap_Test_Case {
 	private const SECOND_SLUG = 'absorber-fee-recovery';
 
 	/**
-	 * A host plugin basename, for the multisite stranding scenarios. Only ever an entry in
-	 * `active_sitewide_plugins` and the value handed to `Config::set_host_plugin_basename()` — no
-	 * fixture file stands behind it, because the guard reads its activation state and nothing more.
+	 * A host plugin basename, for the multisite stranding scenarios. An entry in
+	 * `active_sitewide_plugins`, the value handed to `Config::set_host_plugin_basename()`, and — since
+	 * the guard also refuses to believe a basename nothing answers to — something `get_plugins()`
+	 * reports as installed. No fixture file stands behind it: nothing ever loads the host itself.
 	 *
 	 * @var string
 	 */
@@ -114,7 +115,10 @@ class ConflictTest extends Bootstrap_Test_Case {
 		update_site_option( 'active_sitewide_plugins', [ self::STANDALONE => time() ] );
 
 		// A host basename that is not itself network-active: the bundled copy would not load on the
-		// sites the standalone is being removed from, which is the whole reason to leave it.
+		// sites the standalone is being removed from, which is the whole reason to leave it. Installed
+		// but switched on nowhere, which is the topology under test — a basename naming no plugin at
+		// all is a bootstrap mistake and is reported as one.
+		$this->install_the_host_plugin();
 		Config::set_host_plugin_basename( self::HOST );
 
 		$constant = $this->define_guard( 'ABSORBER_E2E_STRANDING_GUARD' );
@@ -152,6 +156,56 @@ class ConflictTest extends Bootstrap_Test_Case {
 	}
 
 	/**
+	 * The same topology, with the one difference a host cannot see: the basename it named itself with
+	 * is not a plugin this site has. `plugin_basename( __FILE__ )` misspelled, `__FILE__` passed
+	 * instead of it, or a host WordPress reaches by a path that does not round-trip — all of them
+	 * answer "not network-active" for ever, which is exactly what a correctly configured
+	 * per-site host answers, so the guard declines and the notice recurs with nothing to fix it.
+	 *
+	 * Nothing about the site changes: a name the library cannot resolve is not consent to take a
+	 * plugin off every site on a network. What changes is that the developer is told which basename
+	 * nothing answers to, which is the only thing that ends the loop.
+	 */
+	public function test_a_host_basename_no_installed_plugin_answers_to_is_reported(): void {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Network activation only exists on multisite.' );
+		}
+
+		update_site_option( 'active_sitewide_plugins', [ self::STANDALONE => time() ] );
+
+		// Deliberately not installed: no `install_the_host_plugin()` here, so `get_plugins()` answers
+		// for the real site and nothing in it answers to this name.
+		Config::set_host_plugin_basename( self::HOST );
+
+		$constant = $this->define_guard( 'ABSORBER_E2E_UNKNOWN_HOST_GUARD' );
+
+		$this->register(
+			[
+				'standalone_plugin_basename' => self::STANDALONE,
+				'conflict_policy'            => Conflict_Policy::DEACTIVATE,
+			],
+			$constant
+		);
+
+		$this->expect_incorrect_usage();
+
+		$this->boot();
+		$this->run_request();
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			self::HOST,
+			'The developer has to be told which basename nothing answers to.'
+		);
+
+		$this->assertArrayHasKey(
+			self::STANDALONE,
+			(array) get_site_option( 'active_sitewide_plugins', [] ),
+			'The report is a diagnosis: it does not turn a name we cannot resolve into a network-wide deactivation.'
+		);
+		$this->assertArrayHasKey( self::SLUG . ':stranding', $this->queued_notices() );
+	}
+
+	/**
 	 * The other half: when the host plugin is itself network-active, its bundled copy loads on every
 	 * site the standalone is removed from, so the network-wide deactivation strands nothing and the
 	 * resolver takes it — exactly as it does with no host basename configured at all.
@@ -169,6 +223,7 @@ class ConflictTest extends Bootstrap_Test_Case {
 			]
 		);
 
+		$this->install_the_host_plugin();
 		Config::set_host_plugin_basename( self::HOST );
 
 		$this->register(
@@ -653,5 +708,29 @@ class ConflictTest extends Bootstrap_Test_Case {
 		// The notice box stays core's to draw — its classes, its dismiss button, its wrapper. Only
 		// the sentence inside belongs to this library.
 		$this->assertStringStartsWith( '<div class="notice notice-error is-dismissible"><p>', $filtered );
+	}
+
+	/**
+	 * Say the host plugin is one the site has installed, as `get_plugins()` answers it.
+	 *
+	 * The stranding guard checks the basename it was configured with against the installed plugins, so
+	 * a scenario about *activation scope* has to name a plugin that exists — otherwise it would be
+	 * running the misconfiguration case above under another name. Stubbed rather than written into
+	 * wp-content/plugins, which would leave a directory behind for every test after it.
+	 *
+	 * @return void
+	 */
+	private function install_the_host_plugin(): void {
+		// uopz cannot stub a function that does not exist yet, and get_plugins() lives in an admin
+		// file WordPress loads on demand.
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+		$this->setFunctionReturn(
+			'get_plugins',
+			[
+				self::HOST       => [ 'Name' => 'Absorber Host' ],
+				self::STANDALONE => [ 'Name' => 'Absorber Standalone' ],
+			]
+		);
 	}
 }
