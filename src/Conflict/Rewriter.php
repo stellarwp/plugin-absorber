@@ -107,22 +107,18 @@ class Rewriter {
 			return $this->without_the_error_scrape( str_replace( $sentence, $message, $markup ) );
 		}
 
-		// Neither sentence is in there, so something other than the screen this class knows how to
-		// improve wrote this notice. Its iframe stays: where there is no explanation to put in front
-		// of it, core's diagnostic is the only thing saying anything.
+		// Neither sentence is in there, so something else wrote this notice. Its iframe stays: with no
+		// explanation to put in front of it, core's diagnostic is the only thing saying anything.
 		return $markup;
 	}
 
 	/**
 	 * The two sentences core reports a sandboxed plugin fatal with, exactly as it prints them.
 	 *
-	 * Read back through `__()` against core's own text domain rather than written out as literals:
-	 * `wp_admin_notice()` receives the translated sentence, and an English needle would match nothing
-	 * on a site running WordPress in another language.
-	 *
-	 * Resume sits beside activation because the conflict outlives the activation screen. Core's
-	 * fatal-error handler pauses the plugin its sandbox died in, so the standalone comes back on the
-	 * plugins list with a Resume link that re-runs the same sandbox into the same re-declaration.
+	 * Read back through `__()` against core's own text domain rather than written out as literals: an
+	 * English needle would match nothing on a site running WordPress in another language. Resume sits
+	 * beside activation because core pauses the plugin its sandbox died in, so the standalone comes
+	 * back with a Resume link that re-runs the same re-declaration.
 	 *
 	 * @since 1.0.0
 	 *
@@ -142,13 +138,8 @@ class Rewriter {
 	 *
 	 * The `plugin` argument is unslashed and no further: core mints the nonce from the unslashed
 	 * value verbatim, so sanitizing a folder name holding a '%xx' sequence would make both the nonce
-	 * check and the registry lookup miss, silently. Nothing sanitizing would remove is needed either
-	 * -- the value is compared against a basename the host configured, and never reaches the page.
-	 * is_string() because '?plugin[]=x' arrives as an array, and an array reaching wp_verify_nonce()
-	 * is a string conversion rather than a refusal.
-	 *
-	 * The registry is read before the nonce is verified: there is no nonce work to do for a plugin
-	 * this library does not own, and nothing is acted on until the verification passes.
+	 * check and the registry lookup miss, silently. is_string() because '?plugin[]=x' arrives as an
+	 * array, which wp_verify_nonce() would convert rather than refuse.
 	 *
 	 * @since 1.0.0
 	 *
@@ -157,14 +148,15 @@ class Rewriter {
 	 * @return Sub_Plugin|null
 	 */
 	private function find_by_activation_error( string $nonce ): ?Sub_Plugin {
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified below, once the
-		// plugin named turns out to be one this library owns. Nothing is acted on until then.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified below, before
+		// anything is acted on.
 		$basename = isset( $_GET['plugin'] ) ? wp_unslash( $_GET['plugin'] ) : '';
 
 		if ( ! is_string( $basename ) || $basename === '' ) {
 			return null;
 		}
 
+		// Looked up first: there is no nonce work to do for a plugin this library does not own.
 		$sub_plugin = $this->find_by_standalone_basename( $basename );
 
 		if ( $sub_plugin === null ) {
@@ -177,14 +169,11 @@ class Rewriter {
 	/**
 	 * The registered sub-plugin a resume-error request is about, if the nonce agrees.
 	 *
-	 * Identified from the nonce alone: `resume_plugin()` appends `_error_nonce` and nothing else, so
-	 * the nonce is the only thing on the request that names a plugin. Every registered standalone is
-	 * offered to it in turn and the one it was signed for answers -- a forged value matches nothing,
-	 * which makes the loop longer rather than the check weaker.
-	 *
-	 * Behind `error=resuming`, the request core dispatches the resume wording on. Without that gate
-	 * the loop ran on every plugins-screen `_error_nonce` the activation lookup missed, and each miss
-	 * fires `wp_verify_nonce_failed`, which security plugins hook to rate-limit failed nonces.
+	 * Identified from the nonce alone, since core's resume redirect carries no `plugin` argument to
+	 * read: every registered standalone is offered to it in turn and the one it was signed for
+	 * answers. Gated on `error=resuming`, the request core dispatches that wording on, because
+	 * otherwise somebody else's failed activation fires `wp_verify_nonce_failed` once per sub-plugin
+	 * -- which security plugins hook to rate-limit.
 	 *
 	 * @since 1.0.0
 	 *
@@ -242,14 +231,10 @@ class Rewriter {
 	 * The same notice with core's activation-sandbox iframe taken out of it.
 	 *
 	 * Core appends an `action=error_scrape` iframe to the sentence just replaced, and that request
-	 * runs `plugin_sandbox_scrape()` again with `display_errors` forced on -- so the raw `Cannot
-	 * redeclare …` prints inside the notice, contradicting the explanation directly above it.
-	 *
-	 * Matched on `error_scrape` within the opening tag rather than on the whole element core built:
-	 * rebuilding that string means reproducing `add_query_arg()`, `urlencode()` and `esc_url()` over
-	 * a URL a filter may have changed, and a miss would say nothing. `[^>]*` cannot run past the end
-	 * of the tag, and no other request in wp-admin re-runs the fatal, so an iframe another plugin
-	 * appended is out of the pattern's reach.
+	 * re-runs the sandbox with `display_errors` forced on -- so the raw `Cannot redeclare …` prints
+	 * under the explanation, contradicting it. Matched on `error_scrape` inside the opening tag rather
+	 * than on the element core built, which would mean reproducing `add_query_arg()`, `urlencode()`
+	 * and `esc_url()` over a filterable URL and missing silently once one of them changed.
 	 *
 	 * @since 1.0.0
 	 *
@@ -260,9 +245,8 @@ class Rewriter {
 	private function without_the_error_scrape( string $markup ): string {
 		$stripped = preg_replace( '#<iframe\b[^>]*\berror_scrape\b[^>]*>\s*</iframe>#i', '', $markup );
 
-		// Null means the match itself failed -- a backtrack limit on a notice far larger than the one
-		// core writes. No `u` modifier, so PCRE runs on bytes and the substituted message's encoding
-		// cannot fail it either way. The reworded sentence is worth keeping on its own.
+		// Null means the match itself failed -- a backtrack limit on a notice far larger than core's.
+		// The reworded sentence is worth keeping on its own.
 		return is_string( $stripped ) ? $stripped : $markup;
 	}
 }
