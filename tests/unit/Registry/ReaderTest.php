@@ -166,7 +166,7 @@ class ReaderTest extends WPTestCase {
 			'The report has to name the registration that lost, or the host cannot find it.'
 		);
 		$this->assert_the_library_reported_incorrect_usage_saying(
-			'/tmp/give-recurring-again.php was discarded',
+			'the duplicate /tmp/give-recurring-again.php was discarded',
 			'Naming both files says nothing about which of them the site is running; the report has'
 				. ' to say which registration was dropped.'
 		);

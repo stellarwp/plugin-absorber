@@ -167,11 +167,13 @@ class Reader {
 				// because the registrar refuses a registration without saying what became of it, and
 				// what became of it is now the consequence -- the site runs one of those two files
 				// and silently does not run the other. Every other report in this library says what
-				// the outcome was; this one has to as well.
+				// the outcome was; this one has to as well. The clause names the loser as "the
+				// duplicate" rather than by path alone, because the two registrations may well name
+				// the same file, and a bare path then reads as if the surviving one went too.
 				_doing_it_wrong(
 					self::class,
 					sprintf(
-						'%1$s The registration already held was kept; %2$s was discarded.',
+						'%1$s The original registration was kept; the duplicate %2$s was discarded.',
 						$exception->getMessage(),
 						$sub_plugin->get_bundled_plugin_file()
 					),
