@@ -171,8 +171,8 @@ class Loader {
 			return;
 		}
 
-		// Truthiness, not a cast: only a falsy return vetoes, so an array or an object here loads
-		// rather than fataling on the way to a string.
+		// Truthiness, not a cast: only a falsy return vetoes, so an object or a non-empty array here
+		// loads rather than fataling on the way to a string.
 		$should_load = apply_filters( Config::get_hook_name( 'should_load' ), true, $sub_plugin );
 
 		if ( ! $should_load ) {
