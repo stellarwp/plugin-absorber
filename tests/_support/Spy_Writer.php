@@ -67,6 +67,7 @@ class Spy_Writer implements Writer_Interface {
 	 * @return void
 	 */
 	public function queue_conflict_notice( Sub_Plugin $sub_plugin ): void {
+		// Intentionally empty: nothing here reads a conflict counter.
 	}
 
 	/**
@@ -87,6 +88,7 @@ class Spy_Writer implements Writer_Interface {
 	 * @return void
 	 */
 	public function queue_stranding_notice( Sub_Plugin $sub_plugin ): void {
+		// Intentionally empty: nothing here reads a stranding counter.
 	}
 
 	/**
