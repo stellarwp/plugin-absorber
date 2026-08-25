@@ -26,9 +26,10 @@ use Throwable;
  * `Provider`, when they run to `Boot\Scheduler`, and the load pass itself to `Loader` — so
  * the only reason to open this file is to change what a host may say to the library.
  *
- * `final` because it cannot usefully be extended: every member is private static and every internal
- * call is `self::`, so a subclass would inherit the API, be unable to override any of it, and change
- * nothing — which is the silent no-op this class reports on everywhere else.
+ * `final` because it cannot usefully be extended: every member is static, the one property and the
+ * one helper behind the API are private, and every internal call is `self::`, so a subclass would
+ * inherit the API, be unable to change what any of it does, and change nothing — which is the silent
+ * no-op this class reports on everywhere else.
  *
  * @since 1.0.0
  */
@@ -43,6 +44,27 @@ final class Absorber {
 	private static $booted = false;
 
 	/**
+	 * The registrar, holding every registration made so far.
+	 *
+	 * Drained before it is handed back, as `all()` is on its way to the list and for the same
+	 * reason: registration is buffered until something reads it, so a registrar handed over as it is
+	 * holds nothing at all until the first pass reads at plugins_loaded priority 5 — which is after
+	 * every point a host bootstrap gets to ask. The two public reads of the registry would then
+	 * disagree, one of them against the contract `Registrar_Interface::all()` states, and neither
+	 * would say so.
+	 *
+	 * Two resolutions, and not two registrars: every binding `Provider` makes is a singleton, so the
+	 * instance handed back here is the one `Registry\Reader` was constructed with and the one
+	 * `flush()` drains into. A host that binds `Registrar_Interface` transiently breaks that — and
+	 * the answer is still not to drain into the instance resolved here, which would empty the buffer
+	 * into an object nothing else holds and leave `all()`, the load pass and the conflict pass
+	 * reading a registrar those registrations never reached.
+	 *
+	 * Drained *after* the binding has been resolved and checked, not before. `Registry\Reader` takes
+	 * a registrar as a constructor argument, so a registrar bound to the wrong class is a reader
+	 * that cannot be built either — and a drain in front would report the reader, a collaborator the
+	 * host never bound, in place of the one binding it did get wrong.
+	 *
 	 * @since 1.0.0
 	 *
 	 * @throws Config_Exception When no container has been set, or its binding is unusable.
@@ -50,7 +72,13 @@ final class Absorber {
 	 * @return Registrar_Interface
 	 */
 	public static function registrar(): Registrar_Interface {
-		return self::collaborator( Registrar_Interface::class );
+		// Resolved before the drain, not after. The ordering is the paragraph above: the reader is
+		// built from this binding, so asking for it first is what names the binding at fault.
+		$registrar = self::collaborator( Registrar_Interface::class );
+
+		self::collaborator( Reader::class )->flush();
+
+		return $registrar;
 	}
 
 	/**

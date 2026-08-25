@@ -108,6 +108,12 @@ class Reader {
 	/**
 	 * Hand every buffered registration to the registrar.
 	 *
+	 * Public because the drain is wanted without the read. `Absorber::registrar()` hands a host the
+	 * registrar itself, which is empty until something drains into it, and reading `all()` there for
+	 * its effect and discarding the list said nothing about why the line was there. The two are the
+	 * whole of this class's surface and a rebound reader owes both: `all()` is this method plus the
+	 * registrar's contents, narrowed.
+	 *
 	 * The registrar stays the single source of truth: the buffer is a pre-store that needs no
 	 * container, and duplicate-slug detection and ordering remain the registrar's alone rather than
 	 * being restated here in a second dialect.
@@ -131,7 +137,7 @@ class Reader {
 	 *
 	 * @return void
 	 */
-	protected function flush(): void {
+	public function flush(): void {
 		if ( self::$pending === [] ) {
 			return;
 		}
