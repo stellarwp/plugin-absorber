@@ -2,10 +2,9 @@
 
 ## Policies
 
-A policy is only reached for a sub-plugin that is enabled, that names a `standalone_plugin_basename`
-whose plugin is active right now, and that the [`should_load` filter](filters.md#the-load-gate) has
-not vetoed — a vetoed sub-plugin has no bundled copy to put in the standalone's place. Everything
-else is skipped before any policy is read.
+A policy is only reached for a sub-plugin that is enabled, names a `standalone_plugin_basename`,
+whose standalone is active right now, and that the [`should_load` filter](filters.md#the-load-gate)
+has not vetoed — a vetoed sub-plugin has no bundled copy to put in the standalone's place.
 
 | Policy | Behavior |
 |---|---|
@@ -13,11 +12,11 @@ else is skipped before any policy is read.
 | `Conflict_Policy::DEFER` | Leave the standalone active; the load guard then stands the bundled copy down. |
 | `Conflict_Policy::NOTICE_ONLY` | Leave it active and ask the user to deactivate it. |
 
-A policy decides what happens to the *standalone*, and nothing else. Under `DEFER` the bundled copy
-stands down because of [the load guard](#the-load-guard), not because of the policy.
+A policy decides what happens to the *standalone* only: under `DEFER` the bundled copy stands down
+because of [the load guard](#the-load-guard), not because of the policy.
 
-Set one per sub-plugin with the `conflict_policy` key — a constant, or a `callable( Sub_Plugin ):
-string`. The `conflict_policy` [filter](filters.md) runs after that and has the final say:
+Set one with the `conflict_policy` key — a constant or a `callable( Sub_Plugin ): string` — and the
+`conflict_policy` [filter](filters.md) runs last:
 
 ```php
 // In the config: leave the standalone alone when it is not the code that was absorbed.
@@ -31,92 +30,72 @@ add_filter( 'give/plugin_absorber/conflict_policy', static function ( $policy, $
 }, 10, 2 );
 ```
 
-**An unrecognised policy is treated as `NOTICE_ONLY`**, never as consent to deactivate — a typo
-like `'defered'`, from a persisted option or from the filter, only produces a notice.
+**An unrecognised policy is treated as `NOTICE_ONLY`**, never as consent to deactivate: a typo like
+`'defered'` only produces a notice.
 
 For what the site owner sees under each policy, see
 [the recipe](recipes.md#choose-a-policy-and-know-what-the-site-owner-sees).
 
 ## When resolution runs
 
-At `plugins_loaded` priority 5, one ahead of the load at priority 6: a standalone that survives the
-conflict defines the guard constant as it loads, and the load has to see that. Priority 5 is also
-the deadline for `Absorber::boot()`, since this is the first step it wires.
+At `plugins_loaded` priority 5, one ahead of the load at priority 6, so the load sees the guard
+constant a surviving standalone defines. Priority 5 is also the deadline for `Absorber::boot()`.
 
-Resolution runs **only on an interactive admin `GET`** — not WP-CLI, cron, ajax, or a form
-POST — because resolving can deactivate a plugin and end the request with a redirect, and a 302
-would discard whatever a POST submitted. Waiting costs nothing: the standalone is still there to
-detect on the next page view.
+Resolution runs **only on an interactive admin `GET`** — not WP-CLI, cron, ajax, or a form POST,
+since it can end the request with a redirect that would discard what a POST submitted. Nothing is
+lost: the standalone is still there on the next page view.
 
-**A `GET` carrying an action is skipped too.** `update.php?action=upgrade-plugin` and
-`plugins.php?action=activate` are admin `GET`s that *do* something, and a redirect discards their
-work exactly as it would a POST's. Anything naming `action` or `action2` waits for the next plain
-page view — deliberately blunt, so a read-only `post.php?action=edit` waits as well.
+**A `GET` carrying an action is skipped too.** Anything naming `action` or `action2` waits for the
+next plain page view, because a redirect would discard the work behind
+`plugins.php?action=activate`. The rule is deliberately blunt, so `post.php?action=edit` waits too.
 
-Resolution also requires the capability matching what deactivation does: `manage_network_plugins` on
-multisite and `activate_plugins` otherwise, since deactivating a standalone is network-wide wherever
-a network exists. The check matters because `plugins_loaded` fires well before `auth_redirect()`, so
-an unauthenticated GET of an admin URL reaches this code on its way to the login screen.
+Resolution also requires the capability deactivation needs: `manage_network_plugins` on multisite,
+`activate_plugins` otherwise. An unauthenticated admin GET reaches this code before
+`auth_redirect()` has sent it to the login screen, and resolves nothing.
 
-These gates apply whatever the policy is — the non-destructive policies only queue a notice, and the
-[notice queue](notices.md#who-sees-them) asks for that same capability by name before it shows a
-notice or clears one, so nothing a policy queued is consumed by someone the gate would have refused.
+These gates apply whatever the policy is, and the [notice queue](notices.md#who-sees-them) asks for
+the same capability.
 
-The deactivation itself is silent, and covers both scopes on multisite. Silent because the
-standalone's own deactivation hook would otherwise run this early: a routine `flush_rewrite_rules()`
-in it would regenerate the rules before `init` declared a single post type, and every custom
-permalink on the site would start 404ing. On multisite it can also decline outright — see
-[the stranding guard](#the-multisite-stranding-guard).
+Deactivation is silent, and covers both scopes on multisite: the standalone's own deactivation hook
+must not run this early, where a `flush_rewrite_rules()` in it would 404 every custom permalink. On
+multisite it can also decline outright — see [the stranding guard](#the-multisite-stranding-guard).
 
-**A site that never loads wp-admin never resolves.** Every gate above needs an interactive admin
-page view. Any website administered entirely over SFTP, Composer, or WP-CLI — one whose owner never
-opens an admin screen in a browser — keeps the standalone active for as long as that holds. There
-is still no fatal, because [the load guard](#the-load-guard) runs on every request and stands the
-bundled copy down regardless; what waits is the *switchover*. The standalone, frozen at the version
-installed, goes on serving in place of the bundled copy the host ships updates for until the first
-request that clears every gate above arrives. That is the price of never ending a non-admin request
-with a redirect — one that would drop a visitor's POST or cut a WP-CLI run short — and on such a
-site the switchover is simply deferred until then.
+**A site that never loads wp-admin never resolves.** One administered only over SFTP, Composer, or
+WP-CLI keeps the standalone active indefinitely. There is no fatal — [the load
+guard](#the-load-guard) stands the bundled copy down on every request — but the switchover waits for
+the first request that clears every gate above.
 
 ## The redirect
 
-The standalone's code is already in memory by the time the conflict is resolved — WordPress
-included it before `plugins_loaded` — so the redirect is how the request sheds it. The destination
-is **the screen being requested**, not the one the user came from: it re-renders without the
-standalone, and the admin stays where they asked to be, network or user admin included. `/wp-admin/`
-and the admin roots mean the dashboard; `update.php` and `update-core.php` go to `plugins.php`
-instead, because reloading either would re-run an update, and so does anything naming no usable
-admin screen. There is no redirect loop: the next request has no active standalone, so nothing
-resolves.
+The standalone's code is already in memory when the conflict is resolved, so the redirect is how
+the request sheds it. The destination is **the screen being requested**, not the one the user
+came from, network and user admin included. `/wp-admin/` and the admin roots mean the dashboard;
+`update.php` and `update-core.php` go to `plugins.php` instead, since reloading either would re-run
+an update, and so does a URI naming no usable admin screen. There is no redirect loop: the next
+request has no active standalone to resolve.
 
-With several sub-plugins in conflict, all of them are resolved before the one redirect at the end,
-and the redirect is skipped entirely once headers have been sent — the request then finishes
-rendering instead of dying blank. The [merge notice](notices.md) is queued first either way, so the
-explanation survives whether or not the request ends in a redirect.
+With several sub-plugins in conflict, all are resolved before the one redirect at the end, and the
+redirect is skipped once headers have been sent. The [merge notice](notices.md) is queued first
+either way.
 
 ## The multisite stranding guard
 
 `deactivate_plugins()` runs with no `$network_wide` argument, so a network-active standalone is taken
-out of *every* site's plugins. But the bundled copy only loads where the host plugin runs, so on a
-network where the host is active on only some sites, deactivating a network-active standalone would
-remove it from the sites the host never reached — leaving them with no copy of it at all, bundled or
-standalone.
+out of *every* site's plugins — including sites the host plugin never runs on, which would be left
+with no copy at all.
 
 When the host names itself with `Config::set_host_plugin_basename( plugin_basename( __FILE__ ) )`,
-the `DEACTIVATE` policy checks for exactly that case — a network-active standalone whose host is not
-itself network-activated — and declines: the standalone is left active, [the load
-guard](#the-load-guard) stands the bundled copy down network-wide as under `DEFER`, and a [stranding
-notice](notices.md) tells a network administrator why and how to finish, by network-activating the
-host or removing the standalone from the Network Admin. It recurs until one of those is done.
+the `DEACTIVATE` policy detects exactly that case — a network-active standalone whose host is not
+network-activated — and declines: the standalone stays active, [the load guard](#the-load-guard)
+stands the bundled copy down network-wide as under `DEFER`, and a [stranding notice](notices.md)
+explains it, recurring until a network administrator resolves the topology.
 
-Pass `plugin_basename( __FILE__ )`, not `__FILE__`. A basename no installed plugin answers to reads
-as a host that is never network-active, so the guard would decline for ever and the notice would
-recur with nothing to act on — the library reports that one to the developer instead, through
-`_doing_it_wrong()`, and leaves the standalone where it is.
+Pass `plugin_basename( __FILE__ )`, not `__FILE__`: a basename no installed plugin answers to
+reads as a host that is never network-active, so the guard would decline for ever. That one is
+reported to the developer through `_doing_it_wrong()`, and the standalone is left where it is.
 
-The guard is **opt-in and single-site-safe**: with no host basename set it never fires, and off a
-network it never fires, so in every other topology — both network-active, both per-site, or a
-per-site standalone — deactivation behaves exactly as it always has.
+The guard is **opt-in and single-site-safe**: it never fires without a host basename set, and never
+off a network, so every other topology deactivates as it always has.
 
 ## The load guard
 
@@ -133,37 +112,35 @@ if ( ! defined( 'GIVE_RECURRING_VERSION' ) ) {
 ```
 
 A standalone that defines it from a bootstrap hooked at `plugins_loaded` or later has not defined it
-yet at the moment the guard is read, and the bundled copy would load on top of it. A standalone that
-never defines the name at all is never stood down either, and the bundled copy loads alongside it;
-[an included recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is a functional
-example of this behavior.
+when the guard is read, so the bundled copy loads on top of it. One that never defines the name is
+never stood down at all —
+[an included recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is a worked example.
 
 ## Reactivating the standalone
 
 The guard cannot help on the request that *activates* the standalone: WordPress includes the plugin
-being activated **after** the bundled copy has already loaded, so that re-declaration is a real
-fatal. Core catches it in its activation sandbox and prints *"Plugin could not be activated because
-it triggered a fatal error."* — true, and useless to whoever pressed the button.
+being activated **after** the bundled copy has loaded, so that re-declaration is a real fatal. Core
+catches it in its activation sandbox and prints *"Plugin could not be activated because it triggered
+a fatal error."*
 
 So the library filters `wp_admin_notice_markup` and swaps that sentence for the sub-plugin's
-`conflict_notice_message`, falling back to a generic one naming the slug. This is what puts the
-WordPress floor at 6.4: the filter does not exist before it.
+`conflict_notice_message`, falling back to a generic one naming the slug. That filter is what puts
+the WordPress floor at 6.4.
 
-It touches nothing else. The markup comes back untouched unless every one of these holds — the
-screen is `plugins`, or `plugins-network` in the network admin; the `plugin` query arg names a
-standalone this library has registered; and `_error_nonce` verifies.
+It touches nothing else: the markup comes back untouched unless the screen is `plugins`, or
+`plugins-network` in the network admin; the `plugin` query arg names a registered standalone; and
+`_error_nonce` verifies.
 
 The replacement runs through `wp_kses_post()`, so a knowledge-base link survives, and a message that
-filters down to nothing leaves core's wording in place rather than blanking the notice. A host that
-would rather keep core's wording throughout can remove the filter — see [Extending](extending.md).
+filters down to nothing leaves core's wording standing. To keep core's wording throughout, remove
+the filter — see [Extending](extending.md).
 
 ## Out of scope
 
-**Version negotiation.** The library never compares versions. Express it yourself: read the version
-and return `Conflict_Policy::DEFER` from the config or the `conflict_policy` [filter](filters.md),
-which has the final say — [this recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is
-an example.
+**Version negotiation.** The library never compares versions. Read the version yourself and return
+`Conflict_Policy::DEFER` from the config or the `conflict_policy` [filter](filters.md), which has the
+final say — [this recipe](recipes.md#defer-to-a-standalone-that-is-a-new-codebase) is an example.
 
 **Renamed standalone directories.** `standalone_plugin_basename` is the path as installed. A site
-that renamed the standalone's directory is not detected, and there is no fallback deriving the path
-from the load guard: one key is the guard, the other is the path, and no constant does both jobs.
+that renamed the standalone's directory is not detected, and no fallback derives the path from the
+load guard: one key is the guard, the other is the path.
