@@ -35,7 +35,7 @@ trait Guards_Hook_Prefix {
 		try {
 			Config::get_hook_prefix();
 		} catch ( Config_Exception $exception ) {
-			_doing_it_wrong( self::class, $exception->getMessage(), '1.0.0' );
+			_doing_it_wrong( self::class . '::has_hook_prefix', $exception->getMessage(), '1.0.0' );
 
 			return false;
 		}

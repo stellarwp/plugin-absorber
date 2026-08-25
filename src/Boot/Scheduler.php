@@ -302,7 +302,7 @@ class Scheduler {
 	 */
 	private static function report_a_step_that_threw( string $step, string $consequence, Throwable $thrown ): void {
 		_doing_it_wrong(
-			self::class,
+			self::class . '::report_a_step_that_threw',
 			sprintf( 'The %s threw, so %s: %s', $step, $consequence, $thrown->getMessage() ),
 			'1.0.0'
 		);
