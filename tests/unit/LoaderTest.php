@@ -8,6 +8,7 @@ declare( strict_types=1 );
 namespace Nexcess\PluginAbsorber\Tests\Unit;
 
 use Codeception\TestCase\WPTestCase;
+use Generator;
 use lucatume\WPBrowser\Traits\UopzFunctions;
 use Nexcess\PluginAbsorber\Absorber;
 use Nexcess\PluginAbsorber\Config;
@@ -15,6 +16,7 @@ use Nexcess\PluginAbsorber\Contracts\Activator_Interface;
 use Nexcess\PluginAbsorber\Loader;
 use Nexcess\PluginAbsorber\Notices\Contracts\Writer_Interface;
 use Nexcess\PluginAbsorber\Registry\Contracts\Registrar_Interface;
+use Nexcess\PluginAbsorber\Skip_Reason;
 use Nexcess\PluginAbsorber\Sub_Plugin;
 use Nexcess\PluginAbsorber\Tests\Support\Absorber_State;
 use Nexcess\PluginAbsorber\Tests\Support\Config_State;
@@ -64,6 +66,24 @@ class LoaderTest extends WPTestCase {
 	 */
 	private $should_load_calls = [];
 
+	/**
+	 * Every sub-plugin the `loaded` action was fired with, in order.
+	 *
+	 * @var array<int,mixed>
+	 */
+	private $loaded_calls = [];
+
+	/**
+	 * Every `skipped` firing, as a [ slug, reason ] pair.
+	 *
+	 * The reason travels with the slug rather than in a list of its own, because a pass over two
+	 * sub-plugins is the case where "one skip, for this reason" and "two skips, one of them for this
+	 * reason" have to be told apart.
+	 *
+	 * @var array<int,array{0:mixed,1:mixed}>
+	 */
+	private $skipped_calls = [];
+
 	public function setUp(): void {
 		parent::setUp();
 
@@ -75,6 +95,8 @@ class LoaderTest extends WPTestCase {
 		$this->clear_activations();
 		$this->reset_bundled_plugin_loads();
 		$this->should_load_calls = [];
+		$this->loaded_calls      = [];
+		$this->skipped_calls     = [];
 	}
 
 	public function tearDown(): void {
@@ -766,6 +788,228 @@ class LoaderTest extends WPTestCase {
 	}
 
 	/**
+	 * `loaded` is the answer to "is this sub-plugin here?" without a `defined()` check of the host's
+	 * own, so it has to fire once, for the sub-plugin that really was required.
+	 */
+	public function test_it_announces_a_load_once_with_the_sub_plugin(): void {
+		$this->record_lifecycle_actions();
+
+		$this->register();
+
+		$this->loader()->load_all();
+
+		$this->assertCount( 1, $this->loaded_calls );
+
+		$loaded = $this->loaded_calls[0];
+
+		$this->assertInstanceOf( Sub_Plugin::class, $loaded );
+		$this->assertSame( 'give-recurring', $loaded->get_slug() );
+
+		// The other half, and the reason both listeners go on together: a load that also announced a
+		// skip is a gate chain that ran on past its own `return`, which asserting on one list alone
+		// would never see.
+		$this->assertSame( [], $this->skipped_calls );
+	}
+
+	/**
+	 * The whole value of the action is that it means "this code is in memory now", so a gate that
+	 * turned the sub-plugin away must not fire it. The second pass is the positive control: an
+	 * empty list also describes a listener that never attached at all.
+	 */
+	public function test_it_announces_no_load_for_a_sub_plugin_that_was_skipped(): void {
+		$this->record_lifecycle_actions();
+
+		$this->register( [ 'enabled' => false ] );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [], $this->loaded_calls );
+
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		$this->assertCount( 1, $this->loaded_calls, 'The recorder must catch a load that really happened.' );
+	}
+
+	/**
+	 * Behind the activation callback, not in front of it. A listener is host code that will reach
+	 * into the sub-plugin it was just told about, and on a first-ever load the tables and options
+	 * that code expects are the activation callback's work.
+	 */
+	public function test_it_announces_a_load_after_the_activation_callback(): void {
+		$order = [];
+
+		$this->register(
+			[
+				'activation_callback' => static function () use ( &$order ): void {
+					$order[] = 'activation_callback';
+				},
+			]
+		);
+
+		add_action(
+			'give/plugin_absorber/loaded',
+			static function () use ( &$order ): void {
+				$order[] = 'loaded';
+			}
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ 'activation_callback', 'loaded' ], $order );
+	}
+
+	/**
+	 * One reason per gate, and the reason is what a host dispatches on — so each gate is pinned to
+	 * the constant it reports, not merely to having reported something.
+	 *
+	 * @return Generator<string,array{0:array<string,mixed>,1:string}>
+	 */
+	public function skipping_gates(): Generator {
+		yield 'disabled' => [ [ 'enabled' => false ], Skip_Reason::DISABLED ];
+
+		yield 'dependencies unmet' => [
+			[ 'dependency_check' => static fn() => false ],
+			Skip_Reason::DEPENDENCIES_UNMET,
+		];
+	}
+
+	/**
+	 * @dataProvider skipping_gates
+	 *
+	 * @param array<string,mixed> $overrides Config that trips the gate.
+	 * @param string              $reason    Reason the gate has to report.
+	 *
+	 * @return void
+	 */
+	public function test_it_announces_a_skip_with_the_reason_for_the_gate( array $overrides, string $reason ): void {
+		$this->record_lifecycle_actions();
+
+		$this->register( $overrides );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ [ 'give-recurring', $reason ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
+	}
+
+	/**
+	 * The guard constant has its own case because tripping it means defining a constant, which the
+	 * data provider cannot do reversibly.
+	 */
+	public function test_it_announces_a_skip_for_a_sub_plugin_that_is_already_loaded(): void {
+		$this->record_lifecycle_actions();
+
+		$constant = $this->define_guard( 'ABSORBER_ANNOUNCED_SKIP_GUARD' );
+
+		$this->register( [], $constant );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::ALREADY_LOADED ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
+	}
+
+	/**
+	 * And the filter has its own because tripping it means a host filter rather than a config key.
+	 */
+	public function test_it_announces_a_skip_for_a_load_the_filter_vetoed(): void {
+		$this->record_lifecycle_actions();
+
+		$this->register();
+
+		add_filter( 'give/plugin_absorber/should_load', '__return_false' );
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::FILTERED ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
+	}
+
+	/**
+	 * `do_action()` runs host code, so the lifecycle actions are a new way for a request to die
+	 * inside `plugins_loaded`. A listener that throws costs its own sub-plugin and nothing behind it.
+	 *
+	 * And it costs its own sub-plugin nothing either, which is the half worth pinning: by the time
+	 * `loaded` fires the require has happened, the guard constant is defined and the activation
+	 * callback has run. Left to the per-sub-plugin catch in `load_all()`, the throw would be reported
+	 * as "threw while loading, so it was abandoned" — a sentence that is false in both halves, on the
+	 * one channel a host is expected to build a log line on. It is reported as what it is instead:
+	 * somebody's listener, named by the hook it is on.
+	 */
+	public function test_a_throwing_load_listener_does_not_take_the_request_down(): void {
+		$this->record_lifecycle_actions();
+		$this->expect_incorrect_usage();
+
+		add_action(
+			'give/plugin_absorber/loaded',
+			static function (): void {
+				throw new RuntimeException( 'the telemetry endpoint was unreachable' );
+			}
+		);
+
+		$this->register( [ 'slug' => 'give-recurring' ] );
+		$this->register( [ 'slug' => 'give-fee-recovery' ] );
+
+		$this->loader()->load_all();
+
+		// Both files: the listener throws after each require, and the sub-plugin behind the first one
+		// still has to load. Without the guard neither number is ever read, because the throw ends the
+		// request.
+		$this->assertSame( 2, $this->bundled_plugin_loads() );
+
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			'A listener on give/plugin_absorber/loaded threw',
+			'The report names the hook, so the host knows whose listener to go and look at.'
+		);
+
+		$reported = implode( PHP_EOL, $this->incorrect_usage_messages );
+
+		// One per sub-plugin: the listener throws after each require, and each throw is its own
+		// listener's, not its sub-plugin's.
+		$this->assertSame(
+			2,
+			substr_count( $reported, 'A listener on give/plugin_absorber/loaded threw' )
+		);
+		$this->assertStringContainsString( 'the telemetry endpoint was unreachable', $reported );
+		$this->assertStringNotContainsString(
+			'threw while loading',
+			$reported,
+			'Both sub-plugins loaded. Reporting either as abandoned would have a host reading its own'
+				. ' listener bug as a load that broke.'
+		);
+	}
+
+	/**
+	 * The file gate is two things at once — a build the host has to fix, and a sub-plugin that is not
+	 * going to be there — so it is the one gate that reports to the developer *and* announces a skip.
+	 */
+	public function test_it_reports_a_missing_bundled_file_and_announces_it_as_a_skip(): void {
+		$this->record_lifecycle_actions();
+		$this->expect_incorrect_usage();
+
+		$path = $this->missing_bundled_plugin_file();
+
+		Absorber::register(
+			[
+				'slug'                   => 'give-recurring',
+				'bundled_plugin_file'    => $path,
+				'plugin_loaded_constant' => $this->make_guard_constant(),
+			]
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( [ [ 'give-recurring', Skip_Reason::FILE_UNREADABLE ] ], $this->skipped_calls );
+		$this->assertSame( [], $this->loaded_calls, 'A sub-plugin a gate turned away was not loaded.' );
+		$this->assert_the_library_reported_incorrect_usage_saying(
+			$path,
+			'The developer channel names the file, because the path is what the host has to correct.'
+		);
+	}
+
+	/**
 	 * @return void
 	 */
 	private function clear_activations(): void {
@@ -790,6 +1034,42 @@ class LoaderTest extends WPTestCase {
 	 */
 	private function loader(): Loader {
 		return $this->resolve( Loader::class );
+	}
+
+	/**
+	 * Listen to both lifecycle actions at once.
+	 *
+	 * One helper rather than two, because most of these tests assert on one list *and* on the other
+	 * staying empty — a skip that also fired `loaded`, a load that also fired `skipped` — and a test
+	 * that only attached the listener it names could not see the other half.
+	 *
+	 * The closures take references to the properties and are `static`: uopz is not involved here, but
+	 * the same shape keeps a listener from holding the test object alive on a hook.
+	 *
+	 * @return void
+	 */
+	private function record_lifecycle_actions(): void {
+		$loaded  = &$this->loaded_calls;
+		$skipped = &$this->skipped_calls;
+
+		add_action(
+			'give/plugin_absorber/loaded',
+			static function ( $sub_plugin ) use ( &$loaded ): void {
+				$loaded[] = $sub_plugin;
+			}
+		);
+
+		add_action(
+			'give/plugin_absorber/skipped',
+			static function ( $sub_plugin, $reason ) use ( &$skipped ): void {
+				$skipped[] = [
+					$sub_plugin instanceof Sub_Plugin ? $sub_plugin->get_slug() : $sub_plugin,
+					$reason,
+				];
+			},
+			10,
+			2
+		);
 	}
 
 	/**
