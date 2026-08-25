@@ -79,6 +79,7 @@
         "wpautop",
         "wpdb",
         "WPMU",
+        "wpnonce",
         "wpunit"
     ],
     "ignoreWords": [

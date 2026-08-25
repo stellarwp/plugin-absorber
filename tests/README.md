@@ -935,10 +935,15 @@ load guard cannot prevent: the owner reinstalls the standalone and presses
 Activate, WordPress includes it on top of the bundled copy, and the
 re-declaration is a real fatal that core's sandbox reports as "the plugin
 triggered a fatal error" — true, and useless. All the library gets to do is
-reword the sentence. Driven through core's own filter dispatch rather than by
-calling the rewriter, because the admin-only `add_filter()` is half of what has
-to work. The notice box stays core's — its classes, its dismiss button, its
-wrapper; only the sentence inside is ours.
+reword the sentence — either of core's two, since the same box carries "could
+not be resumed" out of recovery mode — and take core's `error_scrape` iframe
+down with it, which would otherwise re-include the standalone in a sandbox and
+print the re-declaration fatal under the message that just explained it away.
+Driven through core's own filter dispatch rather than by calling the rewriter,
+because the admin-only `add_filter()` is half of what has to work, and off a
+fixture core's own `wp_get_admin_notice()` assembled, iframe included — an
+invented notice would leave the removal proven by nothing. The notice box stays
+core's: its id, its classes, its wrapper; only the sentence inside is ours.
 
 ```mermaid
 sequenceDiagram
@@ -952,7 +957,7 @@ sequenceDiagram
     WP->>WP: redirects to plugins.php with plugin and _error_nonce
     WP->>Rw: wp_admin_notice_markup filter
     Rw->>Rw: screen is plugins, arg names a registered standalone, nonce verifies
-    Rw-->>WP: core's sentence swapped for the host's, wrapper untouched
+    Rw-->>WP: core's sentence swapped for the host's, error_scrape iframe removed, wrapper untouched
 ```
 
 #### `Scenario/HostTest.php` — the host's own wiring

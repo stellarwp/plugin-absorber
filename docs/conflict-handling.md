@@ -122,15 +122,24 @@ name is never stood down at all —
 The guard cannot help on the request that *activates* the standalone: WordPress includes the plugin
 being activated **after** the bundled copy has loaded, so that re-declaration is a real fatal. Core
 catches it in its activation sandbox and prints *"Plugin could not be activated because it triggered
-a fatal error."*
+a fatal error."*, with an iframe underneath that re-runs the activation with errors on display — so
+the raw `Cannot redeclare …` prints inside the same notice box.
 
-So the library filters `wp_admin_notice_markup` and swaps that sentence for the sub-plugin's
-`conflict_notice_message`, falling back to a generic one naming the slug. That filter is what puts
-the WordPress floor at 6.4.
+So the library filters `wp_admin_notice_markup`, swaps that sentence for the sub-plugin's
+`conflict_notice_message`, falling back to a generic one naming the slug, and takes the iframe out
+with it. That filter is what puts the WordPress floor at 6.4.
+
+Since WordPress 6.4 core sanitises its own notice on the way out, and that strips the iframe whether
+or not this library does — so the removal only matters if core stops.
+
+A standalone that fatals on an ordinary request is *paused* instead, and the **Resume** link that
+appears fails identically — *"Plugin could not be resumed because it triggered a fatal error."* Both
+sentences are rewritten. (The activation sandbox pauses nothing; that screen is reached separately.)
 
 It touches nothing else: the markup comes back untouched unless the screen is `plugins`, or
-`plugins-network` in the network admin; the `plugin` query arg names a registered standalone; and
-`_error_nonce` verifies.
+`plugins-network` in the network admin; `_error_nonce` verifies for a registered standalone, named by
+the `plugin` query arg on the activation screen and by the nonce alone on the resume one; and one of
+core's two sentences is still there to replace.
 
 The replacement runs through `wp_kses_post()`, so a knowledge-base link survives, and a message that
 filters down to nothing leaves core's wording standing. To keep core's wording throughout, remove

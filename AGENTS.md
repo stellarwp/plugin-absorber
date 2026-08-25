@@ -212,7 +212,7 @@ that drives the whole of it against a real WordPress is `tests/unit/Scenario/`.
 | `src/Plugin/` | `Deactivator` (turns the standalone off), `Checker` (answers whether a plugin is active in either scope, and whether it is network-active — `is_plugin_active_for_network()`, which is `false` off a network so no caller needs an `is_multisite()` guard), `Loads_Plugin_Functions` (pulls in `wp-admin/includes/plugin.php`), `Contracts\Deactivator_Interface`, `Contracts\Checker_Interface`. The only files that touch WordPress plugin functions. |
 | `src/Registry/` | `Registrar` (holds registered `Sub_Plugin` objects), `Reader` (the registration buffer, drained into the registrar on the way past; the object every pass reads the registry through), `Contracts\Registrar_Interface`. |
 | `src/Activator.php` | Runs a sub-plugin's activation callback once ever, recorded in one option. |
-| `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation-error screen for a registered standalone), `Contracts\Resolver_Interface`. |
+| `src/Conflict/` | `Detector` (whether a standalone is in the way), `Resolver` (which policy branch to take), `Gatekeeper` (which requests, and which users, may have one resolved), `Redirector` (where the user lands afterwards), `Rewriter` (rewrites the activation- and resume-error screens for a registered standalone), `Contracts\Resolver_Interface`. |
 | `src/Traits/` | `Guards_Hook_Prefix` (a missing prefix warns and stands down rather than throwing), `Guards_Plugin_Capability` (which capability a plugin act asks for, shared by the conflict gate and the notice queue). Cross-cutting only: a trait used by one folder lives in that folder. |
 | `src/Notices/` | `Writer` (what a notice says, stored under `slug:type` — `merge`, `conflict`, `stranding`, `dependency`), `Presenter` (who may consume it, render-then-clear), `Store` (keeps it), `Renderer` (draws it, `notice-error` for `dependency` and `notice-warning` for the rest), `Contracts\Writer_Interface`. |
 | `src/Contracts/`, `src/Exceptions/` | `Provider_Interface`, `Activator_Interface`, `Config_Exception`. |
@@ -415,9 +415,21 @@ takes an **untyped** argument: a filter receives whatever the filter before it r
 the screen least able to afford a second one. The rewrite refuses unless the screen is `plugins` or
 `plugins-network` — `wp-admin/network/plugins.php` is a one-line require of the other and draws the
 identical error, and on a default multisite it is the only screen an absorbed standalone can be
-reactivated from — the `plugin` query arg names a registered standalone and `_error_nonce` verifies.
-And it sanitises with `wp_kses_post()` *before* testing for emptiness, since a message that filters
-down to nothing must leave core's wording standing rather than blank the notice box.
+reactivated from — `_error_nonce` verifies for a registered standalone, and one of core's two
+sentences is still there to swap out. And it sanitises with `wp_kses_post()` *before* testing for
+emptiness, since a message that filters down to nothing must leave core's wording standing rather
+than blank the notice box.
+
+**Two sentences, and the sandbox iframe comes out with whichever one is rewritten.** The resume screen
+is not the activation screen's sequel: `plugin_sandbox_scrape()` defines `WP_SANDBOX_SCRAPING`, which
+stands the fatal-error handler down, so a failed activation pauses nothing. What pauses a standalone
+is a fatal on an ordinary request, and the Resume link appears in recovery mode. That redirect carries
+no `plugin` arg, so the nonce is tried against every registered standalone — behind `error=resuming`,
+since otherwise somebody else's failed activation fires `wp_verify_nonce_failed` once per sub-plugin.
+Core's `error_scrape` iframe re-runs the fatal with `display_errors` on, so it goes with a sentence
+that was replaced and stays on a notice that was not, where it is the only diagnostic left. Core has
+stripped that iframe itself since 6.4 — `wp_admin_notice()` echoes through `wp_kses_post()`, which
+allows no `<iframe>` — so the removal is forward-looking until core stops sanitising its own notice.
 
 **`Boot\Scheduler` wires `wp_admin_notice_markup` as a named static callback, not a closure.** Both
 admin-only hooks are `[ Absorber::class, … ]` pairs that resolve their own collaborator — the
