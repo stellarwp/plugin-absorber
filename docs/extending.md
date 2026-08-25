@@ -41,8 +41,9 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
 ```
 
 `Sub_Plugin` is one registered configuration; its accessors — `get_slug()` and the message
-accessors below — read the config keys and run [their filters](filters.md). A throw from any method
-here is caught at the hook boundary, reported through `_doing_it_wrong()`, and never retried.
+accessors below — read the config keys and run [their filters](filters.md). A throw from one is
+caught at the hook boundary and reported through `_doing_it_wrong()`; nothing is recorded, so the
+next request tries again.
 
 ### `Registry\Contracts\Registrar_Interface`
 
