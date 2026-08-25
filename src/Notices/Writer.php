@@ -14,27 +14,14 @@ use Nexcess\PluginAbsorber\Sub_Plugin;
 /**
  * What a notice says, and under which key it is kept.
  *
- * One reason to change: the wording. Where the queue is kept is `Store`'s, how a pending notice is
- * drawn is `Renderer`'s, and who may consume the queue is `Presenter`'s — so a host can reword a
- * sentence without reading any of them, and none of them has to be understood to answer "what does
- * the merge notice say".
- *
- * Option-backed through `Store`, so what is written here survives the resolver's redirect: the
- * request that raises a notice is almost never the one that shows it.
- *
- * The collaborator is a required constructor argument, and `Provider` is what hands it over. No
- * defaults: a class that can build its own dependencies has a second way to be constructed that
- * bypasses every binding a host made, and it is the one a test or a stray `new` reaches for.
- *
- * A host already using stellarwp/admin-notices can bind its own implementation of Writer_Interface
- * and read the same option, whose name is `option_name()`.
+ * Wording only: `Store` keeps the queue, `Renderer` draws it, `Presenter` decides who consumes it.
  *
  * @since 1.0.0
  */
 class Writer implements Writer_Interface {
 	/**
-	 * Notice types. Public because they are the second half of a queue key — an entry is stored
-	 * under `slug:type`, and reading the queue yourself means matching against these.
+	 * Notice types. Public because an entry is stored under `slug:type`, so reading the queue
+	 * yourself means matching against these.
 	 *
 	 * @since 1.0.0
 	 *
@@ -102,9 +89,6 @@ class Writer implements Writer_Interface {
 	}
 
 	/**
-	 * The default differs from the merge notice's on purpose: this one asks the user to act,
-	 * where that one reports something already done.
-	 *
 	 * @since 1.0.0
 	 *
 	 * @param Sub_Plugin $sub_plugin Sub-plugin concerned.
@@ -127,12 +111,8 @@ class Writer implements Writer_Interface {
 	}
 
 	/**
-	 * The "we left the standalone active to avoid stranding sites" notice.
-	 *
-	 * Its own type and its own default because it must not carry the conflict notice's "you can
-	 * safely deactivate the standalone": on the topology it fires for -- a network-active standalone
-	 * whose host is not network-activated -- a network-wide deactivation is the very thing that would
-	 * strand the sites the host never reached. The wording lives on `Sub_Plugin` with the others.
+	 * Its own type and default because it must not carry the conflict notice's "you can safely
+	 * deactivate the standalone" -- here that deactivation is what would strand the sites.
 	 *
 	 * @since 1.0.0
 	 *
@@ -171,11 +151,10 @@ class Writer implements Writer_Interface {
 	}
 
 	/**
-	 * Store one notice, keyed by slug and type so different types can coexist.
+	 * Store one notice, keyed `slug:type`.
 	 *
-	 * A sub-plugin can legitimately earn a merge notice while the conflict is resolved and a
-	 * dependency notice while the load is attempted, in the same request. Keying by slug alone
-	 * would silently drop one of them.
+	 * One sub-plugin can earn a merge notice and a dependency notice in the same request; keying by
+	 * slug alone would silently drop one of them.
 	 *
 	 * @since 1.0.0
 	 *

@@ -34,12 +34,9 @@ use StellarWP\ContainerContract\ContainerInterface;
 /**
  * Teaches the host's container how to build every collaborator this library uses.
  *
- * Binding only. Nothing here hooks, and nothing here resolves: `register()` runs at boot, when a
- * host may still be binding, and building an object at that point would pin whichever
- * implementation happened to be bound first.
- *
- * `final` because it is a list of bindings, and the way to change one is to bind it yourself
- * before boot rather than to inherit the list.
+ * Binding only, and nothing here resolves: `register()` runs at boot, when a host may still be
+ * binding, so building an object then would pin whichever implementation was bound first. `final`
+ * because a binding is changed by binding it yourself before boot, not by inheriting the list.
  *
  * @since 1.0.0
  */
@@ -68,9 +65,8 @@ final class Provider implements Provider_Interface {
 	public function register(): void {
 		$container = $this->container;
 
-		// The container under its own contract, so that a container which builds unbound classes
-		// reflectively can still satisfy the two collaborators that take one. Bound first because
-		// everything below it may be resolved that way.
+		// The container under its own contract, first of all, so that a container which builds unbound
+		// classes reflectively can still satisfy the collaborators below that take one.
 		$this->bind_once( ContainerInterface::class, $container );
 
 		$this->bind_once( Registrar_Interface::class, Registrar::class );
@@ -82,9 +78,8 @@ final class Provider implements Provider_Interface {
 		$this->bind_once( Redirector::class );
 		$this->bind_once( Gatekeeper::class );
 
-		// Explicit factories rather than a class name for everything with a constructor argument:
-		// container-contract promises `bind`, `get`, `has` and `singleton` and nothing about
-		// autowiring, so a container that resolves nothing by reflection has to be told.
+		// Explicit factories for everything with a constructor argument: container-contract promises
+		// nothing about autowiring, so a container that resolves nothing by reflection has to be told.
 		$this->bind_once(
 			Writer_Interface::class,
 			static function () use ( $container ): Writer {
@@ -156,29 +151,11 @@ final class Provider implements Provider_Interface {
 	}
 
 	/**
-	 * Bind as a singleton, unless the host already bound something.
+	 * Bind as a singleton -- every binding here is one -- unless the host bound this id first.
 	 *
-	 * The host binds first and wins: this library's defaults are what a container has when nobody
-	 * said otherwise, and a provider that overwrote a binding would make the order in which a host
-	 * calls `set_container()` and `boot()` decide which implementation it gets. It is also what
-	 * keeps a second `register()` harmless, instead of swapping in a fresh registrar and losing
-	 * every sub-plugin registered so far.
-	 *
-	 * The `class_exists()` half is what makes that question answerable at all. `has()` means "can
-	 * return an entry", not "the host bound this" -- di52 answers it with `isBound() ||
-	 * class_exists()`, so for a class id it is true before anything has been bound. Asked alone it
-	 * stands down every binding above whose id is a class, the explicit factories included, leaving
-	 * those collaborators autowired where the container autowires, broken where it does not, and
-	 * singletons nowhere. An interface no container can build unprompted, so there the same call
-	 * answers exactly what is being asked.
-	 *
-	 * What that costs is a host rebinding one of the concrete workers, which has to happen after
-	 * boot: nothing here can tell that binding apart from the container's own willingness to build
-	 * the class. The interface seams -- the ones a host is invited to replace -- are unaffected.
-	 *
-	 * Singletons throughout. Every one of these is either a registry whose contents are the point
-	 * or a stateless worker, and a second registrar would hold a second, emptier list of
-	 * sub-plugins.
+	 * The guard stands down on interface ids only: `has()` means "can return an entry", not "the host
+	 * bound this" -- di52 answers it with `isBound() || class_exists()` -- so dropping that half would
+	 * stand down every concrete binding above. A host replacing a concrete worker binds after boot.
 	 *
 	 * @since 1.0.0
 	 *

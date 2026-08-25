@@ -34,8 +34,7 @@ class Config {
 	/**
 	 * Set the unique per-host slug that keys this library's hooks and options.
 	 *
-	 * It is stored exactly as given: hook names repeat it verbatim, and only `get_option_name()`
-	 * folds it.
+	 * Stored exactly as given: hook names repeat it verbatim, and only `get_option_name()` folds it.
 	 *
 	 * @since 1.0.0
 	 *
@@ -79,9 +78,7 @@ class Config {
 	/**
 	 * Build the name of one of this library's filters.
 	 *
-	 * The prefix lives here, so everything derived from it is built here too. A collaborator that
-	 * assembled its own name would be repeating the segment between the host's prefix and the
-	 * hook's own name, and would have to be found and corrected if it ever changed.
+	 * Nothing else assembles the segment between the host's prefix and the key's own name.
 	 *
 	 * @since 1.0.0
 	 *
@@ -98,16 +95,9 @@ class Config {
 	/**
 	 * Build the name of one of this library's options.
 	 *
-	 * The prefix is a hook-naming value: `set_hook_prefix()` takes anything WordPress will accept
-	 * inside a filter name, mixed case and hyphens included, and `get_hook_name()` repeats it byte
-	 * for byte — a host that passed `Give-Core` must be able to hook
-	 * `Give-Core/plugin_absorber/should_load` and have it fire. A storage key answers to a
-	 * narrower convention, so the folding happens here and nowhere else: the same prefix produces
+	 * Deliberately does not share `get_hook_name()`'s normalisation, and must not be collapsed into
+	 * it: a host that passed `Give-Core` hooks that verbatim, while the option folds to
 	 * `give_core_plugin_absorber_notices`.
-	 *
-	 * The `_plugin_absorber_` segment lives here for the reason `get_hook_name()` gives for its
-	 * own: the notice queue is not the only option keyed this way, and a segment each caller
-	 * assembled would have to be found in every one of them if it ever changed.
 	 *
 	 * @since 1.0.0
 	 *
@@ -124,10 +114,8 @@ class Config {
 	/**
 	 * Share the host's container. Required, and required before boot().
 	 *
-	 * Every collaborator this library uses is resolved from it, which is what makes each of them
-	 * replaceable by binding an interface. There is no second, container-less path to keep working
-	 * beside that one: two ways to reach a collaborator means two sets of behaviour to reason
-	 * about, and the one nobody runs is the one that rots.
+	 * Every collaborator resolves from it, which is what makes each replaceable by binding an
+	 * interface. There is deliberately no container-less path.
 	 *
 	 * @since 1.0.0
 	 *
@@ -166,15 +154,11 @@ class Config {
 	}
 
 	/**
-	 * Tell the library the host plugin's own basename, so a standalone's activation scope can be
-	 * compared against the host's on multisite.
+	 * Tell the library the host plugin's own basename, for the multisite stranding guard.
 	 *
-	 * Optional, and read by one thing: the conflict resolver's guard against deactivating a
-	 * network-active standalone whose bundled replacement ships in a host that is not itself
-	 * network-active -- a deactivation that would strand the sites the host never reached. Left
-	 * unset, that guard stands down and deactivation behaves exactly as it always has. Stored
-	 * exactly as given: a basename is a path, `directory/file.php`, not a hook-naming value, so the
-	 * hook-prefix validator's character rules deliberately do not apply here.
+	 * Optional, and read by one thing: the guard that declines to deactivate a network-active
+	 * standalone whose host is not. Left unset, it stands down. Stored exactly as given -- a
+	 * basename is a path, not a hook-naming value, so the prefix rules do not apply.
 	 *
 	 * @since 1.0.0
 	 *
@@ -189,9 +173,8 @@ class Config {
 	/**
 	 * The host plugin basename, or an empty string when none was set.
 	 *
-	 * Does not throw the way `get_hook_prefix()` and `get_container()` do. Those name a step the host
-	 * must take before boot; this is optional, and an empty string is the honest answer for a host
-	 * that did not opt into the multisite guard -- the same value that stands the guard down.
+	 * Does not throw the way `get_hook_prefix()` and `get_container()` do: an empty string is the
+	 * honest answer for a host that did not opt in.
 	 *
 	 * @since 1.0.0
 	 *
@@ -204,10 +187,9 @@ class Config {
 	/**
 	 * The hook prefix folded into the shape a storage key takes.
 	 *
-	 * Only option names are folded, and only on the way out — the stored prefix keeps whatever the
-	 * host passed, because that is what its hook names are made of. Two prefixes differing only in
-	 * case or in hyphens against underscores would land on the same option, which is the price of
-	 * asking a host for one prefix rather than two; no host runs both `Give-Core` and `give_core`.
+	 * Folded on the way out only — the stored prefix keeps whatever the host's hook names are made
+	 * of. Two prefixes differing only in case or hyphens collide here, the price of asking a host
+	 * for one prefix rather than two.
 	 *
 	 * @since 1.0.0
 	 *
