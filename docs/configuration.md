@@ -198,8 +198,9 @@ git merge -X subtree=sub-plugins/give-recurring old-repo/main
 
 Host-only edits under the prefix survive, new files arrive nested, and blame still names the author
 who wrote each line in the standalone. Repeat it for each batch, then remove the remote once the
-standalone is archived. A conflict here is a real one — both sides changed the same lines — not a
-path mix-up.
+standalone is archived. A conflict here is genuine — both sides edited the same path, or one edited
+what the other deleted, or both added it — rather than a sign the prefix is wrong. Read the unmerged
+paths out of `git status` and resolve each by its type.
 
 **Do not run the first import again.** A second nested branch shares history with the first, so git
 picks a merge base in which the standalone's files were still at its own root, and reads the new
