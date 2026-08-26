@@ -185,6 +185,29 @@ line to the author who wrote it in the standalone. Path-filtered
 `git log -- sub-plugins/give-recurring` is the exception and stops at the move, since that is where
 the directory begins.
 
+### Later commits to the standalone
+
+The standalone may get more commits before it is archived. Keep the `old-repo` remote instead of
+removing it, and merge each batch with `-X subtree`, which tells git where the standalone's root now
+lives:
+
+```bash
+git fetch --no-tags old-repo
+git merge -X subtree=sub-plugins/give-recurring old-repo/main
+```
+
+Host-only edits under the prefix survive, new files arrive nested, and blame still names the author
+who wrote each line in the standalone. Repeat it for each batch, then remove the remote once the
+standalone is archived. A conflict here is genuine — both sides edited the same path, or one edited
+what the other deleted, or both added it — rather than a sign the prefix is wrong. Read the unmerged
+paths out of `git status` and resolve each by its type.
+
+**Do not run the first import again.** A second nested branch shares history with the first, so git
+picks a merge base in which the standalone's files were still at its own root, and reads the new
+nesting as a rename away from that root. A file the host plugin keeps at *its* root under one of the
+same names — `README.md`, most often — is deleted as part of that rename, and the merge reports no
+conflict.
+
 ## What changes for the bundled plugin
 
 This library includes bundled plugins from inside a method, not at global scope, so variables
