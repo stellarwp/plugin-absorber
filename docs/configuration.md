@@ -105,6 +105,86 @@ load pass first; a site created afterwards never gets it. Per-site work is yours
 a later site yours to catch on `wp_initialize_site`: see
 [Do per-site work on multisite](recipes.md#do-per-site-work-on-multisite).
 
+## Bringing the standalone's git history with it
+
+Copying the standalone's files into your repository loses its git history. The commit messages, the
+blame, and with them the reason any given line is written the way it is, all stay behind in the old
+repository — so a developer or an agent working on the bundled copy later has nothing to go on, and
+`git blame` answers every question with the single commit that copied the files in.
+
+A submodule would keep that history, but it is the wrong shape here: a bundled copy usually needs
+small host-only edits that have no business in the standalone's repository, which is normally
+archived soon afterwards anyway.
+
+Merge the standalone in as an unrelated history instead, nesting its whole tree under the sub-plugin
+directory first so that the two share no path and the merge has nothing to conflict over:
+
+```bash
+# On a branch of the host plugin's repo.
+git switch -c absorb-give-recurring
+
+# Pull the standalone's commits in as a second, unrelated history.
+git remote add old-repo git@github.com:givewp/give-recurring.git
+git fetch --no-tags old-repo
+
+# Nest every top-level entry it tracks, in a scratch worktree so that this checkout
+# is never switched away from.
+git worktree add -b old-repo-import ../absorb-worktree old-repo/main
+cd ../absorb-worktree
+mkdir __absorb-import
+git ls-tree --name-only -z HEAD | xargs -0 -I{} git mv {} __absorb-import/
+mkdir -p sub-plugins
+git mv __absorb-import sub-plugins/give-recurring
+git commit -m "Move Give Recurring under sub-plugins/give-recurring"
+cd -
+
+# Nothing overlaps now, so this merge has nothing to conflict over.
+git merge --allow-unrelated-histories old-repo-import
+
+# The history is part of your branch now; the rest can be deleted.
+git worktree remove ../absorb-worktree
+git remote remove old-repo
+git branch -d old-repo-import
+```
+
+**Move everything, so the merge only ever touches the sub-plugin directory.** The standalone's
+`README.md`, `LICENSE` and `.gitignore` sit at *its* top level: leave them there and they merge into
+*your* repository root, conflicting with the files of the same name and adding the ones with no
+counterpart. `git ls-tree` moves whatever the standalone tracks, which a hand-written list of paths
+will not.
+
+**The staging directory keeps the destination out of the tree being moved.** That move runs against
+the standalone's own checkout, so a destination like `includes/notifications` lands under an
+`includes/` the standalone tracks itself, and git will not move a directory into itself. Only that
+one entry fails while every other one succeeds, so the error scrolls past in a screen of moves that
+worked. Setting the whole tree aside under a name nothing uses, then renaming it into place once,
+does not care where the destination sits.
+
+**The scratch worktree is what stops this deleting your build output.** Checking the standalone's
+tree out over your own means git writing a tree that knows nothing about your repository, and git
+does not protect ignored files: one that collides is overwritten in place, and switching back then
+removes any directory left holding nothing but ignored files. A `dist/` or `assets/` the standalone
+also tracks takes your untracked build artifacts with it, silently, and a `.gitignore`d database dump
+under one goes the same way. A worktree is a second checkout of the same repository in another
+directory, so the branch work happens there and yours is only ever merged into.
+
+**`--no-tags`.** A plain fetch also takes any tag reachable from what it downloads. The standalone's
+`1.1.0` then sits among your own releases, while a `1.0.0` you already have silently does not import
+at all, since git will not move an existing tag.
+
+**The move commit moves and nothing else.** `git mv` alone leaves every blob identical, so rename
+detection ties each file to its past. Rewrite a file in that same commit and it drops below the
+similarity threshold, taking its history with it — blame stops at the move. Host-only edits belong in
+commits after the merge.
+
+**Merge the PR with a merge commit.** Squash flattens the imported commits into one and rebase
+replays them onto your trunk; either discards what this was for.
+
+Afterwards `git blame` and `git log --follow` cross the move with no extra flags, attributing each
+line to the author who wrote it in the standalone. Path-filtered
+`git log -- sub-plugins/give-recurring` is the exception and stops at the move, since that is where
+the directory begins.
+
 ## What changes for the bundled plugin
 
 This library includes bundled plugins from inside a method, not at global scope, so variables
