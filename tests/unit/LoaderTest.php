@@ -406,6 +406,125 @@ class LoaderTest extends WPTestCase {
 		$this->assertSame( 1, $checked, 'The recorder must catch a call that really happened.' );
 	}
 
+	/**
+	 * Tests that the announcement lands with the require still ahead of it.
+	 *
+	 * The whole point of the hook: a listener registers what the bundled file needs at its own file
+	 * scope, so it has to run first.
+	 *
+	 * @return void
+	 */
+	public function test_the_loading_action_fires_before_the_require(): void {
+		$this->register();
+
+		$loads_at_announcement = null;
+		add_action(
+			'give/plugin_absorber/loading',
+			function () use ( &$loads_at_announcement ) {
+				$loads_at_announcement = $this->bundled_plugin_loads();
+			}
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertSame( 0, $loads_at_announcement, 'The require must still be ahead of the listener.' );
+		$this->assertSame( 1, $this->bundled_plugin_loads() );
+	}
+
+	/**
+	 * Tests that a listener is handed the sub-plugin about to be loaded.
+	 *
+	 * @return void
+	 */
+	public function test_the_loading_action_receives_the_sub_plugin(): void {
+		$this->register();
+
+		$received = null;
+		add_action(
+			'give/plugin_absorber/loading',
+			static function ( $sub_plugin ) use ( &$received ) {
+				$received = $sub_plugin;
+			}
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertInstanceOf( Sub_Plugin::class, $received );
+		$this->assertSame( 'give-recurring', $received->get_slug() );
+	}
+
+	/**
+	 * Tests that a sub-plugin a gate turned away announces nothing.
+	 *
+	 * @return void
+	 */
+	public function test_the_loading_action_does_not_fire_for_a_sub_plugin_a_gate_turned_away(): void {
+		$this->register( [ 'enabled' => false ] );
+
+		$fired = false;
+		add_action(
+			'give/plugin_absorber/loading',
+			static function () use ( &$fired ) {
+				$fired = true;
+			}
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertFalse( $fired );
+		$this->assertSame( 0, $this->bundled_plugin_loads() );
+	}
+
+	/**
+	 * Tests that a veto on the last gate stops the announcement as well as the require.
+	 *
+	 * @return void
+	 */
+	public function test_the_loading_action_does_not_fire_when_the_should_load_filter_vetoes(): void {
+		$this->register();
+
+		add_filter( 'give/plugin_absorber/should_load', '__return_false' );
+
+		$fired = false;
+		add_action(
+			'give/plugin_absorber/loading',
+			static function () use ( &$fired ) {
+				$fired = true;
+			}
+		);
+
+		$this->loader()->load_all();
+
+		$this->assertFalse( $fired );
+	}
+
+	/**
+	 * Tests that a throwing listener stops the require rather than being swallowed.
+	 *
+	 * `announce()` catches a listener's throw, which is right once the require has happened and wrong
+	 * before it. This one falls to `load_all()`, which abandons the sub-plugin.
+	 *
+	 * @return void
+	 */
+	public function test_a_throwing_loading_listener_abandons_the_sub_plugin_before_the_require(): void {
+		$this->register();
+
+		add_action(
+			'give/plugin_absorber/loading',
+			static function (): void {
+				throw new RuntimeException( 'the host could not prepare' );
+			}
+		);
+
+		$this->expect_incorrect_usage();
+
+		$this->loader()->load_all();
+
+		// Abandoned rather than half-loaded: announce() would have swallowed this and required the
+		// file anyway.
+		$this->assertSame( 0, $this->bundled_plugin_loads() );
+	}
+
 	public function test_the_should_load_filter_can_veto_the_load(): void {
 		$this->register();
 

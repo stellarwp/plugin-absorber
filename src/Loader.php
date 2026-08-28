@@ -181,6 +181,15 @@ class Loader {
 			return;
 		}
 
+		// The last point before the require, and the only one where a host can put something in place
+		// that the bundled file needs at its own file scope. `should_load` is not that point:
+		// `Conflict\Detector` applies the same filter a priority earlier, when a standalone copy is
+		// in the way and this one is about to be turned away.
+		//
+		// Not through announce(): that swallows a listener's throw, which is wrong with the require
+		// still ahead. `load_all()` catches it and abandons the sub-plugin, which is accurate here.
+		do_action_ref_array( Config::get_hook_name( 'loading' ), [ $sub_plugin ] );
+
 		// An include takes the scope of the line it sits on, so top-level assignments in the bundled
 		// file are function-local where wp-settings.php would have made them global. Not fixable.
 		require_once $file;
