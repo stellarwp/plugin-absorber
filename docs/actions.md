@@ -76,11 +76,11 @@ add_action( 'give/plugin_absorber/skipped', function ( $sub_plugin, $reason ) {
 The values are fixed API and will not change. New reasons may be added, so treat one you do not
 recognise as a plain skip rather than as an error.
 
-`loading`, `loaded` and `skipped` do not add up to everything registered, so do not count on them
-to. A
-sub-plugin whose `enabled`, `dependency_check` or `should_load` callable throws, or whose bundled
-file throws as it is required, announces neither; and a `DEACTIVATE` conflict redirects before the
-load pass runs at all, so on that request no sub-plugin announces anything.
+These three do not add up to everything registered, so do not read them as a census. A sub-plugin
+whose `enabled`, `dependency_check` or `should_load` callable throws announces none of them. One
+whose bundled file throws as it is required has already announced `loading`, and will announce
+neither `loaded` nor `skipped`. And a `DEACTIVATE` conflict redirects before the load pass runs at
+all, so on that request no sub-plugin announces anything.
 
 ## Your listener cannot take the site down
 
