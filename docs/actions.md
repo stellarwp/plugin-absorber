@@ -9,9 +9,15 @@ you override. `{prefix}` is the value passed to `Config::set_hook_prefix()`.
 | `{prefix}/plugin_absorber/loaded` | `Sub_Plugin $sub_plugin` | A bundled file was required, and its activation callback has already run. |
 | `{prefix}/plugin_absorber/skipped` | `Sub_Plugin $sub_plugin`, `string $reason` | A gate turned a sub-plugin away. |
 
-Between them they cover what the load pass does with a sub-plugin it reached: one that is about to
-load, one that loaded, and one a gate turned away. They are not a census of what you registered —
-see below for what none of them announces.
+Each is accurate for the sub-plugin it names, but some registered sub-plugins announce nothing at
+all, so `loaded` and `skipped` together do not add up to everything registered:
+
+- A sub-plugin whose `enabled`, `dependency_check` or `should_load` callable throws announces
+  nothing.
+- One whose bundled file throws as it is required has announced `loading`, but announces neither
+  `loaded` nor `skipped`.
+- A `DEACTIVATE` conflict that deactivates a standalone copy redirects before the load pass runs, so
+  nothing is announced on that request.
 
 ## Loading, before the require
 
@@ -76,18 +82,13 @@ add_action( 'give/plugin_absorber/skipped', function ( $sub_plugin, $reason ) {
 The values are fixed API and will not change. New reasons may be added, so treat one you do not
 recognise as a plain skip rather than as an error.
 
-These three do not add up to everything registered, so do not read them as a census. A sub-plugin
-whose `enabled`, `dependency_check` or `should_load` callable throws announces none of them. One
-whose bundled file throws as it is required has already announced `loading`, and will announce
-neither `loaded` nor `skipped`. And a `DEACTIVATE` conflict redirects before the load pass runs at
-all, so on that request no sub-plugin announces anything.
-
 ## Your listener cannot take the site down
 
 `loaded` and `skipped` fire from inside `plugins_loaded`, so a listener that throws is caught rather
-than allowed out. (`loading` is the exception, for the reason given above.) It costs nothing: by the time `loaded` fires the require has happened, the guard constant has
-been checked and the activation callback has run, and a `skipped` announcement is the last thing that
-happens to that sub-plugin either way. The throw is reported through `_doing_it_wrong()` as what it
-is — a listener, named by the hook it is on — rather than as the sub-plugin having failed, so a host
-reading its log does not mistake its own bug for a load that broke. That is a backstop, not a
-licence — a listener here runs on every request the site serves, so keep it cheap and keep it quiet.
+than allowed out. (`loading` is the exception, for the reason given above.) It costs nothing: by the
+time `loaded` fires the require has happened, the guard constant has been checked and the activation
+callback has run, and a `skipped` announcement is the last thing that happens to that sub-plugin
+either way. The throw is reported through `_doing_it_wrong()` as what it is — a listener, named by
+the hook it is on — rather than as the sub-plugin having failed, so a host reading its log does not
+mistake its own bug for a load that broke. That is a backstop, not a licence — a listener here runs
+on every request the site serves, so keep it cheap and keep it quiet.
