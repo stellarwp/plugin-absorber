@@ -1,0 +1,78 @@
+name: Tools
+
+# Only the shell tooling under bin/ is linted here, so a PHP-only pull request
+# has no reason to run this.
+on:
+  pull_request:
+    paths:
+      - "bin/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/tools.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "bin/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/tools.yml"
+  workflow_dispatch:
+
+# This workflow only reads the repository. Narrow the token accordingly.
+permissions:
+  contents: read
+
+# A superseded PR run is a result nobody is waiting on any more. Pushes to a
+# long-lived branch are left alone so their history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  shell:
+    name: shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # shellcheck ships with the ubuntu-latest image, so there is nothing to
+      # install. -S style is the strictest level it offers; the script is small
+      # enough that there is no reason to run it at anything looser.
+      - name: Lint with shellcheck
+        run: shellcheck --severity=style bin/absorb-history.sh
+
+      # A syntax error that shellcheck parses around still has to be caught,
+      # and this is the interpreter's own answer rather than a linter's.
+      - name: Parse with bash
+        run: bash -n bin/absorb-history.sh
+
+      - name: Check the script is executable
+        run: |
+          if [ ! -x bin/absorb-history.sh ]; then
+            echo "bin/absorb-history.sh is not executable. Run: git update-index --chmod=+x bin/absorb-history.sh" >&2
+            exit 1
+          fi
+
+      # The script compares its own VERSION against the published plugin.json to
+      # tell a stale copy it is stale. Let the two drift and that check reports
+      # every up-to-date copy as behind, which is worse than not checking.
+      - name: Check the script and plugin.json agree on the version
+        run: |
+          script_version=$(sed -n "s/^VERSION='\(.*\)'$/\1/p" bin/absorb-history.sh)
+          plugin_version=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+
+          if [ -z "${script_version}" ]; then
+            echo "Could not read VERSION from bin/absorb-history.sh." >&2
+            exit 1
+          fi
+
+          if [ "${script_version}" != "${plugin_version}" ]; then
+            echo "bin/absorb-history.sh says ${script_version}, .claude-plugin/plugin.json says ${plugin_version}." >&2
+            exit 1
+          fi
+
+          echo "Both say ${script_version}."

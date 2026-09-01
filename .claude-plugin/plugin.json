@@ -1,0 +1,18 @@
+{
+    "name": "plugin-absorber",
+    "description": "Bring an absorbed standalone plugin's git history into the host plugin's repository",
+    "version": "1.0.0",
+    "author": {
+        "name": "Nexcess",
+        "email": "dev@stellarwp.com"
+    },
+    "homepage": "https://github.com/stellarwp/plugin-absorber/blob/main/docs/git-history.md",
+    "repository": "https://github.com/stellarwp/plugin-absorber",
+    "license": "GPL-2.0-or-later",
+    "keywords": [
+        "wordpress",
+        "git",
+        "history",
+        "absorb"
+    ]
+}
