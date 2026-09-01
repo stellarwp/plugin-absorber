@@ -525,6 +525,8 @@ do_import() {
 }
 
 do_sync() {
+	local unmerged
+
 	add_remote_if_absent
 	fetch_standalone
 
@@ -537,15 +539,26 @@ do_sync() {
 		return 0
 	fi
 
+	unmerged=$( git --no-pager diff --name-only --diff-filter=U )
+
+	# A merge can fail without conflicting at all, and saying "these paths are
+	# unmerged" above an empty list sends the reader looking for a conflict that
+	# is not there. Only claim conflicts when git actually left some.
+	if [ -z "$unmerged" ]; then
+		note ''
+		note 'The merge failed without leaving conflicts. Nothing was changed.'
+		exit 1
+	fi
+
 	# A conflict here is genuine -- both sides edited the same path, or one
 	# edited what the other deleted, or both added it -- rather than a sign the
 	# prefix is wrong. Leave it in the tree to be resolved by its type.
 	note ''
 	note 'The merge stopped on conflicts. These paths are unmerged:'
 	note ''
-	git --no-pager diff --name-only --diff-filter=U | sed 's/^/  /' >&2
+	printf '%s\n' "$unmerged" | sed 's/^/  /' >&2
 	note ''
-	note "Resolve each by its type, then: git commit"
+	note 'Resolve each by its type, then: git commit'
 	note 'Or abandon the batch with: git merge --abort'
 
 	exit 1
