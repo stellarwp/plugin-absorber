@@ -75,9 +75,13 @@ shellcheck --severity=style bin/absorb-history.sh
 
 # Exercise the plugin from this checkout, without merging anything. A local-path
 # marketplace reads the working tree, so whatever branch is checked out is what
-# installs. CLAUDE_CONFIG_DIR keeps it out of your real setup.
-CLAUDE_CONFIG_DIR=$(mktemp -d) claude plugin marketplace add .
-CLAUDE_CONFIG_DIR=… claude plugin install plugin-absorber@nexcess-plugin-absorber --scope user
+# installs. Both commands need the same CLAUDE_CONFIG_DIR -- it is where the
+# marketplace is registered, so the install cannot find it under another one --
+# and pointing it at a throwaway directory keeps all of this out of your real
+# setup.
+export CLAUDE_CONFIG_DIR=$(mktemp -d)
+claude plugin marketplace add ./
+claude plugin install plugin-absorber@nexcess-plugin-absorber --scope user
 
 # Or from a pushed branch, which is the only way to exercise the real clone path.
 # Use the full URL form: the owner/repo shorthand takes no #ref suffix.
