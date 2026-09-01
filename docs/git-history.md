@@ -48,8 +48,13 @@ standalone's root now lives:
 ```
 
 Host-only edits under the prefix survive, new files arrive nested, and blame still names the author
-who wrote each line in the standalone. Repeat it for each batch, then `git remote remove` once the
-standalone is archived.
+who wrote each line in the standalone. Repeat it for each batch, then remove the remote once the
+standalone is archived — `import` prints the exact command, and the remote is named after the
+destination unless you passed `--remote`:
+
+```bash
+git remote remove absorb-give-recurring
+```
 
 A conflict here is genuine — both sides edited the same path, or one edited what the other deleted,
 or both added it — rather than a sign the prefix is wrong. The script leaves the merge in your tree
