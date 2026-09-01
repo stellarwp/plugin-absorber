@@ -37,7 +37,9 @@ created_host_branch=''
 created_remote=''
 created_worktree=''
 created_import_branch=''
+created_fetched_ref=''
 import_branch=''
+fetched_ref=''
 scratch_parent=''
 rollback_armed=0
 
@@ -134,6 +136,7 @@ rollback() {
 
 	[ -z "$created_worktree" ] || git worktree remove --force "$created_worktree" >/dev/null 2>&1 || true
 	[ -z "$created_import_branch" ] || git branch -D "$created_import_branch" >/dev/null 2>&1 || true
+	[ -z "$created_fetched_ref" ] || git update-ref -d "$created_fetched_ref" >/dev/null 2>&1 || true
 	[ -z "$original_branch" ] || git switch --quiet "$original_branch" >/dev/null 2>&1 || true
 	[ -z "$created_host_branch" ] || git branch -D "$created_host_branch" >/dev/null 2>&1 || true
 	[ -z "$created_remote" ] || git remote remove "$created_remote" >/dev/null 2>&1 || true
@@ -229,6 +232,7 @@ parse_args() {
 	[ -n "$display_name" ] || display_name=$(basename "$into")
 
 	import_branch="${host_branch}-nested"
+	fetched_ref="refs/absorb-history/${remote_name}"
 }
 
 # git switch arrived in 2.23. Everything else here is older than that.
@@ -356,8 +360,8 @@ print_import_plan() {
 	say ''
 	say "  git switch -c ${host_branch}"
 	say "  git remote add ${remote_name} ${repo_url}          # when absent"
-	say "  git fetch --no-tags ${remote_name}"
-	say "  git worktree add -b ${import_branch} <scratch> ${remote_name}/${ref}"
+	say "  git fetch --no-tags ${remote_name} +${ref}:${fetched_ref}"
+	say "  git worktree add -b ${import_branch} <scratch> ${fetched_ref}"
 	say '  # in the scratch worktree, one commit that only renames:'
 	say "  #   every top-level entry -> ${STAGING_DIR}/, then ${STAGING_DIR} -> ${into}"
 	say "  git merge --allow-unrelated-histories ${import_branch}"
@@ -368,10 +372,10 @@ print_import_plan() {
 }
 
 print_sync_plan() {
-	say "Merge ${display_name}'s later commits from ${remote_name}/${ref} into ${into}/"
+	say "Merge ${display_name}'s later commits from ${remote_name} ${ref} into ${into}/"
 	say ''
-	say "  git fetch --no-tags ${remote_name}"
-	say "  git merge -X subtree=${into} ${remote_name}/${ref}"
+	say "  git fetch --no-tags ${remote_name} +${ref}:${fetched_ref}"
+	say "  git merge -X subtree=${into} ${fetched_ref}"
 }
 
 confirm() {
@@ -397,6 +401,28 @@ add_remote_if_absent() {
 
 	git remote add "$remote_name" "$repo_url"
 	created_remote=$remote_name
+}
+
+# --no-tags: a plain fetch also takes any tag reachable from what it downloads,
+# so the standalone's 1.1.0 lands among the host's own releases, while a 1.0.0
+# the host already has silently does not import at all.
+#
+# That is also why the ref asked for is fetched by name into a ref of this
+# script's own rather than read back as <remote>/<ref>. With --no-tags a tag
+# never arrives under the remote's namespace at all, so --ref v1.2.3 would pass
+# every check and then fail at "invalid reference". Fetching it explicitly works
+# for a branch and a tag alike, and everything downstream reads the one ref.
+fetch_standalone() {
+	git fetch --no-tags --force "$remote_name" "+${ref}:${fetched_ref}"
+	created_fetched_ref=$fetched_ref
+}
+
+# It is re-fetched on demand, so there is no reason to leave it behind.
+drop_fetched_ref() {
+	[ -n "$fetched_ref" ] || return 0
+
+	git update-ref -d "$fetched_ref" >/dev/null 2>&1 || true
+	created_fetched_ref=''
 }
 
 # Sets the standalone's whole tree aside and renames it into place as one
@@ -444,19 +470,15 @@ do_import() {
 	created_host_branch=$host_branch
 
 	add_remote_if_absent
-
-	# --no-tags: a plain fetch also takes any tag reachable from what it
-	# downloads, so the standalone's 1.1.0 lands among the host's own releases,
-	# while a 1.0.0 the host already has silently does not import at all.
-	git fetch --no-tags "$remote_name"
+	fetch_standalone
 
 	# The destination is not the whole question: importing the same standalone a
 	# second time is the mistake, wherever it lands. Once the two share a merge
 	# base, git picks one in which the standalone's files were still at its own
 	# root and reads a fresh nesting as a rename away from it. The check needs
-	# the fetched refs, so it sits here rather than in preflight -- the fetch
+	# the fetched ref, so it sits here rather than in preflight -- the fetch
 	# above is the only thing it leaves to undo.
-	if git merge-base HEAD "$remote_name/$ref" >/dev/null 2>&1; then
+	if git merge-base HEAD "$fetched_ref" >/dev/null 2>&1; then
 		die "${display_name}'s history is already in this branch. Use 'sync' for later commits."
 	fi
 
@@ -465,7 +487,7 @@ do_import() {
 	# over the host's would have git write a tree that knows nothing about it,
 	# and git does not protect ignored files: a dist/ or assets/ the standalone
 	# also tracks takes the host's untracked build output with it, silently.
-	git worktree add --quiet -b "$import_branch" "$worktree" "$remote_name/$ref"
+	git worktree add --quiet -b "$import_branch" "$worktree" "$fetched_ref"
 	created_worktree=$worktree
 	created_import_branch=$import_branch
 
@@ -490,6 +512,8 @@ do_import() {
 	git branch --quiet -D "$import_branch"
 	created_import_branch=''
 
+	drop_fetched_ref
+
 	say ''
 	say "${display_name} is under ${into}/ on ${host_branch}, with its history."
 	say ''
@@ -502,12 +526,12 @@ do_import() {
 
 do_sync() {
 	add_remote_if_absent
-
-	git fetch --no-tags "$remote_name"
+	fetch_standalone
 
 	# -X subtree tells git where the standalone's root now lives, so host-only
 	# edits under the prefix survive and new files arrive nested.
-	if git merge -X subtree="$into" --no-edit "$remote_name/$ref"; then
+	if git merge -X subtree="$into" --no-edit "$fetched_ref"; then
+		drop_fetched_ref
 		say ''
 		say "${display_name}'s later commits are merged under ${into}/."
 		return 0
