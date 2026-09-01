@@ -113,7 +113,8 @@ standalone in as an unrelated history keeps both, and `bin/absorb-history.sh` in
 repository does it:
 
 ```bash
-absorb-history.sh import --repo git@github.com:givewp/give-recurring.git \
+~/src/plugin-absorber/bin/absorb-history.sh import \
+    --repo git@github.com:givewp/give-recurring.git \
     --into sub-plugins/give-recurring
 ```
 
