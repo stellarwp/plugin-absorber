@@ -545,6 +545,11 @@ do_sync() {
 	# unmerged" above an empty list sends the reader looking for a conflict that
 	# is not there. Only claim conflicts when git actually left some.
 	if [ -z "$unmerged" ]; then
+		# No merge started, so nothing refers to the fetched ref and it can go.
+		# The conflict path below deliberately keeps it: the pending merge names
+		# that commit, and the next successful sync clears it anyway.
+		drop_fetched_ref
+
 		note ''
 		note 'The merge failed without leaving conflicts. Nothing was changed.'
 		exit 1
