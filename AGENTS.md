@@ -63,6 +63,49 @@ type guards must survive even where the PHPDoc says they cannot fail. The PHP fl
 `config.platform`; do not use 8.x syntax (no enums, no promoted properties, no `mixed` type
 declarations).
 
+### The repository is also a Claude Code plugin marketplace
+
+`bin/absorb-history.sh` imports an absorbed standalone's git history into a host plugin's repository.
+`skills/absorb-history/SKILL.md` is an interface to it, and `.claude-plugin/` is the catalog and
+manifest that ship it. The script is the source of truth for the commands; `docs/git-history.md` is
+the source of truth for why each one is what it is.
+
+```bash
+shellcheck --severity=style bin/absorb-history.sh
+
+# Exercise the plugin from this checkout, without merging anything. A local-path
+# marketplace reads the working tree, so whatever branch is checked out is what
+# installs. Both commands need the same CLAUDE_CONFIG_DIR -- it is where the
+# marketplace is registered, so the install cannot find it under another one --
+# and pointing it at a throwaway directory keeps all of this out of your real
+# setup.
+export CLAUDE_CONFIG_DIR=$(mktemp -d)
+claude plugin marketplace add ./
+claude plugin install plugin-absorber@nexcess-plugin-absorber --scope user
+
+# Or from a pushed branch, which is the only way to exercise the real clone path.
+# Use the full URL form: the owner/repo shorthand takes no #ref suffix.
+/plugin marketplace add https://github.com/stellarwp/plugin-absorber.git#<branch>
+```
+
+Adding the local and the GitHub copy at once collides — both register as
+`plugin-absorber@nexcess-plugin-absorber` — so remove one before adding the other.
+
+**`/bin`, `/skills` and `/.claude-plugin` are all `export-ignore`d**, so none of this reaches
+Packagist. `/bin` is the one worth saying out loud: a root `bin/` in a Composer package normally
+ships, and `composer.json` deliberately has no `bin` key.
+
+**The plugin root is the repository root**, which is what lets the script live at `bin/` instead of
+under a Claude-specific directory: installing a plugin copies the plugin's own directory, so a script
+outside it would not be there when the skill runs. The cost is that `"source": "."` copies the whole
+repository into the plugin cache. A nested plugin directory would copy less and was rejected anyway —
+a tool a developer runs by hand should not be reachable only through `skills/`.
+
+**The version is in two places** — `VERSION=` in the script and `version` in
+`.claude-plugin/plugin.json` — because the script compares its own against the published `plugin.json`
+to tell a stale copy it is stale. `.github/workflows/tools.yml` fails when they drift, since a drifted
+pair reports every up-to-date copy as behind.
+
 ## Architecture
 
 ### Public surface

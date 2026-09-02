@@ -1,0 +1,16 @@
+{
+    "name": "nexcess-plugin-absorber",
+    "description": "Developer tooling that ships alongside the Plugin Absorber library",
+    "owner": {
+        "name": "Nexcess",
+        "email": "dev@stellarwp.com"
+    },
+    "plugins": [
+        {
+            "name": "plugin-absorber",
+            "description": "Bring an absorbed standalone plugin's git history into the host plugin's repository",
+            "source": "./",
+            "category": "development"
+        }
+    ]
+}

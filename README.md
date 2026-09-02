@@ -57,6 +57,8 @@ bootstrap — two sub-plugins, every optional key.
 - [Configuration][configuration] — the hook prefix, the container, every sub-plugin key.
 - [Recipes][recipes] — a settings toggle, a manifest of add-ons, and staging the absorption across
   releases.
+- [Git history][git-history] — a script that brings the standalone's commits and blame across with
+  its code.
 - [Conflict handling][conflicts] — the policies, when they run, and the guard's limits.
 - [Filters][filters] — the runtime overrides for policies and notice text.
 - [Actions][actions] — what the library reports as it loads and skips.
@@ -71,6 +73,7 @@ point at the repository rather than at paths that would be missing beside the in
 [installing]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/installing.md
 [configuration]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/configuration.md
 [recipes]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/recipes.md
+[git-history]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/git-history.md
 [conflicts]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/conflict-handling.md
 [filters]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/filters.md
 [actions]: https://github.com/stellarwp/plugin-absorber/blob/main/docs/actions.md
